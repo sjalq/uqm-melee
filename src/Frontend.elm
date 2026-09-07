@@ -32,14 +32,17 @@ import Melee.Rng exposing (Seed(..))
 import Melee.Room as Melee
 import Melee.Step as MeleeStep
 import Melee.Stream as Stream
+import Melee.Telemetry as Telemetry
 import Pages.Admin
 import Pages.Default
 import Pages.Examples
 import Pages.Melee
+import Pages.Metrics
 import Pages.PageFrame exposing (viewCurrentPage, viewTabs)
 import Ports.Clipboard
 import Ports.ConsoleLogger
 import Ports.MeleeBrowser
+import Ports.Telemetry
 import Route
 import Task
 import Theme
@@ -87,6 +90,7 @@ subscriptions : Model -> Subscription FrontendOnly FrontendMsg
 subscriptions model =
     Subscription.batch
         [ Subscription.fromJs "melee_browser_from_js" Ports.MeleeBrowser.receive (Menu.decode >> MeleeBrowser)
+        , Subscription.fromJs "telemetry_clock" Ports.Telemetry.observed (Ports.Telemetry.decode >> TelemetryClock)
         , Effect.Time.every (Duration.seconds 1) (Effect.Time.posixToMillis >> MeleeClock)
         , Effect.Browser.Events.onAnimationFrameDelta (Duration.inMilliseconds >> MeleeFrame)
         , Effect.Browser.Events.onVisibilityChange (\visibility -> MeleeVisibility (visibility /= Effect.Browser.Events.Hidden))
@@ -151,6 +155,8 @@ init url key =
             , playerName = ""
             , searching = False
             , meleeVisible = True
+            , telemetry = Telemetry.init
+            , telemetryReply = Nothing
             , meleeNow = 0
             , creatingRoom = False
             , location = Location.fromUrl url
@@ -186,13 +192,26 @@ inits model route =
             Pages.Melee.init model
                 |> Tuple.mapSecond (Command.fromCmd "Melee.init")
 
+        Metrics ->
+            ( model, Command.none )
+
         NotFound ->
             ( model, Command.none )
 
 
 update : FrontendMsg -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
 update msg model =
-    updateCore msg model |> Presentation.effects model
+    updateCore msg model
+        |> Tuple.mapFirst
+            (\next ->
+                case msg of
+                    MeleeFrame delta ->
+                        { next | telemetry = Telemetry.frame delta next.telemetry }
+
+                    _ ->
+                        next
+            )
+        |> Presentation.effects model
 
 
 updateCore msg model =
@@ -357,8 +376,35 @@ updateCore msg model =
         MeleeBrowser value ->
             ( model, Presentation.browserCommands (Menu.respond (model.game.sound && model.meleeVisible) value) )
 
+        TelemetryClock ( serial, returning, now ) ->
+            let
+                t =
+                    model.telemetry
+            in
+            if not model.meleeVisible || serial /= t.serial then
+                ( model, Command.none )
+
+            else if returning then
+                case t.pending of
+                    Just _ ->
+                        ( { model | telemetry = Telemetry.received now model.telemetryReply t, telemetryReply = Nothing }, Command.none )
+
+                    Nothing ->
+                        ( model, Command.none )
+
+            else
+                ( { model | telemetry = { t | pending = Just ( serial, now ) } }
+                , Effect.Lamdera.sendToBackend (Probe serial (model.currentRoute == Metrics))
+                )
+
         MeleeClock now ->
-            ( { model | meleeNow = now }, Command.none )
+            let
+                ( next, probe ) =
+                    Telemetry.tick model.meleeVisible model.telemetry
+            in
+            ( { model | meleeNow = now, telemetry = next }
+            , probe |> Maybe.map (\serial -> Command.fromCmd "telemetry clock" (Ports.Telemetry.read ( serial, False ))) |> Maybe.withDefault Command.none
+            )
 
         MeleeVisibility visible ->
             let
@@ -369,7 +415,7 @@ updateCore msg model =
                     else
                         gameAction Game.Suspend model
             in
-            ( { next | meleeVisible = visible }, Command.batch [ cmd, Effect.Lamdera.sendToBackend (MeleeToBackend (Melee.PreviewSubscription (visible && model.location.room == Nothing && not model.showLocalGame))) ] )
+            ( { next | meleeVisible = visible, telemetry = Telemetry.reset next.telemetry }, Command.batch [ cmd, Effect.Lamdera.sendToBackend (MeleeToBackend (Melee.PreviewSubscription (visible && (model.currentRoute == Melee || model.currentRoute == Default) && model.location.room == Nothing && not model.showLocalGame))) ] )
 
         NavigateMelee location ->
             ( model, Effect.Browser.Navigation.pushUrl model.key (Location.toUrl location) )
@@ -471,6 +517,13 @@ updateFromBackend msg model =
 
 updateFromBackendCore msg model =
     case msg of
+        ProbeReply serial sample ->
+            if serial == model.telemetry.serial && model.telemetry.pending /= Nothing then
+                ( { model | telemetryReply = sample }, Command.fromCmd "telemetry return clock" (Ports.Telemetry.read ( serial, True )) )
+
+            else
+                ( model, Command.none )
+
         NoOpToFrontend ->
             ( model, Command.none )
 
@@ -666,11 +719,18 @@ view model =
         if model.currentRoute == Melee || model.currentRoute == Default then
             "SUPER MELEE"
 
+        else if model.currentRoute == Metrics then
+            "SUPER MELEE / Metrics"
+
         else
             "Dashboard"
     , body =
-        if model.currentRoute == Melee || model.currentRoute == Default then
+        if model.currentRoute == Metrics then
+            [ Pages.Metrics.view model.telemetry ]
+
+        else if model.currentRoute == Melee || model.currentRoute == Default then
             [ Pages.Melee.view model colors
+            , Pages.Metrics.hud model.telemetry
             , modal
             ]
 
@@ -1070,7 +1130,7 @@ locationCommand model =
                     Nothing
     in
     if model.currentRoute /= Melee && model.currentRoute /= Default then
-        send Melee.LeaveRoom
+        Command.batch [ send Melee.LeaveRoom, send (Melee.PreviewSubscription False) ]
 
     else
         case model.location.room of

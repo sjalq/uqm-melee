@@ -79,6 +79,9 @@ suite =
             , test "Examples survives round-trip" <|
                 \_ ->
                     expectRouteRoundTrip Examples
+            , test "Metrics survives round-trip" <|
+                \_ ->
+                    expectRouteRoundTrip Metrics
             , test "Melee survives round-trip" <|
                 \_ ->
                     expectRouteRoundTrip Melee

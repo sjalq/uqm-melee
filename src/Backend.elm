@@ -14,6 +14,7 @@ import Effect.Time as Time
 import Lamdera
 import Logger
 import Melee.Room as Melee
+import Melee.Telemetry as Telemetry
 import Rights.Auth0 exposing (backendConfig)
 import Rights.Permissions exposing (sessionCanPerformAction)
 import Rights.Role exposing (roleToString)
@@ -63,6 +64,8 @@ init =
             , users = Dict.empty
             , emailPasswordCredentials = Dict.empty
             , pollingJobs = Dict.empty
+            , counters = Telemetry.zero
+            , workload = Telemetry.snapshot Telemetry.zero Melee.init
             , melee = Melee.init
             }
     in
@@ -73,7 +76,23 @@ update : BackendMsg -> Model -> ( Model, Command BackendOnly ToFrontend BackendM
 update msg model =
     case msg of
         MeleeTick now ->
-            meleeResult model (Melee.tick now model.melee)
+            let
+                counters =
+                    model.counters
+
+                next =
+                    { model | counters = { counters | ticks = counters.ticks + 1 } }
+
+                ( advanced, cmd ) =
+                    meleeResult next (Melee.tick now model.melee)
+            in
+            ( if modBy 120 next.counters.ticks == 0 then
+                { advanced | workload = Telemetry.snapshot advanced.counters advanced.melee }
+
+              else
+                advanced
+            , cmd
+            )
 
         MeleeConnected session client ->
             let
@@ -178,6 +197,26 @@ updateFromFrontend sessionId clientId msg model =
             Effect.Lamdera.clientIdToString clientId
     in
     case msg of
+        Probe serial detailed ->
+            let
+                counters =
+                    model.counters
+
+                cached =
+                    model.workload
+            in
+            ( { model | counters = { counters | probes = counters.probes + 1 } }
+            , Effect.Lamdera.sendToFrontend clientId
+                (ProbeReply serial
+                    (if detailed then
+                        Just { cached | counters = model.counters }
+
+                     else
+                        Nothing
+                    )
+                )
+            )
+
         NoOpToBackend ->
             ( model, Command.none )
 
@@ -295,7 +334,7 @@ updateFromFrontend sessionId clientId msg model =
                         _ ->
                             True
             in
-            meleeResultWithDirectory directoryChanged model (Melee.handle browserCookie connectionId message model.melee)
+            meleeResultWithDirectory directoryChanged (countInput message model) (Melee.handle browserCookie connectionId message model.melee)
 
 
 updateFromFrontendCheckingRights : Effect.Lamdera.SessionId -> Effect.Lamdera.ClientId -> ToBackend -> Model -> ( Model, Command BackendOnly ToFrontend BackendMsg )
@@ -397,9 +436,28 @@ meleeResultWithDirectory checkDirectory model ( host, deliveries ) =
             else
                 Command.none
     in
-    ( { model | melee = host }
+    ( { model | melee = host, counters = countDeliveries deliveries model.counters }
     , Command.batch
         [ directory
         , deliveries |> List.map (\delivery -> Effect.Lamdera.sendToFrontend (Effect.Lamdera.clientIdFromString delivery.client) (MeleeToFrontend delivery.message)) |> Command.batch
         ]
     )
+
+
+countInput : Melee.ToHost -> Model -> Model
+countInput message model =
+    case message of
+        Melee.Controls _ ->
+            let
+                counters =
+                    model.counters
+            in
+            { model | counters = { counters | inputs = counters.inputs + 1 } }
+
+        _ ->
+            model
+
+
+countDeliveries : List Melee.Delivery -> Telemetry.Counters -> Telemetry.Counters
+countDeliveries deliveries counters =
+    { counters | deliveries = counters.deliveries + List.length deliveries }

@@ -11,6 +11,7 @@ import Pages.Admin
 import Pages.Default
 import Pages.Examples
 import Pages.Melee
+import Pages.Metrics
 import Route
 import Theme
 import Types exposing (..)
@@ -119,6 +120,9 @@ viewCurrentPage model =
 
             Melee ->
                 Pages.Melee.view model colors
+
+            Metrics ->
+                Pages.Metrics.view model.telemetry
 
             NotFound ->
                 viewNotFoundPage colors

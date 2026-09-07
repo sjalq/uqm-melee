@@ -16,6 +16,7 @@ import Melee.Menu
 import Melee.Preview
 import Melee.Ranking
 import Melee.Room as Melee
+import Melee.Telemetry
 import Url exposing (Url)
 
 
@@ -40,6 +41,7 @@ type Route
     | Admin AdminRoute
     | Examples
     | Melee
+    | Metrics
     | NotFound
 
 
@@ -87,6 +89,8 @@ type alias FrontendModel =
     , playerName : String
     , searching : Bool
     , meleeVisible : Bool
+    , telemetry : Melee.Telemetry.Client
+    , telemetryReply : Maybe Melee.Telemetry.Snapshot
     , meleeNow : Int
     , creatingRoom : Bool
     , location : Melee.Location.Location
@@ -117,6 +121,8 @@ type alias BackendModel =
     , users : Dict Email User
     , emailPasswordCredentials : Dict Email EmailPasswordCredentials
     , pollingJobs : Dict PollingToken (PollingStatus PollData)
+    , counters : Melee.Telemetry.Counters
+    , workload : Melee.Telemetry.Snapshot
     , melee : Melee.Host
     }
 
@@ -183,6 +189,7 @@ type FrontendMsg
     | NavigateMelee Melee.Location.Location
     | PlayerNameChanged String
     | MeleeBrowser Melee.Menu.Event
+    | TelemetryClock ( Int, Bool, Float )
     | MeleeClock Int
     | MeleeVisibility Bool
     | SaveFleets
@@ -208,6 +215,7 @@ type ToBackend
     | LoggedOut
     | NoOpToBackend
     | SetDarkModePreference Bool
+    | Probe Int Bool
     | MeleeToBackend Melee.ToHost
 
 
@@ -241,6 +249,7 @@ type ToFrontend
     | PermissionDenied ToBackend
     | UserDataToFrontend UserFrontend
     | UserInfoMsg (Maybe Auth.Common.UserInfo)
+    | ProbeReply Int (Maybe Melee.Telemetry.Snapshot)
     | MeleeToFrontend Melee.ToSeat
 
 

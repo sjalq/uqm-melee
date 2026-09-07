@@ -5,6 +5,7 @@
 const consoleLogger = require('./elm-pkg-js/console-logger.js')
 const meleeMusic = require('./elm-pkg-js/melee-music.js')
 const meleeBrowser = require('./elm-pkg-js/melee-browser.js')
+const telemetry = require('./elm-pkg-js/telemetry.js')
 const clipboard = require('./elm-pkg-js/clipboard.js')
 
 exports.init = async function init(app) {
@@ -15,4 +16,5 @@ exports.init = async function init(app) {
     await clipboard.init(app)
     await meleeMusic.init(app)
     await meleeBrowser.init(app)
+    await telemetry.init(app)
 }

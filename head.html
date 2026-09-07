@@ -559,3 +559,21 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
  .lobby-layout .room-list-heading { display:none; }
 }
 </style>
+
+<style>
+.telemetry-hud{position:fixed;right:12px;bottom:4px;z-index:30;color:#bceeff;background:#071520ed;border:1px solid #477181;padding:3px 8px;font:11px monospace;text-decoration:none;border-radius:3px}
+.telemetry-hud:focus-visible,.telemetry-page a:focus-visible{outline:3px solid #ffdd77;outline-offset:3px}
+.telemetry-page{box-sizing:border-box;height:100dvh;display:flex;flex-direction:column;gap:clamp(8px,2vh,24px);padding:clamp(12px,3vw,40px);background:radial-gradient(ellipse at top,#193746,#050c15 75%);color:#dceaf1;font-family:monospace}
+.telemetry-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.telemetry-heading small{color:#8dd7e8;letter-spacing:2px;font-size:11px}
+.telemetry-heading h1{font-size:clamp(20px,3vw,36px);color:#ffda80;margin:4px 0 0}
+.telemetry-heading a{color:#deecf2;border:1px solid #6c8e9b;padding:10px 16px;text-decoration:none;white-space:nowrap}
+.telemetry-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(6px,1.4vw,18px);flex:1;min-height:0}
+.telemetry-card{border:1px solid #426777;background:linear-gradient(135deg,#142c3cdd,#091422dd);padding:clamp(8px,1.6vw,24px);display:flex;flex-direction:column;justify-content:center;gap:clamp(3px,1vh,10px);min-height:0}
+.telemetry-card span{font-size:clamp(10px,1.1vw,14px);color:#b5d6df;letter-spacing:1px}
+.telemetry-card strong{font-size:clamp(24px,4vw,56px);color:#ffdf90;line-height:1.1;font-weight:normal;font-variant-numeric:tabular-nums}
+.telemetry-card small{color:#b3c7cf;font-size:clamp(10px,1vw,12px)}
+.telemetry-page footer{font-size:11px;line-height:1.5;color:#acc3ce;max-width:1100px}
+@media(max-width:600px){.telemetry-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.telemetry-card:last-child{grid-column:span 2}.telemetry-heading small{font-size:9px;letter-spacing:0}.telemetry-heading a{padding:8px}.telemetry-page footer{font-size:9px}.telemetry-hud{font-size:9px;right:6px;bottom:2px}}
+@media(max-height:500px){.telemetry-page{padding:10px;gap:6px}.telemetry-card{padding:6px;gap:2px}.telemetry-card strong{font-size:24px}.telemetry-page footer{font-size:9px}.telemetry-heading h1{font-size:20px}.telemetry-heading small{font-size:9px}.telemetry-card small{font-size:9px}}
+</style>

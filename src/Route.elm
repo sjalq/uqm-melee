@@ -26,6 +26,7 @@ parser =
         --, Parser.map (Admin AdminFusion) (s "admin" </> s "fusion")
         , Parser.map Examples (s "examples")
         , Parser.map Melee (s "melee")
+        , Parser.map Metrics (s "metrics")
         ]
 
 
@@ -63,6 +64,9 @@ toString route =
 
         Melee ->
             "/melee"
+
+        Metrics ->
+            "/metrics"
 
         NotFound ->
             "/not-found"

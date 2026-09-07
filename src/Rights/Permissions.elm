@@ -11,6 +11,9 @@ import Types exposing (BackendModel, BrowserCookie, Role(..), ToBackend(..), Use
 actionRoleMap : ToBackend -> Role
 actionRoleMap msg =
     case msg of
+        Probe _ _ ->
+            Anonymous
+
         NoOpToBackend ->
             Anonymous
 
