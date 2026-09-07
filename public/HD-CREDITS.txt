@@ -1,0 +1,4 @@
+UQM HD and MegaMod artwork by Damon Czanik, the UQM HD team, Kruzen, and JHGuitarFreak (Kohr-Ah Death).
+Source: https://github.com/JHGuitarFreak/UQM-MegaMod-Content
+Underlying Star Control II content: Toys for Bob and respective creators. CC BY-NC-SA 2.5, see UQM-COPYING.txt.
+Images are copied without alteration; only their display size changes.

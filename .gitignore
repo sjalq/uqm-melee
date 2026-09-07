@@ -1,0 +1,15 @@
+
+elm-stuff
+node_modules
+
+# CLI config (contains secrets) and state
+.lamdera-cli.json
+.lamdera-cli.state.json
+# OS / tool scratch
+.DS_Store
+.playwright-mcp/
+.wire-extractor-prove/
+
+# Generated previews and local test/deployment scratch
+scripts/temp/
+tests/viewer.js

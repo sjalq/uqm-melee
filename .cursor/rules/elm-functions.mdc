@@ -1,0 +1,766 @@
+---
+description: This file contains all the existing functions in the project. It is included so that you can find code faster and aren't tempted to reinvent wheels. Always consult the src/Types.elm file to see the structure of the app.
+globs: ["**/*.elm"]
+alwaysApply: true
+---
+
+# Elm Functions Reference
+
+## src/AsyncRPC.elm
+### AsyncRPC
+28 handleTaskChain _ model _ _ config
+53 handleTaskResult token encoder result
+69 handleTimeResult token result
+80 handlePollingResult _ model _ json
+
+## src/Auth/EmailPasswordAuth.elm
+### Auth.EmailPasswordAuth
+32 handleLogin browserCookie connectionId email password model
+72 handleSignup browserCookie connectionId email password maybeName model
+95 completeSignup browserCookie connectionId email _ maybeName salt hash model
+
+## src/Auth/PasswordHash.elm
+### Auth.PasswordHash
+17 hashPassword salt password
+29 verifyPassword plainPassword hashedPassword
+
+## src/Backend.elm
+### Backend
+32 app
+43 subscriptions model
+56 init
+79 update msg model
+173 updateFromFrontend sessionId clientId msg model
+292 updateFromFrontendCheckingRights sessionId clientId msg model
+331 getUserFromCookie browserCookie model
+337 userToFrontend user
+346 handleEmailPasswordAuth browserCookie connectionId authMsg model
+
+## src/Components/AuthControls.elm
+### Components.AuthControls
+35 view config
+54 profileDropdown config
+152 loginButton config
+201 getInitials userInfo
+
+## src/Components/Button.elm
+### Components.Button
+33 view config label
+110 primary colors onClick label
+122 secondary colors onClick label
+134 danger colors onClick label
+146 success colors onClick label
+158 loading colors label
+
+## src/Components/Card.elm
+### Components.Card
+17 view config children
+53 getPaddingClass padding
+69 simple colors children
+80 withTitle colors title children
+91 compact colors children
+
+## src/Components/EmailPasswordAuth.elm
+### Components.EmailPasswordAuth
+22 init
+33 update msg model
+51 updateForm msg model
+73 validateAndGetSubmitModel model
+89 view config
+
+## src/Components/EmailPasswordForm.elm
+### Components.EmailPasswordForm
+24 view config
+166 inputStyles colors
+177 buttonStyles colors
+
+## src/Components/Header.elm
+### Components.Header
+23 view config
+73 pageHeader colors title subtitle
+83 sectionHeader colors title
+93 cardHeader colors title
+
+## src/Components/LoginModal.elm
+### Components.LoginModal
+25 view config
+120 oauthButton config label onClickMsg backgroundColor
+164 oauthButtonWithIcon config label onClickMsg backgroundColor iconSrc
+
+## src/Components/Tab.elm
+### Components.Tab
+17 view config
+41 tabBar colors tabs
+
+## src/EndpointExample/Price.elm
+### EndpointExample.Price
+21 getPrice sessionId model headers json
+36 getPriceResult sessionId model headers json
+45 fetchEthPriceInZar
+118 fetchEthPrice
+139 fetchZarRate
+160 fetchJokeAboutEthPrice price
+202 openAiResponseDecoder responseBody
+
+## src/Env.elm
+### Env
+7 modelKey
+11 slackApiToken
+15 slackChannel
+19 logSize
+23 stillTesting
+28 auth0AppClientId
+33 auth0AppClientSecret
+38 auth0AppTenant
+43 sysAdminEmail
+48 openAiApiKey
+57 mode
+
+## src/Frontend.elm
+### Frontend
+70 app
+83 subscriptions model
+104 keyDecoder
+109 init url key
+162 inits model route
+185 update msg model
+446 updateFromBackend msg model
+624 view model
+669 callbackForAuth0Auth model url key
+678 callbackForGoogleAuth model url key
+687 authCallbackCmd model url key
+704 initWithAuth url key
+722 updateEmailPasswordAuth authMsg model
+778 updateEmailPasswordForm msg model
+811 viewWithAuth model
+887 authUpdateFromBackend authToFrontendMsg model
+924 gameAction message model
+1008 sendControls held model
+1027 locationCommand model
+1069 redirectRoom model
+
+## src/LamderaRPC.elm
+### LamderaRPC
+25 fail string
+43 resultWith statusCode body
+48 failWith statusCode stringBody
+63 bodyTypeToString body
+105 requestDecoder
+120 rawBody rawReq
+130 rawBodyDecoder
+147 process log rpcOut rawReq handler model
+209 asTask encoder decoder requestValue endpoint
+245 asTaskJson json endpoint
+266 asTaskString requestBody endpoint
+278 customResolver fn response
+304 handleEndpointBytes fn decoder encoder args model
+333 handleEndpoint fn args model
+342 handleEndpointJson fn args model
+366 handleEndpointJsonRaw fn args model
+390 handleEndpointString fn args model
+410 httpErrorToString err
+445 methodString method
+544 statusToInt code
+731 statusToString statusCode
+
+## src/Logger.elm
+### Logger
+123 init maxEntries
+141 addLog level message state
+152 addLogWithTime level message timestamp state
+176 updateTimestamp index timestamp state
+201 getRecent n state
+212 getSinceIndex minIndex state
+225 getSinceTimestamp minTimestamp state
+235 getRange fromIndex toIndex state
+244 toList state
+251 size state
+259 nextIndex state
+315 logInfo
+326 logWarn
+337 logError
+348 logDebug
+363 logWithCmd level message state
+384 logInfoWithCmd
+392 handleMsg msg state
+405 encodeLogEntry entry
+417 encodeLogEntries entries
+424 decodeLogEntry
+433 decodeLevelHelper str
+445 decodeLogEntries
+456 levelToString level
+474 levelFromString str
+
+## src/Melee/Arsenal.elm
+### Melee.Arsenal
+10 primary ship
+24 standard ship
+103 spec missile
+542 missileBody missile
+633 beamBody beam
+658 homing body
+663 isProjectile body
+
+## src/Melee/Art.elm
+### Melee.Art
+17 projectile body frame
+123 ship combatant facing
+148 metrics path
+153 stamps
+1604 portrait combatant
+1613 schematic combatant
+1622 captain combatant
+1627 captainNames
+1658 portraitLayers combatant
+
+## src/Melee/Catalog.elm
+### Melee.Catalog
+11 all
+16 info kind
+95 sprite kind facing
+
+## src/Melee/Element.elm
+### Melee.Element
+39 maxDisplayElements
+109 objectCloaked prim
+
+## src/Melee/Energy.elm
+### Melee.Energy
+12 deltaEnergy energyDelta element core
+49 deltaCrew crewDelta element core
+
+## src/Melee/Fleet.elm
+### Melee.Fleet
+80 fleetSize
+92 maxTeamNameChars
+
+## src/Melee/Hires.elm
+### Melee.Hires
+11 get path
+16 sprites
+
+## src/Melee/Init.elm
+### Melee.Init
+20 emptyFlags
+39 zeroMotion
+49 sided bottom top
+54 mkImage location frameIndex
+59 zeroIntersect
+67 planetElement id location
+90 shipFlags
+99 shipElement id side location crew facing
+122 mkCore elementId spec facing
+143 placePlanet seed0
+167 shofixtiArena seed0
+229 arena bottomKind topKind seed
+256 combatant kind c
+335 satellites side state
+
+## src/Melee/Input.elm
+### Melee.Input
+53 idle
+
+## src/Melee/Keys.elm
+### Melee.Keys
+25 none
+40 press
+45 release
+50 set down key held
+102 inputs held
+119 turn left right
+
+## src/Melee/Local.elm
+### Melee.Local
+84 init
+93 get side sided
+102 set side value sided
+111 update msg model
+184 begin model
+193 chooseComputers model
+209 autoPick side model
+225 choose side index model
+275 crew ship arena
+280 tick held model
+330 removeFirst item list
+344 finishRound arena model
+413 preserveSurvivor old model
+423 carrySurvivors old fresh
+455 ai side arena
+589 advance milliseconds held model
+604 collectSounds old next sounds
+659 computer rating side arena
+683 encode model
+695 load source model
+750 dittyFrames arena
+762 mapArena fn phase
+781 phaseArena phase
+800 animate milliseconds model
+824 present milliseconds model
+
+## src/Melee/Location.elm
+### Melee.Location
+14 lobby
+19 fromUrl url
+85 toUrl location
+156 configure location game
+
+## src/Melee/Masks.elm
+### Melee.Masks
+16 get path
+21 opaque mask x y
+26 overlap a b dx dy
+54 masks
+
+## src/Melee/Music.elm
+### Melee.Music
+9 folder ship
+14 ditty ship
+19 duration ship
+24 durations
+
+## src/Melee/Netplay.elm
+### Melee.Netplay
+86 checksumInterval
+
+## src/Melee/Pixel.elm
+### Melee.Pixel
+9 text x y centered label
+35 characters
+
+## src/Melee/Preview.elm
+### Melee.Preview
+22 fromArena arena
+53 view preview
+
+## src/Melee/Ranking.elm
+### Melee.Ranking
+11 initial number
+35 view match
+40 rate winner bottom top
+
+## src/Melee/Rate.elm
+### Melee.Rate
+21 cBattleFramesPerSecond
+26 displayHz
+33 advancePump acc
+38 drain acc n
+
+## src/Melee/Rng.elm
+### Melee.Rng
+26 aConst
+31 mConst
+36 qConst
+41 rConst
+46 coerce n
+
+## src/Melee/Room.elm
+### Melee.Room
+110 init
+115 connected seat
+120 bothConnected room
+125 findSeat session client room
+132 findRoom session client host
+137 deliver room
+155 save room host
+174 handleRoom session client message host
+365 act side message room
+478 held inputs
+493 tickRooms now host
+610 disconnect session client originalHost
+637 reconnect session client host
+667 running phase
+687 discover host
+727 games host
+734 stage phase
+759 removeSpectator client host
+769 modeFor controllers
+785 recipients room
+789 isVictory phase
+799 exhibition cycle
+820 identify session client host
+829 handle session client message host
+916 findMatch session client original
+940 pairWaiting host
+989 rankedAction session client side message room ranked host
+1094 launchRanked room
+1099 prepareRanked now room
+1160 settle code host
+1202 sweepRanked now host
+1235 tick now host
+
+## src/Melee/Ship.elm
+### Melee.Ship
+60 meleeShipCount
+67 intelRange kind
+204 none
+220 fore
+225 stock kind
+821 mmrnmhrmYWing
+
+## src/Melee/ShipState.elm
+### Melee.ShipState
+120 kind combatant
+312 core combatant
+391 setCore c combatant
+
+## src/Melee/Space.elm
+### Melee.Space
+18 view time
+34 mesh
+43 vertex
+52 fragment
+
+## src/Melee/Step.elm
+### Melee.Step
+24 tick inputs arena
+42 pump inputs arena
+54 applyInputs inputs arena
+72 sideInput side inputs
+82 bumpFrame arena
+91 getEl id arena
+96 putEl el arena
+101 mapCombatant side fn arena
+118 combatantOf owner arena
+131 preprocessAll arena
+136 preprocessOne id arena
+209 lifeTicks life
+219 decLife life
+229 applyVelocity arena el
+266 shipPre arena el
+349 ownerSide owner
+373 turnShip input c el
+405 thrustShip input el c
+436 inertialThrust vel c
+506 collideAll arena
+511 collideFrom ids arena
+521 collideAgainst id0 others arena
+531 tryCollide id0 id1 arena
+545 collisionPossible e0 e1
+560 radiusDisplay el
+591 spritePath arena el
+610 spritesHit arena a b
+642 circlesHit space e0 e1
+676 bounce arena e0 e1
+769 weaponHit a b
+778 isWeapon el
+783 applyHit maybeHit arena
+863 impact weapon target arena
+940 damageShip amount target arena
+978 startExplosion ship arena
+993 explosions arena
+1065 updateElement id fn arena
+1075 gravityAll arena
+1085 findPlanet ids arena
+1104 isPlanet el
+1109 pullToward planet id arena
+1168 postprocessAll arena
+1173 postprocessOne id arena
+1211 removeEl id arena
+1219 shipPost arena el
+1276 fireWeapon arena el original combatant
+1389 spawnDart arena ship c
+1466 glory arena el c combatant
+1493 gloryOne self origin rangeDisp id arena
+1532 fire weapon el c arena
+1586 limitSaws missile owner arena
+1602 spawnMissile spec ship c at arena
+1668 animationFrame animation facing age damage
+1706 beamGeometry beam facing center
+1748 fireBeam beam el c arena
+1767 castRay beam origin end source c arena
+1868 rayIntersection arena origin end target
+1897 rayCircle space origin end target
+1934 fireContact contact ship c arena
+1985 fireLightning ship c arena
+2036 enemy owner arena
+2053 bearing arena from to
+2058 distance arena from to
+2070 effect body at life arena
+2103 special combatant el c arena
+2419 steerWithSeed arena el
+2515 steer arena el
+2647 flyMissile missile flight arena el
+2811 steerLegacy arena el
+2880 collectCrew ship crew arena
+2898 prepareAbilities arena
+3013 environment arena
+3045 auxiliaries arena
+3229 isSatellite element
+3239 countOwned body owner arena
+
+## src/Melee/Stream.elm
+### Melee.Stream
+23 stage phase
+42 between interval before after
+56 apply delta model
+
+## src/Melee/Trig.elm
+### Melee.Trig
+29 fullCircle
+34 halfCircle
+39 quadrant
+44 sinShift
+51 sinetab
+120 atantab
+125 listAt i xs
+133 normalizeAngle a
+138 normalizeFacing f
+153 sinVal a
+158 sine a m
+163 cosine a m
+171 arctan deltaX deltaY
+209 wrap v w
+224 wrapDelta d w
+248 wrapPoint space p
+258 squareRoot value
+267 isqrt lo hi n
+
+## src/Melee/Units.elm
+### Melee.Units
+53 stockLogSpace
+60 battleFramesPerSecond
+65 maxCrewSize
+70 maxEnergySize
+75 maxShipMass
+82 gravityMassThreshold
+87 gravityThreshold
+
+## src/Melee/Velocity.elm
+### Melee.Velocity
+18 velocityShift
+23 velocityScale
+28 worldToVelocity w
+33 velocityToWorld v
+38 remainder v
+43 loByte x
+48 hiByte x
+53 sByte b
+62 makeWord lo hi
+67 zeroExtent
+72 zero
+82 getCurrent v
+89 getNext numFrames v
+116 setPacked d
+129 setComponents dx dy
+190 delta ddx ddy v
+
+## src/Melee/View.elm
+### Melee.View
+28 viewCockpit quality zoom arena
+33 viewCockpitWithControls controls quality zoom arena
+64 spaceView quality zoom arena
+90 camera arena
+122 displayLocation arena el
+147 point cam space at
+152 classicStamp path x y
+161 paint quality cam arena el
+357 hudColors
+365 panel offset ship arena
+
+## src/Pages/Admin.elm
+### Pages.Admin
+22 init model adminRoute
+45 view model colors
+67 viewNoAccess _ colors
+91 viewTabs model colors
+102 viewTab tab model colors label
+152 viewTabContent model colors
+170 viewDefaultTab _ colors
+178 viewLogsTab model colors params
+262 viewPagination colors params totalPages navigateTo
+310 viewFetchModelTab model colors
+341 viewFusionTab model
+356 viewLogEntry entry
+400 formatTimestamp millis
+418 viewLogin _ colors
+
+## src/Pages/Default.elm
+### Pages.Default
+10 init
+15 view
+
+## src/Pages/Examples.elm
+### Pages.Examples
+13 init model
+18 view model colors
+
+## src/Pages/Melee.elm
+### Pages.Melee
+28 init model
+33 view model _
+187 screen children
+192 hangar location client game
+302 fleet client game side
+353 shipCard game ship
+366 selection client game bottom top
+397 battle client game arena overlay
+484 controls client
+509 action label msg primary
+514 buttonAttrs primary
+526 eyebrow label
+531 muted label
+536 sideName side
+545 accent side
+554 graphicsButton game
+567 music game
+619 onlinePanel model
+890 isWatching client
+900 spectatorWaiting game
+909 isOnline client
+914 canEdit client side
+927 seatAction client side label message primary
+932 localAction client label message primary
+941 onlineFleetEditor location side ranked locked game
+956 pageItems size requested items
+961 pageControls location roster count
+998 screenClass model
+1026 isRanked client
+1036 isCancelled client
+1046 matchmaking model
+1099 rankedStatus model snapshot
+1146 pilotControls client game
+
+## src/Pages/PageFrame.elm
+### Pages.PageFrame
+20 viewTabs model
+73 viewAccountControls model
+97 viewCurrentPage model
+131 viewNotFoundPage colors
+
+## src/Ports/Clipboard.elm
+### 
+14 copyToClipboard text
+19 copyResult toMsg
+
+## src/Ports/ConsoleLogger.elm
+### 
+14 log message
+19 logReceived toMsg
+
+## src/RPC.elm
+### RPC
+25 lamdera_handleEndpoints rawReq args model
+74 getLogs _ model headers _
+98 getModel _ model request
+124 setModel _ currentModel request
+163 makeModelImportUrl remoteLamderaUrl
+169 fetchImportedModel remoteLamderaUrl modelKey
+
+## src/Rights/Auth0.elm
+### Rights.Auth0
+14 renewSession _ _ model
+27 handleAuthSuccess backendModel sessionId clientId userInfo _ _ _
+43 logout sessionId _ model
+48 backendConfig model
+62 config
+76 customizeAuth0Method method
+
+## src/Rights/Permissions.elm
+### Rights.Permissions
+12 actionRoleMap msg
+63 canPerformAction user action
+77 sessionCanPerformAction model browserCookie action
+
+## src/Rights/Role.elm
+### Rights.Role
+7 roleToString role
+22 roleHasAccess userRole requiredRole
+
+## src/Rights/User.elm
+### Rights.User
+10 isSysAdmin user
+16 getUserRole user
+25 createUser userInfo initialPreferences
+33 insertUser email newUser model
+
+## src/Route.elm
+### Route
+10 defaultLogsParams
+18 parser
+33 logsQueryParser
+41 fromUrl url
+47 toString route
+72 logsParamsToQuery params
+
+## src/SignatureParser.elm
+### SignatureParser
+33 parseSignature line
+74 parseTypeSignature signature
+111 splitBeforeTuple segments
+135 extractOutputType tuple
+
+## src/Supplemental.elm
+### Supplemental
+20 addProxy url
+29 responseStringToResult response
+48 handleHttpResponse decoder response
+67 responseToString response
+86 httpErrorToString error
+105 handleJsonResponse decoder response
+144 performNow msg
+149 getTime msg
+154 waitThenPerform ms msg
+165 at_ path decoder
+170 requiredAt_ path decoder
+175 optionalAt_ path valDecoder fallback decoder
+186 slackApiUrl
+191 sendSlackMessage token channel message
+229 formatFloat decimals value
+273 formatPrice currency price
+287 formatPercent percent
+303 formatPercentWithoutSign percent
+319 monthToString month
+359 monthToInt month
+399 formatDate time
+414 second
+419 minute
+424 hour
+429 day
+434 week
+
+## src/SupplementalRPC.elm
+### SupplementalRPC
+14 stringifyHttpRequest request
+41 stringifyRPCResult result
+85 encodeHttpBody body
+107 encodeRPCCallAndResult args result
+
+## src/TestData.elm
+### TestData
+12 defaultUsers
+26 defaultEmailPasswordCredentials
+46 defaultSessions
+53 initializeTestData model
+
+## src/Theme.elm
+### Theme
+30 lightColors
+53 darkColors
+76 getColors isDarkMode
+89 primaryBg isDarkMode
+94 primaryText isDarkMode
+99 primaryBorder isDarkMode
+104 secondaryBg isDarkMode
+109 secondaryText isDarkMode
+114 accent isDarkMode
+119 buttonBg isDarkMode
+124 buttonText isDarkMode
+129 buttonHoverBg isDarkMode
+134 dangerBg isDarkMode
+139 dangerHoverBg isDarkMode
+144 headerBg isDarkMode
+149 headerBorder isDarkMode
+154 headerText isDarkMode
+159 activeTabText isDarkMode
+164 inactiveTabText isDarkMode
+
+## src/Wire3SortTest.elm
+### Wire3SortTest
+36 encodeAA
+43 encodeA_
+50 bytesToList bytes
+59 aaBytes
+64 a_Bytes
+71 sortOrderResult
+92 proofTest
+
