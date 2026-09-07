@@ -584,6 +584,96 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 @keyframes pick-flash { from { box-shadow:inset 0 0 0 1px #fff8; background:#fff2; } to { box-shadow:inset 0 0 0 1px #0000; background:transparent; } }
 .pick-slot.live:disabled, .pick-extra:disabled { cursor:default; }
 @media(max-width:600px) { .pick-start-value,.pick-live-value,.pick-team-name { font-size:10px; } }
+
+#melee-game { --panel:#00002b; --edge:#73737b; --ink:#c7c7ff; --cyan:#7f9fff; --gold:#ffff55; }
+#melee-game .original-logo { display:block; width:260px; height:27px; max-width:100%; image-rendering:pixelated; }
+#melee-game .room-masthead { border-bottom:2px solid #424263; }
+#melee-game .room-heading h1 { color:#ff55ff; letter-spacing:1px; text-shadow:2px 2px #550055; }
+#melee-game .room-heading p { color:#9999d5; }
+#melee-game :is(.classic-button,.classic-select,.fleet-target,.menu-pagination button) { background:#080839; border:2px outset #888899; color:#aaaaff; box-shadow:inset 0 0 0 1px #000013; text-shadow:1px 1px #000; }
+#melee-game :is(.classic-button.active,.classic-button.selected,.fleet-target.is-target) { color:#ff8aff; background:#270039; border-color:#b168c7; }
+#melee-game button:not(:disabled):hover { color:#fff; border-color:#aaaaff; background-color:#230047; }
+#melee-game button:focus-visible { outline:2px solid #ffff55; outline-offset:1px; }
+#melee-game :is(.matchmaking-panel,.room-invite,.room-row,.room-empty,.room-fleet-editor,.classic-settings,.exhibition-caption) { background:#00002b; border-color:#77778b; }
+#melee-game :is(.room-seat,.room-fleet-editor,.matchmaking-panel,.room-invite,.room-row,.room-empty,.exhibition-card) { border:2px ridge #77778b; box-shadow:inset 0 0 0 1px #000; }
+#melee-game :is(.room-seat-heading,.room-list-heading,.hangar-catalog-title) { color:#ff83ff; border-color:#555577; }
+#melee-game :is(input,select) { background-color:#00001e; color:#c6c6ff; border-color:#77778b; }
+#melee-game :is(.room-badge,.live-badge) { background:#08083e; border-color:#555577; color:#aaaaff; }
+#melee-game .exhibition-preview { background:#000; }
+#melee-game .exhibition-caption h2 { color:#c6c6ff; }
+#melee-game .exhibition-sound-toggle { color:#ffff55; background:#00002b; border-color:#9999aa; }
+#melee-game .classic-fleet-screen { container-type:inline-size; }
+#melee-game .classic-fleet { left:.625%; width:76.5625%; height:35%; }
+#melee-game .fleet-top { top:8.75%; }
+#melee-game .fleet-bottom { top:47.083333%; }
+#melee-game .classic-slots { height:83.333333%; gap:0; }
+#melee-game .classic-slot { background:#000063; border:1px solid; border-color:#00004a #000073 #000073 #00004a; padding:0; }
+#melee-game .classic-slot img { width:94%; height:94%; margin:auto; }
+#melee-game .classic-slot.occupied { background:#000063; }
+#melee-game .classic-slot:focus-visible,#melee-game .classic-slot:hover,#melee-game .classic-slot.selected-fleet { background:#52008c; border-color:#7b00a5; }
+#melee-game .editing-fleet { outline:none; }
+#melee-game .classic-team-name { height:16.666667%; color:#8484de; font-size:clamp(10px,2.8cqw,24px); }
+#melee-game .classic-team-name input { color:#8484de; background:transparent; border:0; }
+#melee-game .classic-team-name input:focus { color:#ddd; background:#520052; }
+#melee-game .classic-controller { left:80%; width:18.75%; height:12.5%; border:0; background:transparent; padding:0; }
+#melee-game .classic-controller img { display:block; width:100%; height:100%; image-rendering:pixelated; }
+#melee-game .top-controller { top:10%; }
+#melee-game .bottom-controller { top:69.583333%; }
+#melee-game .classic-launch { left:79.0625%; top:32.083333%; width:20%; height:27.916667%; padding:0; border:0; }
+#melee-game :is(.classic-save,.classic-load,.classic-lower-load,.classic-lower-save,.classic-quit) { position:absolute; left:80%; width:18.75%; height:4.166667%; min-height:0; padding:0; border:0; background:transparent; display:flex; align-items:center; justify-content:center; }
+#melee-game :is(.classic-save,.classic-load,.classic-lower-load,.classic-lower-save,.classic-quit) img { width:60%; height:50%; image-rendering:pixelated; }
+#melee-game .classic-save { top:23.541667%; }
+#melee-game .classic-load { top:27.708333%; }
+#melee-game .classic-lower-load { top:60.208333%; }
+#melee-game .classic-lower-save { top:64.375%; }
+#melee-game .classic-quit { top:89.583333%; }
+#melee-game .classic-quit img { height:60%; }
+#melee-game .hangar-catalog { background:#00002b; border-color:#77778b; }
+#melee-game .hangar-ship { background:#00004a; border:1px solid #555577; }
+#melee-game .room-chosen-fleet { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:2px; min-height:38px; }
+#melee-game .room-chosen-ship { justify-content:center; min-width:0; background:#000063; border:1px solid #000098; }
+#melee-game .room-chosen-ship span { display:none; }
+#melee-game .room-chosen-ship img { width:32px; height:32px; image-rendering:pixelated; }
+#melee-game .draft-countdown { background:#00002b; border:2px ridge #888899; color:#ffff55; }
+#melee-game .countdown-track { background:#222244; }
+#melee-game .countdown-track > div { background:#aaaaff; }
+#melee-game.pick-active .selection-page { display:flex; flex-direction:column; flex:1 1 0; min-height:0; }
+#melee-game.pick-active .classic-battle-frame { flex:1 1 0; min-height:0; }
+#melee-game.pick-active .pick-stage { flex:none; }
+#melee-game .pick-frame { font-size:clamp(9px,2.1cqw,22px); }
+#melee-game .pick-slot:disabled,#melee-game .pick-extra:disabled { background:transparent; border:0; }
+#melee-game .pick-slot:disabled img { opacity:1; }
+#melee-game .pick-slot.spent img { opacity:.8; }
+#melee-game .battle-controls { display:flex; justify-content:center; gap:16px; padding:4px; }
+#melee-game .battle-controls .pilot-controls-row { width:auto; height:auto; display:flex; flex-direction:row; align-items:center; gap:8px; padding:0; background:transparent; border:0; }
+#melee-game .battle-controls .pilot-key-list { display:flex; gap:8px; }
+#melee-game .battle-controls .pilot-controls-row strong { display:none; }
+#melee-game .battle-controls kbd { background:#15152d; color:#c6c6ff; border:1px outset #77778b; }
+#melee-game .classic-battle-page:not(.selection-page) { grid-template-rows:auto minmax(0,1fr) auto auto auto; }
+#melee-game .melee-cockpit { border:0; }
+#melee-game .classic-overlay { inset:0; width:auto; height:auto; border:0; background:transparent; pointer-events:none; }
+#melee-game .classic-dialog { pointer-events:auto; padding:16px 24px; max-width:85%; color:#aaaaff; border:3px ridge #888899; background:#000039; box-shadow:4px 4px #000; }
+#melee-game .classic-dialog > div:first-child { color:#ffff55 !important; }
+#melee-game .classic-dialog .classic-settings { margin:12px 0 0; padding:0; border:0; }
+#melee-game.result-screen .classic-secondary { flex:0 1 auto; align-self:center; margin:auto; text-align:center; padding:32px; max-width:800px; background:#00002b; border:3px ridge #888899; }
+#melee-game.result-screen h1 { color:#ff55ff; text-shadow:3px 3px #550055; font-size:clamp(28px,5vw,60px) !important; }
+#melee-game.result-screen .classic-secondary > div:last-child { justify-content:center; }
+@media(max-width:650px) {
+ #melee-game .original-logo { width:180px; height:20px; }
+ #melee-game .battle-controls { gap:6px; padding:2px; }
+ #melee-game .battle-controls .pilot-controls-row { font-size:10px; gap:3px; flex-wrap:wrap; justify-content:center; }
+ #melee-game .battle-controls .pilot-key-list { gap:3px; }
+ #melee-game .battle-controls .pilot-controls-row small { display:none; }
+ #melee-game .classic-dialog { padding:10px; font-size:18px; }
+ #melee-game .room-chosen-ship img { width:24px; height:24px; }
+ #melee-game .pick-frame { font-size:clamp(8px,2.1cqw,16px); }
+}
+@media(max-height:500px) {
+ #melee-game .battle-controls { display:none; }
+ #melee-game .classic-dialog { padding:8px; }
+ #melee-game.result-screen .classic-secondary { padding:12px; }
+}
+
 </style>
 
 <style>

@@ -13,6 +13,7 @@ import Melee.Keys exposing (Held)
 import Melee.Local
 import Melee.Location
 import Melee.Menu
+import Melee.Picker
 import Melee.Preview
 import Melee.Ranking
 import Melee.Room as Melee
@@ -101,7 +102,7 @@ type alias FrontendModel =
     , roomCode : String
     , meleeHeld : Held
     , game : Melee.Local.Model
-    , pickCell : { bottom : { row : Int, col : Int }, top : { row : Int, col : Int } }
+    , pickCell : { bottom : Melee.Picker.Cell, top : Melee.Picker.Cell }
     }
 
 

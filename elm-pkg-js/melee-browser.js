@@ -27,7 +27,7 @@ exports.init = async function(app) {
   app.ports.melee_browser_to_js?.subscribe(onCommand);
   const onKey = event => {
     const root=document.getElementById("melee-game"), active=document.activeElement;
-    if (!root || root.dataset.playing==="true" || event.altKey || event.ctrlKey || event.metaKey || (active!==document.body && !root.contains(active))) return;
+    if (!root || root.dataset.inputMode!=="menu" || event.altKey || event.ctrlKey || event.metaKey || (active!==document.body && !root.contains(active))) return;
     const editing=!!active?.matches("input,select,textarea");
     if ((!event.key.startsWith("Arrow") && event.key!=="Escape") || (editing && event.key!=="Escape")) return;
     event.preventDefault();event.stopPropagation();

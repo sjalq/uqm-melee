@@ -1,9 +1,10 @@
-module Melee.Keys exposing (Held, inputs, none, press, release)
+module Melee.Keys exposing (Held, PickKey(..), inputs, layout, none, pickKey, press, release)
 
 {-| Hot-seat keys. Bottom is layout one, top is layout two. LEFT wins.
 -}
 
-import Melee.Input exposing (BattleInput, Turn(..))
+import Melee.Input exposing (BattleInput, KeyLayout(..), Turn(..))
+import Melee.Picker as Picker
 import Melee.Units exposing (Sided)
 
 
@@ -125,3 +126,59 @@ turn left right =
 
     else
         NoTurn
+
+
+layout : KeyLayout -> Held -> BattleInput
+layout selected held =
+    case selected of
+        KeyLayoutOne ->
+            (inputs held).bottom
+
+        KeyLayoutTwo ->
+            (inputs held).top
+
+
+type PickKey
+    = Move Picker.Direction
+    | Confirm
+    | Cancel
+
+
+pickKey : KeyLayout -> String -> Maybe PickKey
+pickKey selected key =
+    case ( selected, String.toLower key ) of
+        ( _, "escape" ) ->
+            Just Cancel
+
+        ( KeyLayoutOne, "arrowleft" ) ->
+            Just (Move Picker.Left)
+
+        ( KeyLayoutOne, "arrowright" ) ->
+            Just (Move Picker.Right)
+
+        ( KeyLayoutOne, "arrowup" ) ->
+            Just (Move Picker.Up)
+
+        ( KeyLayoutOne, "arrowdown" ) ->
+            Just (Move Picker.Down)
+
+        ( KeyLayoutOne, "enter" ) ->
+            Just Confirm
+
+        ( KeyLayoutTwo, "a" ) ->
+            Just (Move Picker.Left)
+
+        ( KeyLayoutTwo, "d" ) ->
+            Just (Move Picker.Right)
+
+        ( KeyLayoutTwo, "w" ) ->
+            Just (Move Picker.Up)
+
+        ( KeyLayoutTwo, "s" ) ->
+            Just (Move Picker.Down)
+
+        ( KeyLayoutTwo, "j" ) ->
+            Just Confirm
+
+        _ ->
+            Nothing

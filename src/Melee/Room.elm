@@ -7,6 +7,7 @@ import Melee.Keys as Keys
 import Melee.Local as Game
 import Melee.Preview as Preview
 import Melee.Ranking as Ranking
+import Melee.Rate as Rate
 import Melee.Rng exposing (Seed(..))
 import Melee.RoomCode as RoomCode
 import Melee.Ship exposing (ShipKind)
@@ -528,6 +529,47 @@ held inputs =
     }
 
 
+clockInterval : Host -> Maybe Float
+clockInterval host =
+    Dict.foldl
+        (\_ room fastest ->
+            let
+                interval =
+                    if room.code == "ARENA" then
+                        if exhibitionWatched host room then
+                            Just (1000 / toFloat Rate.cBattleFramesPerSecond)
+
+                        else
+                            Nothing
+
+                    else if bothConnected room && running room.game.phase then
+                        Just (1000 / toFloat Rate.cBattleFramesPerSecond)
+
+                    else if (room.ranked |> Maybe.map (\ranked -> ranked.outcome == Nothing) |> Maybe.withDefault False) || not (connected room.seats.bottom || connected room.seats.top) then
+                        Just 1000
+
+                    else
+                        Nothing
+            in
+            case ( fastest, interval ) of
+                ( Nothing, _ ) ->
+                    interval
+
+                ( _, Nothing ) ->
+                    fastest
+
+                ( Just a, Just b ) ->
+                    Just (min a b)
+        )
+        Nothing
+        host.rooms
+
+
+exhibitionWatched : Host -> Room -> Bool
+exhibitionWatched host room =
+    not (Dict.isEmpty host.previewClients && Dict.isEmpty room.spectators)
+
+
 tickRooms : Int -> Host -> ( Host, List Delivery )
 tickRooms now host =
     let
@@ -545,7 +587,10 @@ tickRooms now host =
             else
                 let
                     game =
-                        if room.code == "ARENA" && isVictory room.game.phase && now - room.touched >= 4000 then
+                        if room.code == "ARENA" && not (exhibitionWatched host room) then
+                            room.game
+
+                        else if room.code == "ARENA" && isVictory room.game.phase && now - room.touched >= 4000 then
                             (exhibition room.revision).game
 
                         else if room.code == "ARENA" then

@@ -13,6 +13,7 @@ import Melee.Init as Init
 import Melee.Input exposing (..)
 import Melee.Keys as Keys
 import Melee.Music as Music
+import Melee.Picker as Picker
 import Melee.Rate as Rate
 import Melee.Rng as Rng exposing (Seed(..))
 import Melee.Ship exposing (..)
@@ -91,12 +92,12 @@ type FleetSlot
 
 pickColumns : Int
 pickColumns =
-    7
+    Picker.columns
 
 
 pickRows : Int
 pickRows =
-    2
+    Picker.rows
 
 
 fleetSize : Int
@@ -104,9 +105,9 @@ fleetSize =
     14
 
 
-defaultPickCell : { row : Int, col : Int }
+defaultPickCell : Picker.Cell
 defaultPickCell =
-    { row = 0, col = pickColumns }
+    Picker.initial
 
 
 fleetSlots : List ShipKind -> List ShipKind -> List FleetSlot

@@ -1,6 +1,6 @@
 module Melee.Cyborg exposing (maneuverability, think)
 
-{-| Original Super Melee cyborg (cyborg.c, intel.c, per-ship intelligence_func).
+{-| Original Super Melee cyborg (cyborg.c, intel.c, per-ship intelligence\_func).
 
 `think` is pure and shared: local hot-seat on the FE and exhibition / computer
 seats on the BE both call it. It emits `BattleInput` only. It never allocates
@@ -18,6 +18,7 @@ import Melee.Battle exposing (Arena)
 import Melee.Element exposing (Body(..), Element, Life(..), Owner(..), objectCloaked)
 import Melee.Id exposing (toInt)
 import Melee.Input exposing (BattleInput, CyborgRating(..), Turn(..))
+import Melee.Motion as Motion
 import Melee.Rng as Rng exposing (Seed)
 import Melee.Ship exposing (Ability, Characteristics, ShipKind(..), intelRange, stock)
 import Melee.ShipState as State exposing (AndrosynthExtra(..), Combatant(..), CombatantCore)
@@ -553,9 +554,12 @@ considerEnemy work el dx dy concerns =
 
             shouldPursue =
                 work.moved
-                    || el.mass > maxShipMass
-                    || (work.range < longRange
-                            && (work.range <= closeRange
+                    || el.mass
+                    > maxShipMass
+                    || (work.range
+                            < longRange
+                            && (work.range
+                                    <= closeRange
                                     || (foeRange >= longRange && foeAbility.seekingWeapon)
                                     || (work.core.characteristics.maxThrust < enemyChars.maxThrust && work.range < foeRange)
                                )
@@ -764,7 +768,8 @@ considerCrew work el dx dy concerns =
     in
     if
         ours
-            && concerns.crew.whichTurn > turns
+            && concerns.crew.whichTurn
+            > turns
             && (concerns.enemy.whichTurn > 32 || (concerns.enemy.whichTurn > 8 && work.ship.target == Just el.id))
     then
         { concerns | crew = { object = Just el, move = Pursue, facing = 0, whichTurn = turns } }
@@ -1200,7 +1205,7 @@ enticeTarget work eval other toward away canTurn canThrust =
             plotIntercept work.space work.ship other 40 (closeRange * 2) > 0
 
         atSpeed =
-            not (isVelocityZero work.velocity) && (work.core.flags.atMaxSpeed || work.core.flags.beyondMaxSpeed)
+            Motion.atLimit work.velocity work.core.flags
 
         turnAngle =
             if tooClose then
@@ -1276,14 +1281,14 @@ thrustShip work angle =
             Trig.normalizeFacing (angleToFacing angle - velFacing) == 0
 
         coasting =
-            aligned && not (isVelocityZero work.velocity) && (work.core.flags.atMaxSpeed || work.core.flags.beyondMaxSpeed) && not work.core.flags.inGravityWell
+            aligned && Motion.atLimit work.velocity work.core.flags && not work.core.flags.inGravityWell
 
         cone =
             Trig.normalizeFacing (angleToFacing angle - work.facing + angleToFacing quadrant)
 
         should =
             work.thrust
-                || (not coasting && (cone == angleToFacing quadrant || (work.core.flags.beyondMaxSpeed && cone <= 8)))
+                || (not coasting && (cone == angleToFacing quadrant || (Motion.beyondLimit work.velocity work.core.flags && cone <= 8)))
     in
     if should then
         { work | thrust = True, velocity = inertial work }
@@ -1294,36 +1299,12 @@ thrustShip work angle =
 
 inertial : Work -> Melee.Units.VelocityDesc
 inertial work =
-    let
-        chars =
-            work.core.characteristics
+    Motion.thrust work.velocity (withFacing work.facing work.core) |> Motion.velocity
 
-        facing =
-            work.facing * 4
 
-        incV =
-            chars.thrustIncrement * 32
-
-        ( cx, cy ) =
-            Velocity.getCurrent work.velocity
-
-        dx =
-            cx + Trig.cosine facing incV
-
-        dy =
-            cy + Trig.sine facing incV
-
-        maxV =
-            chars.maxThrust * 32
-    in
-    if chars.thrustIncrement == chars.maxThrust then
-        Velocity.setVector chars.maxThrust (Facing work.facing)
-
-    else if dx * dx + dy * dy <= maxV * maxV then
-        Velocity.setComponents dx dy
-
-    else
-        Velocity.setVector chars.maxThrust (Facing work.facing)
+withFacing : Int -> CombatantCore -> CombatantCore
+withFacing facing core =
+    { core | facing = Facing facing }
 
 
 enemyMi : Work -> Int

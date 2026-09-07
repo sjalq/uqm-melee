@@ -156,7 +156,18 @@ sinVal a =
 
 sine : Int -> Int -> Int
 sine a m =
-    (sinVal a * m) // (2 ^ sinShift)
+    let
+        product =
+            sinVal a * m
+
+        scale =
+            2 ^ sinShift
+    in
+    if product < 0 then
+        negate ((negate product + scale - 1) // scale)
+
+    else
+        product // scale
 
 
 cosine : Int -> Int -> Int

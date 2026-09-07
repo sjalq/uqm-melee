@@ -47,7 +47,7 @@ between interval before after =
                 Nothing
 
             else
-                Just { stage = phase, frame = next.frame, combatants = next.combatants, changed = Dict.filter (\id el -> Dict.get id old.elements /= Just el) next.elements |> Dict.values, removed = Dict.keys old.elements |> List.filter (\id -> not (Dict.member id next.elements)), queue = next.queue, sounds = after.sounds, interval = interval }
+                Just { stage = phase, frame = next.frame, combatants = next.combatants, changed = Dict.filter (\id el -> Dict.get id old.elements /= Just el) next.elements |> Dict.values, removed = Dict.diff old.elements next.elements |> Dict.keys, queue = next.queue, sounds = after.sounds, interval = interval }
 
         _ ->
             Nothing

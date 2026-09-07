@@ -48,7 +48,7 @@ suite =
                         Room.init
                 in
                 Room.tick 5001 { host | rooms = Dict.singleton "ARENA" ended } |> Tuple.first |> .rooms |> Dict.get "ARENA" |> Maybe.map (\room -> ( Room.running room.game.phase, room.spectators, room.game.fleets /= game.fleets )) |> Expect.equal (Just ( True, ended.spectators, True ))
-        , test "combat is capped at ten deliveries and preview follows sixty server ticks per second" <|
+        , test "combat is capped at ten deliveries and preview follows the 24 Hz physics clock" <|
             \() ->
                 let
                     watching =
@@ -57,17 +57,17 @@ suite =
                     step n ( host, accumulated ) =
                         let
                             ( next, delivered ) =
-                                Room.tick (round (toFloat n * 1000 / 60)) host
+                                Room.tick (round (toFloat n * 1000 / 24)) host
                         in
                         ( next, delivered ++ accumulated )
 
                     messages =
-                        List.range 1 60 |> List.foldl step ( watching, [] ) |> Tuple.second
+                        List.range 1 24 |> List.foldl step ( watching, [] ) |> Tuple.second
 
                     count client =
                         List.filter (\d -> d.client == client) messages |> List.length
                 in
-                Expect.all [ \_ -> Expect.atMost 10 (count "w"), \_ -> Expect.atLeast 7 (count "w"), \_ -> Expect.equal 60 (count "l") ] ()
+                Expect.all [ \_ -> Expect.atMost 10 (count "w"), \_ -> Expect.atLeast 7 (count "w"), \_ -> Expect.equal 24 (count "l") ] ()
         , test "existing exhibitions upgrade both computer pilots to awesome" <|
             \() ->
                 let
@@ -84,13 +84,30 @@ suite =
                         { initial | game = { game | difficulty = Input.GoodCyborg } }
 
                     upgraded =
-                        Room.tick 17 { host | rooms = Dict.singleton "ARENA" old } |> Tuple.first |> .rooms |> Dict.get "ARENA" |> Maybe.map .game
+                        Room.tick 17 { host | rooms = Dict.singleton "ARENA" old, previewClients = Dict.singleton "viewer" "session" } |> Tuple.first |> .rooms |> Dict.get "ARENA" |> Maybe.map .game
                 in
                 Expect.all
                     [ \_ -> Expect.equal Input.AwesomeCyborg game.difficulty
                     , \_ -> Expect.equal (Just ( Game.Demo, Input.AwesomeCyborg )) (Maybe.map (\next -> ( next.mode, next.difficulty )) upgraded)
                     ]
                     ()
+        , test "an unwatched exhibition needs no backend clock and does not advance" <|
+            \() ->
+                Expect.all
+                    [ \_ -> Expect.equal Nothing (Room.clockInterval Room.init)
+                    , \_ -> Expect.equal Room.init.rooms (Room.tick 5000 Room.init |> Tuple.first |> .rooms)
+                    ]
+                    ()
+        , test "a preview subscriber starts the physics clock and leaving stops it" <|
+            \() ->
+                let
+                    watching =
+                        Room.handle "session" "viewer" (Room.PreviewSubscription True) Room.init |> Tuple.first
+
+                    left =
+                        Room.handle "session" "viewer" (Room.PreviewSubscription False) watching |> Tuple.first
+                in
+                Expect.equal ( Just (1000 / 24), Nothing ) ( Room.clockInterval watching, Room.clockInterval left )
         , test "input changes do not send full state acknowledgements" <|
             \() ->
                 Room.handle "pilot" "p" Room.CreateRoom Room.init |> Tuple.first |> Room.handle "pilot" "p" (Room.Controls Input.idle) |> Tuple.second |> Expect.equal []
@@ -101,7 +118,7 @@ suite =
                         (Room.exhibition 0).game
 
                     after =
-                        Room.tick 125 Room.init |> Tuple.first |> .rooms |> Dict.get "ARENA" |> Maybe.map .game |> Maybe.withDefault before
+                        Room.tick 125 (Room.handle "session" "viewer" (Room.PreviewSubscription True) Room.init |> Tuple.first) |> Tuple.first |> .rooms |> Dict.get "ARENA" |> Maybe.map .game |> Maybe.withDefault before
 
                     rendered model =
                         Game.phaseArena model.phase |> Maybe.map (\arena -> ( arena.elements, arena.combatants, arena.queue ))

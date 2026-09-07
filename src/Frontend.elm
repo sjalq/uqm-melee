@@ -21,20 +21,22 @@ import Html.Events as HE
 import Json.Decode as Decode
 import Lamdera
 import Melee.Init
+import Melee.Input as Input
 import Melee.Keys as Keys
 import Melee.Local as Game
 import Melee.Location as Location
 import Melee.Menu as Menu
+import Melee.Picker as Picker
 import Melee.Presentation as Presentation
 import Melee.Preview as Preview
 import Melee.Rate as MeleeRate
 import Melee.Rng exposing (Seed(..))
 import Melee.Room as Melee
 import Melee.Ship as Ship
-import Melee.Units exposing (Side(..))
 import Melee.Step as MeleeStep
 import Melee.Stream as Stream
 import Melee.Telemetry as Telemetry
+import Melee.Units exposing (Side(..))
 import Pages.Admin
 import Pages.Default
 import Pages.Examples
@@ -1110,7 +1112,7 @@ gameAction message model =
                     ( model, Command.none )
 
 
-refreshPickCell : Game.Phase -> Game.Phase -> { bottom : { row : Int, col : Int }, top : { row : Int, col : Int } } -> { bottom : { row : Int, col : Int }, top : { row : Int, col : Int } }
+refreshPickCell : Game.Phase -> Game.Phase -> { bottom : Picker.Cell, top : Picker.Cell } -> { bottom : Picker.Cell, top : Picker.Cell }
 refreshPickCell previous next current =
     case ( previous, next ) of
         ( Game.Selecting _ _, Game.Selecting _ _ ) ->
@@ -1123,38 +1125,50 @@ refreshPickCell previous next current =
             current
 
 
-nudgeCell : Int -> Int -> { row : Int, col : Int } -> { row : Int, col : Int }
-nudgeCell drow dcol cell =
-    { row = modBy Game.pickRows (cell.row + drow + Game.pickRows)
-    , col = modBy (Game.pickColumns + 1) (cell.col + dcol + Game.pickColumns + 1)
-    }
-
-
 pickKey : String -> Maybe Ship.ShipKind -> Maybe Ship.ShipKind -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
 pickKey key bottom top model =
     let
-        needs side selected =
-            Game.humanNeedsPick model.game.mode side selected
-                && (case model.melee of
-                        Melee.Seated snapshot ->
-                            snapshot.side == side
-
-                        Melee.Watching _ ->
-                            False
-
-                        Melee.Browsing ->
-                            True
-                   )
-
-        move side drow dcol =
+        selected side =
             if side == Bottom then
-                { model | pickCell = { bottom = nudgeCell drow dcol model.pickCell.bottom, top = model.pickCell.top } }
+                bottom
 
             else
-                { model | pickCell = { bottom = model.pickCell.bottom, top = nudgeCell drow dcol model.pickCell.top } }
+                top
 
-        confirm side cell =
-            if cell.col == Game.pickColumns then
+        layout side =
+            case model.melee of
+                Melee.Seated snapshot ->
+                    if snapshot.side == side then
+                        Just Input.KeyLayoutOne
+
+                    else
+                        Nothing
+
+                Melee.Watching _ ->
+                    Nothing
+
+                Melee.Browsing ->
+                    Just
+                        (if side == Bottom then
+                            Input.KeyLayoutOne
+
+                         else
+                            Input.KeyLayoutTwo
+                        )
+
+        command side =
+            if Game.humanNeedsPick model.game.mode side (selected side) then
+                layout side |> Maybe.andThen (\keys -> Keys.pickKey keys key) |> Maybe.map (Tuple.pair side)
+
+            else
+                Nothing
+
+        confirm side =
+            let
+                cell =
+                    Picker.coordinates (Game.get side model.pickCell)
+            in
+            if cell.col == Picker.columns then
                 if cell.row == 0 then
                     gameAction (Game.RandomPick side) model
 
@@ -1162,123 +1176,24 @@ pickKey key bottom top model =
                     gameAction Game.Menu model
 
             else
-                case Game.slotAt (cell.row * Game.pickColumns + cell.col) (Game.fleetSlots (Game.get side model.game.fleets) (Game.get side model.game.remaining)) of
+                case Game.slotAt (cell.row * Picker.columns + cell.col) (Game.fleetSlots (Game.get side model.game.fleets) (Game.get side model.game.remaining)) of
                     Game.Ready index _ ->
                         gameAction (Game.Pick side index) model
 
                     _ ->
                         ( model, Command.none )
     in
-    case key of
-        "Escape" ->
+    case List.filterMap command [ Bottom, Top ] |> List.head of
+        Just ( side, Keys.Move direction ) ->
+            ( { model | pickCell = Game.set side (Picker.move direction (Game.get side model.pickCell)) model.pickCell }, Command.none )
+
+        Just ( side, Keys.Confirm ) ->
+            confirm side
+
+        Just ( _, Keys.Cancel ) ->
             gameAction Game.Menu model
 
-        "ArrowLeft" ->
-            if needs Bottom bottom then
-                ( move Bottom 0 -1, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "ArrowRight" ->
-            if needs Bottom bottom then
-                ( move Bottom 0 1, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "ArrowUp" ->
-            if needs Bottom bottom then
-                ( move Bottom -1 0, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "ArrowDown" ->
-            if needs Bottom bottom then
-                ( move Bottom 1 0, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "Enter" ->
-            if needs Bottom bottom then
-                confirm Bottom model.pickCell.bottom
-
-            else
-                ( model, Command.none )
-
-        "a" ->
-            if needs Top top then
-                ( move Top 0 -1, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "A" ->
-            if needs Top top then
-                ( move Top 0 -1, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "d" ->
-            if needs Top top then
-                ( move Top 0 1, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "D" ->
-            if needs Top top then
-                ( move Top 0 1, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "w" ->
-            if needs Top top then
-                ( move Top -1 0, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "W" ->
-            if needs Top top then
-                ( move Top -1 0, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "s" ->
-            if needs Top top then
-                ( move Top 1 0, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "S" ->
-            if needs Top top then
-                ( move Top 1 0, Command.none )
-
-            else
-                ( model, Command.none )
-
-        "j" ->
-            if needs Top top then
-                confirm Top model.pickCell.top
-
-            else
-                ( model, Command.none )
-
-        "J" ->
-            if needs Top top then
-                confirm Top model.pickCell.top
-
-            else
-                ( model, Command.none )
-
-        _ ->
+        Nothing ->
             ( model, Command.none )
 
 

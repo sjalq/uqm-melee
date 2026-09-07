@@ -13,6 +13,7 @@ import Melee.Graphics exposing (Quality(..))
 import Melee.Input exposing (CyborgRating(..))
 import Melee.Local as Game exposing (Mode(..), Phase(..))
 import Melee.Location as Location
+import Melee.Picker as Picker
 import Melee.Presentation as Presentation
 import Melee.Ranking as Ranking
 import Melee.Room as Room
@@ -21,6 +22,8 @@ import Melee.ShipState as ShipState
 import Melee.Space as Space
 import Melee.Units exposing (FrameCount(..), Side(..))
 import Melee.View
+import Svg
+import Svg.Attributes as S
 import Theme
 import Types exposing (..)
 
@@ -44,6 +47,20 @@ view model _ =
 
              else
                 "false"
+            )
+        , A.attribute "data-input-mode"
+            (case game.phase of
+                Selecting _ _ ->
+                    "selection"
+
+                Countdown _ _ ->
+                    "flight"
+
+                Combat _ ->
+                    "flight"
+
+                _ ->
+                    "menu"
             )
         , A.attribute "data-match"
             (case model.melee of
@@ -213,59 +230,15 @@ hangar location client game =
         [ div [ A.class "classic-fleet-screen" ]
             [ fleet client game Top
             , fleet client game Bottom
-            , button
-                [ A.disabled (isOnline client)
-                , A.class "classic-controller top-controller"
-                , E.onClick
-                    (GameMsg
-                        (Game.SetMode
-                            (if game.mode == Versus then
-                                Solo
-
-                             else
-                                Versus
-                            )
-                        )
-                    )
-                ]
-                [ text
-                    (if game.mode == Versus then
-                        "HUMAN CONTROL"
-
-                     else
-                        "CYBORG CONTROL"
-                    )
-                ]
-            , button
-                [ A.disabled (isOnline client)
-                , A.class "classic-controller bottom-controller"
-                , E.onClick
-                    (GameMsg
-                        (Game.SetMode
-                            (if game.mode == Demo then
-                                Solo
-
-                             else
-                                Demo
-                            )
-                        )
-                    )
-                ]
-                [ text
-                    (if game.mode == Demo then
-                        "CYBORG CONTROL"
-
-                     else
-                        "HUMAN CONTROL"
-                    )
-                ]
+            , controllerButton client game Top
+            , controllerButton client game Bottom
             , button [ A.id "start-battle", A.class "classic-launch", A.attribute "aria-label" "Choose ships and launch", A.disabled (List.isEmpty game.fleets.bottom || List.isEmpty game.fleets.top), E.onClick (GameMsg Game.Start) ]
                 [ img [ A.src "/classic/meleemenu-025.png", A.alt "BATTLE!", A.style "width" "100%", A.style "height" "100%", A.style "image-rendering" "pixelated" ] [] ]
-            , button [ A.class "classic-save", A.attribute "aria-label" "Save fleets", E.onClick SaveFleets ] [ text "SAVE" ]
-            , button [ A.disabled (isOnline client), A.class "classic-load", A.attribute "aria-label" "Load fleets", E.onClick LoadFleets ] [ text "LOAD" ]
-            , button [ A.disabled (isOnline client), A.class "classic-lower-load", A.attribute "aria-label" "Load fleet file", E.onClick LoadFleets ] [ text "LOAD" ]
-            , button [ A.class "classic-lower-save", A.attribute "aria-label" "Save fleet file", E.onClick SaveFleets ] [ text "SAVE" ]
-            , div [ A.class "classic-quit-cover" ] []
+            , button [ A.class "classic-save", A.attribute "aria-label" "Save fleets", E.onClick SaveFleets ] [ menuImage 18 "SAVE" ]
+            , button [ A.disabled (isOnline client), A.class "classic-load", A.attribute "aria-label" "Load fleets", E.onClick LoadFleets ] [ menuImage 17 "LOAD" ]
+            , button [ A.disabled (isOnline client), A.class "classic-lower-load", A.attribute "aria-label" "Load fleet file", E.onClick LoadFleets ] [ menuImage 22 "LOAD" ]
+            , button [ A.class "classic-lower-save", A.attribute "aria-label" "Save fleet file", E.onClick SaveFleets ] [ menuImage 21 "SAVE" ]
+            , button [ A.class "classic-quit", A.attribute "aria-label" "Return to online arena", E.onClick (ShowLocalGame False) ] [ menuImage 29 "QUIT" ]
             ]
         , div [ A.class "classic-settings" ]
             [ localAction client "Solo vs computer" (Game.SetMode Solo) (game.mode == Solo)
@@ -353,6 +326,108 @@ hangar location client game =
             , div [ A.class "hangar-key-hints" ] [ text "ARROWS · MOVE     ENTER · ADD     CLICK FLEET SHIP · REMOVE" ]
             ]
         ]
+
+
+menuImage : Int -> String -> Html msg
+menuImage frame label =
+    img [ A.src ("/classic/meleemenu-" ++ String.padLeft 3 '0' (String.fromInt frame) ++ ".png"), A.alt label ] []
+
+
+controllerButton : Room.Client -> Game.Model -> Side -> Html FrontendMsg
+controllerButton client game side =
+    let
+        human =
+            Game.humanNeedsPick game.mode side Nothing
+
+        nextMode =
+            case ( side, game.mode ) of
+                ( Top, Versus ) ->
+                    Solo
+
+                ( Top, Solo ) ->
+                    Versus
+
+                ( Top, Demo ) ->
+                    ReverseSolo
+
+                ( Top, ReverseSolo ) ->
+                    Demo
+
+                ( Bottom, Versus ) ->
+                    ReverseSolo
+
+                ( Bottom, ReverseSolo ) ->
+                    Versus
+
+                ( Bottom, Solo ) ->
+                    Demo
+
+                ( Bottom, Demo ) ->
+                    Solo
+
+        rating =
+            case game.difficulty of
+                StandardCyborg ->
+                    1
+
+                GoodCyborg ->
+                    2
+
+                AwesomeCyborg ->
+                    3
+
+        frame =
+            (if side == Top then
+                1
+
+             else
+                9
+            )
+                + (if human then
+                    0
+
+                   else
+                    rating
+                  )
+
+        label =
+            (if side == Top then
+                "Top: "
+
+             else
+                "Bottom: "
+            )
+                ++ (if human then
+                        "Human control"
+
+                    else
+                        case game.difficulty of
+                            StandardCyborg ->
+                                "Standard cyborg"
+
+                            GoodCyborg ->
+                                "Good cyborg"
+
+                            AwesomeCyborg ->
+                                "Awesome cyborg"
+                   )
+    in
+    button
+        [ A.disabled (isOnline client)
+        , A.class
+            ("classic-controller "
+                ++ (if side == Top then
+                        "top-controller"
+
+                    else
+                        "bottom-controller"
+                   )
+            )
+        , A.attribute "aria-label" label
+        , A.title "Switch human / cyborg control"
+        , E.onClick (GameMsg (Game.SetMode nextMode))
+        ]
+        [ menuImage frame label ]
 
 
 hangarShipCard : Game.Model -> ShipKind -> Html FrontendMsg
@@ -457,9 +532,9 @@ shipCard game ship =
         ]
 
 
-pickScreen : Room.Client -> Game.Model -> Maybe ShipKind -> Maybe ShipKind -> { bottom : { row : Int, col : Int }, top : { row : Int, col : Int } } -> Html FrontendMsg
+pickScreen : Room.Client -> Game.Model -> Maybe ShipKind -> Maybe ShipKind -> { bottom : Picker.Cell, top : Picker.Cell } -> Html FrontendMsg
 pickScreen client game bottom top cells =
-    div [ A.class "classic-battle-page" ]
+    div [ A.class "classic-battle-page selection-page" ]
         [ Audio.effects game
         , div [ A.class "classic-battle-frame" ]
             [ div [ A.class "pick-stage" ]
@@ -478,9 +553,12 @@ pickScreen client game bottom top cells =
         ]
 
 
-pickFrame : Room.Client -> Game.Model -> Side -> Maybe ShipKind -> { row : Int, col : Int } -> Html FrontendMsg
-pickFrame client game side selected cell =
+pickFrame : Room.Client -> Game.Model -> Side -> Maybe ShipKind -> Picker.Cell -> Html FrontendMsg
+pickFrame client game side selected selectedCell =
     let
+        cell =
+            Picker.coordinates selectedCell
+
         slots =
             Game.fleetSlots (Game.get side game.fleets) (Game.get side game.remaining)
 
@@ -603,27 +681,30 @@ battle client game arena overlay =
             , span [ A.class "round-label" ] [ text ("ROUND " ++ String.fromInt game.round ++ " · " ++ String.fromInt (List.length game.remaining.bottom) ++ " vs " ++ String.fromInt (List.length game.remaining.top)) ]
             ]
         , div [ A.class "classic-battle-frame" ]
-            [ Melee.View.viewCockpitWithControls (pilotControls client game) game.graphics game.zoomWidth arena
+            [ Melee.View.viewCockpit game.graphics game.zoomWidth arena
             , case overlay of
                 Nothing ->
                     text ""
 
                 Just ( title, subtitle ) ->
                     div [ A.class "classic-overlay" ]
-                        [ eyebrow title
-                        , div [] [ text subtitle ]
-                        , case game.phase of
-                            Paused _ ->
-                                if isWatching client then
-                                    text "The players have paused this match."
+                        [ div [ A.class "classic-dialog" ]
+                            [ eyebrow title
+                            , div [] [ text subtitle ]
+                            , case game.phase of
+                                Paused _ ->
+                                    if isWatching client then
+                                        text "The players have paused this match."
 
-                                else
-                                    div [ A.class "classic-settings" ] [ action "Resume" Game.TogglePause True, action "Return to hangar" Game.Menu False ]
+                                    else
+                                        div [ A.class "classic-settings" ] [ action "Resume" Game.TogglePause True, action "Return to hangar" Game.Menu False ]
 
-                            _ ->
-                                text ""
+                                _ ->
+                                    text ""
+                            ]
                         ]
             ]
+        , div [ A.class "battle-controls", A.attribute "aria-label" "Pilot controls" ] (pilotControls client game)
         , div [ A.style "padding" "8px 16px", A.style "font-size" "16px", A.attribute "aria-label" "Ship abilities" ]
             (List.map
                 (\side ->
@@ -750,7 +831,17 @@ onlinePanel model =
             button (buttonAttrs primary ++ [ E.onClick (Online message) ]) [ text label ]
 
         title name subtitle =
-            div [ A.class "room-heading" ] [ h1 [] [ text name ], p [] [ text subtitle ] ]
+            div [ A.class "room-heading" ]
+                [ h1 []
+                    [ if name == "SUPER MELEE" then
+                        Svg.svg [ S.viewBox "54 0 198 20", S.class "original-logo", A.attribute "role" "img", A.attribute "aria-label" "SUPER MELEE" ]
+                            [ Svg.image [ S.x "0", S.y "0", S.width "320", S.height "240", S.xlinkHref "/classic/meleemenu-000.png" ] [] ]
+
+                      else
+                        text name
+                    ]
+                , p [] [ text subtitle ]
+                ]
 
         location =
             model.location

@@ -43,11 +43,14 @@ subscriptions model =
     Subscription.batch
         [ Effect.Lamdera.onConnect (\session client -> MeleeConnected (Effect.Lamdera.sessionIdToString session) (Effect.Lamdera.clientIdToString client))
         , Effect.Lamdera.onDisconnect (\session client -> MeleeDisconnected (Effect.Lamdera.sessionIdToString session) (Effect.Lamdera.clientIdToString client))
-        , if Dict.isEmpty model.melee.rooms then
-            Subscription.none
+        , case Melee.clockInterval model.melee of
+            Nothing ->
+                -- Keep the server time fresh for new draft/reconnect deadlines.
+                -- No unused exhibition simulation or delivery runs on this clock.
+                Time.every (Duration.seconds 1) (Time.posixToMillis >> MeleeTick)
 
-          else
-            Time.every (Duration.milliseconds (1000 / 60)) (Time.posixToMillis >> MeleeTick)
+            Just milliseconds ->
+                Time.every (Duration.milliseconds milliseconds) (Time.posixToMillis >> MeleeTick)
         ]
 
 

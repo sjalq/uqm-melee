@@ -10,6 +10,7 @@ import Melee.Id exposing (ElementId(..), toInt)
 import Melee.Init exposing (emptyFlags)
 import Melee.Input exposing (BattleInput, Turn(..))
 import Melee.Masks as Masks
+import Melee.Motion as Motion
 import Melee.Projectile as Projectile exposing (Animation(..), BeamKind(..), ContactKind(..), Guidance(..), Inheritance(..), Launch(..), MissileKind(..), Weapon(..))
 import Melee.Rate as Rate
 import Melee.Rng as Rng
@@ -433,73 +434,12 @@ thrustShip input el c =
 
 
 inertialThrust : Melee.Units.VelocityDesc -> CombatantCore -> ( Melee.Units.VelocityDesc, { atMaxSpeed : Bool, beyondMaxSpeed : Bool } )
-inertialThrust vel c =
+inertialThrust vel core =
     let
-        chars =
-            c.characteristics
-
-        (Facing facing) =
-            c.facing
-
-        currentAngle =
-            facing * 4
-
-        (Angle travelA) =
-            vel.travelAngle
+        motion =
+            Motion.thrust vel core
     in
-    if chars.thrustIncrement == chars.maxThrust then
-        ( Velocity.setVector chars.maxThrust c.facing
-        , { atMaxSpeed = True, beyondMaxSpeed = False }
-        )
-
-    else if travelA == currentAngle && (c.flags.atMaxSpeed || c.flags.beyondMaxSpeed) && not c.flags.inGravityWell then
-        ( vel, { atMaxSpeed = c.flags.atMaxSpeed, beyondMaxSpeed = c.flags.beyondMaxSpeed } )
-
-    else
-        let
-            incV =
-                chars.thrustIncrement * 32
-
-            ( cx, cy ) =
-                Velocity.getCurrent vel
-
-            dx =
-                cx + Trig.cosine currentAngle incV
-
-            dy =
-                cy + Trig.sine currentAngle incV
-
-            desired =
-                dx * dx + dy * dy
-
-            maxV =
-                chars.maxThrust * 32
-
-            maxSpeed =
-                maxV * maxV
-
-            currentSpeed =
-                cx * cx + cy * cy
-        in
-        if desired <= maxSpeed then
-            ( Velocity.setComponents dx dy, { atMaxSpeed = False, beyondMaxSpeed = False } )
-
-        else if travelA == currentAngle then
-            ( Velocity.setVector chars.maxThrust c.facing
-            , { atMaxSpeed = True, beyondMaxSpeed = False }
-            )
-
-        else
-            let
-                desiredSpeed =
-                    max 1 (Trig.squareRoot desired)
-
-                limit =
-                    max maxV (Trig.squareRoot currentSpeed)
-            in
-            ( Velocity.setComponents (dx * limit // desiredSpeed) (dy * limit // desiredSpeed)
-            , { atMaxSpeed = limit == maxV, beyondMaxSpeed = limit > maxV }
-            )
+    ( Motion.velocity motion, Motion.flags motion )
 
 
 collideAll : Arena -> Arena
