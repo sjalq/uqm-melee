@@ -368,6 +368,16 @@ tick held model =
 
 tickWith : Strategy.Pilots -> Sided CyborgRating -> Keys.Held -> Model -> Model
 tickWith pilots ratings held model =
+    tickUsing Step.tick Step.pump pilots ratings held model
+
+
+tickAuthoritativeWith : Strategy.Pilots -> Sided CyborgRating -> Keys.Held -> Model -> Model
+tickAuthoritativeWith pilots ratings held model =
+    tickUsing Step.tickAuthoritative Step.pumpAuthoritative pilots ratings held model
+
+
+tickUsing : (Sided BattleInput -> Arena -> Arena) -> (Sided BattleInput -> Arena -> Arena) -> Strategy.Pilots -> Sided CyborgRating -> Keys.Held -> Model -> Model
+tickUsing battleStep roundPump pilots ratings held model =
     case model.phase of
         Countdown frames arena ->
             if frames <= 1 then
@@ -382,17 +392,17 @@ tickWith pilots ratings held model =
                     Rate.advancePump arena.pumpAcc
 
                 next =
-                    List.foldl (\_ a -> battleFrameWith pilots ratings held model a) { arena | pumpAcc = acc } (List.range 1 frames)
+                    Rate.repeat frames (battleFrameUsing battleStep pilots ratings held model) { arena | pumpAcc = acc }
             in
             if crew next.combatants.bottom next == 0 || crew next.combatants.top next == 0 then
-                { model | phase = RoundOver (90 + dittyFrames next) next, seed = next.seed, sounds = collectSounds arena next model.sounds }
+                { model | phase = RoundOver (90 + dittyFrames next) next, seed = next.seed, sounds = nextSounds model arena next }
 
             else
-                { model | phase = Combat next, sounds = collectSounds arena next model.sounds }
+                { model | phase = Combat next, sounds = nextSounds model arena next }
 
         RoundOver frames arena ->
             if frames > 1 then
-                { model | phase = RoundOver (frames - 1) (Step.pump { bottom = idle, top = idle } arena) }
+                { model | phase = RoundOver (frames - 1) (roundPump { bottom = idle, top = idle } arena) }
 
             else
                 finishRound arena model
@@ -536,6 +546,11 @@ battleFrame held model arena =
 
 battleFrameWith : Strategy.Pilots -> Sided CyborgRating -> Keys.Held -> Model -> Arena -> Arena
 battleFrameWith pilots ratings held model arena =
+    battleFrameUsing Step.tick pilots ratings held model arena
+
+
+battleFrameUsing : (Sided BattleInput -> Arena -> Arena) -> Strategy.Pilots -> Sided CyborgRating -> Keys.Held -> Model -> Arena -> Arena
+battleFrameUsing step pilots ratings held model arena =
     let
         human =
             Keys.inputs held
@@ -560,7 +575,7 @@ battleFrameWith pilots ratings held model arena =
             else
                 ( human.top, arena1 )
     in
-    Step.tick { bottom = bottomIn, top = topIn } arena2
+    step { bottom = bottomIn, top = topIn } arena2
 
 
 advance : Float -> Keys.Held -> Model -> Model
@@ -568,8 +583,23 @@ advance milliseconds held model =
     advanceWith Strategy.originalPilots { bottom = model.difficulty, top = model.difficulty } milliseconds held model
 
 
+advanceAuthoritative : Float -> Keys.Held -> Model -> Model
+advanceAuthoritative milliseconds held model =
+    advanceAuthoritativeWith Strategy.originalPilots { bottom = model.difficulty, top = model.difficulty } milliseconds held model
+
+
 advanceWith : Strategy.Pilots -> Sided CyborgRating -> Float -> Keys.Held -> Model -> Model
 advanceWith pilots ratings milliseconds held model =
+    advanceUsing tickWith pilots ratings milliseconds held model
+
+
+advanceAuthoritativeWith : Strategy.Pilots -> Sided CyborgRating -> Float -> Keys.Held -> Model -> Model
+advanceAuthoritativeWith pilots ratings milliseconds held model =
+    advanceUsing tickAuthoritativeWith pilots ratings milliseconds held model
+
+
+advanceUsing : (Strategy.Pilots -> Sided CyborgRating -> Keys.Held -> Model -> Model) -> Strategy.Pilots -> Sided CyborgRating -> Float -> Keys.Held -> Model -> Model
+advanceUsing step pilots ratings milliseconds held model =
     let
         total =
             model.clock + clamp 0 250 milliseconds
@@ -580,7 +610,7 @@ advanceWith pilots ratings milliseconds held model =
         next =
             { model | clock = total - toFloat frames * (1000 / 60) }
     in
-    List.foldl (\_ state -> tickWith pilots ratings held state) next (List.range 1 frames)
+    Rate.repeat frames (step pilots ratings held) next
 
 
 collectSounds : Arena -> Arena -> List { id : Int, source : String, age : Int } -> List { id : Int, source : String, age : Int }
@@ -593,21 +623,37 @@ collectSounds old next sounds =
             (FrameCount frame) =
                 next.frame
 
-            shot side =
-                let
-                    c =
-                        State.core (get side next.combatants)
+            signals =
+                if next.nextElementId == old.nextElementId then
+                    { bottom = False, top = False, explosion = False }
 
-                    kind =
-                        State.kind (get side next.combatants)
+                else
+                    Dict.foldl
+                        (\_ el found ->
+                            if toInt el.id < old.nextElementId then
+                                found
 
-                    fired =
-                        Dict.values next.elements |> List.any (\el -> el.owner == Owned side && toInt el.id >= old.nextElementId)
+                            else
+                                { bottom = found.bottom || el.owner == Owned Bottom
+                                , top = found.top || el.owner == Owned Top
+                                , explosion = found.explosion || el.body == ExplosionBody
+                                }
+                        )
+                        { bottom = False, top = False, explosion = False }
+                        next.elements
 
-                    folder =
-                        (Catalog.info kind).sprite |> String.split "/" |> List.take 3 |> String.join "/"
-                in
-                if fired then
+            shot side fired =
+                if not fired then
+                    []
+
+                else
+                    let
+                        kind =
+                            State.kind (get side next.combatants)
+
+                        folder =
+                            (Catalog.info kind).sprite |> String.split "/" |> List.take 3 |> String.join "/"
+                    in
                     [ { id =
                             frame
                                 * 4
@@ -622,20 +668,23 @@ collectSounds old next sounds =
                       }
                     ]
 
-                else
-                    []
-
-            exploded =
-                Dict.values next.elements |> List.any (\el -> el.body == ExplosionBody && toInt el.id >= old.nextElementId)
-
             explosion =
-                if exploded then
+                if signals.explosion then
                     [ { id = frame * 4 + 2, source = "/sounds/explosion.wav", age = 0 } ]
 
                 else
                     []
         in
-        (sounds |> List.filter (\sound -> sound.age < 30) |> List.map (\sound -> { sound | age = sound.age + 1 })) ++ shot Bottom ++ shot Top ++ explosion
+        (sounds |> List.filter (\sound -> sound.age < 30) |> List.map (\sound -> { sound | age = sound.age + 1 })) ++ shot Bottom signals.bottom ++ shot Top signals.top ++ explosion
+
+
+nextSounds : Model -> Arena -> Arena -> List { id : Int, source : String, age : Int }
+nextSounds model old next =
+    if model.sound then
+        collectSounds old next model.sounds
+
+    else
+        []
 
 
 computer : CyborgRating -> Side -> Arena -> BattleInput

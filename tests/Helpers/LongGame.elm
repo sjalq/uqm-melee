@@ -1,9 +1,10 @@
-module Helpers.LongGame exposing (Outcome(..), Report, run, runWith, start)
+module Helpers.LongGame exposing (Outcome(..), Report, healthy, nextEvent, run, runWith, start)
 
 import Melee.Catalog as Catalog
 import Melee.Input exposing (CyborgRating(..))
 import Melee.Keys as Keys
 import Melee.Local as Game
+import Melee.Rate as Rate
 import Melee.Rng exposing (Seed(..))
 import Melee.Ship exposing (ShipKind)
 import Melee.ShipState as State
@@ -27,13 +28,18 @@ type Outcome
     | Invalidated
 
 
+healthy : Int -> Report -> Bool
+healthy quietLimit report =
+    report.outcome == Completed || report.longestQuietTicks < quietLimit
+
+
 start : Int -> List ShipKind -> List ShipKind -> Game.Model
 start seed bottom top =
     let
         base =
             Game.init
     in
-    Game.update Game.Start { base | mode = Game.Demo, difficulty = AwesomeCyborg, seed = Seed seed, fleets = { bottom = bottom, top = top } }
+    Game.update Game.Start { base | mode = Game.Demo, difficulty = AwesomeCyborg, seed = Seed seed, fleets = { bottom = bottom, top = top }, sound = False }
 
 
 run : Int -> Game.Model -> Report
@@ -105,8 +111,8 @@ loop pilots ratings maxTicks ticks quiet longest previous game =
         let
             -- One real 60 Hz update. This includes the 24 Hz physics pump,
             -- countdowns, death, resurrection, selection and survivor carry.
-            next =
-                Game.advanceWith pilots ratings (1000 / 60) Keys.none game
+            ( elapsed, next ) =
+                nextEvent pilots ratings (maxTicks - ticks) game
 
             current =
                 progress next
@@ -116,6 +122,38 @@ loop pilots ratings maxTicks ticks quiet longest previous game =
                     0
 
                 else
-                    quiet + 1
+                    quiet + elapsed
+
+            longestBeforeProgress =
+                if current /= previous then
+                    quiet + elapsed - 1
+
+                else
+                    dry
         in
-        loop pilots ratings maxTicks (ticks + 1) dry (max longest dry) current next
+        loop pilots ratings maxTicks (ticks + elapsed) dry (max longest longestBeforeProgress) current next
+
+
+nextEvent : Strategy.Pilots -> Melee.Units.Sided CyborgRating -> Int -> Game.Model -> ( Int, Game.Model )
+nextEvent pilots ratings remaining game =
+    case game.phase of
+        Game.Combat arena ->
+            let
+                displayTicks =
+                    max 1 ((Rate.displayHz - arena.pumpAcc + Rate.cBattleFramesPerSecond - 1) // Rate.cBattleFramesPerSecond)
+            in
+            if displayTicks <= remaining then
+                let
+                    skipped =
+                        displayTicks - 1
+
+                    primed =
+                        { game | phase = Game.Combat { arena | pumpAcc = arena.pumpAcc + skipped * Rate.cBattleFramesPerSecond } }
+                in
+                ( displayTicks, Game.tickAuthoritativeWith pilots ratings Keys.none primed )
+
+            else
+                ( 1, Game.advanceAuthoritativeWith pilots ratings (1000 / 60) Keys.none game )
+
+        _ ->
+            ( 1, Game.advanceAuthoritativeWith pilots ratings (1000 / 60) Keys.none game )

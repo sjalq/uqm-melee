@@ -17,8 +17,10 @@
 `Helpers.LongGame.runWith` executes the real 60 Hz update loop, including the 24 Hz physics pump, natural deaths, selection and survivor transitions. It accepts separate bottom/top cyborg ratings and returns `Completed` or `Invalidated` at an explicit display-tick budget, plus the round, ships, crew and longest interval without crew/round changes. Random properties must fuzz both ships, both ratings and the seed. An invalidation is a diagnostic result, not proof of an impossible loop. Compare the same seeds and fleets in both seat orientations. Do not add forced damage, arbitrary unsticking or timeouts to production to make a simulation pass.
 
 ```sh
-elm-test-rs --compiler lamdera tests/Property/LongGameTests.elm tests/Property/StrategyTests.elm --fuzz 100
+elm-test-rs --compiler lamdera tests/Property/LongGameTests.elm tests/Property/StrategyTests.elm --fuzz 100 --workers 8
 ```
+
+Run the short smoke test for all 5,625 ordered ship and independent prowess combinations with `elm-test-rs --compiler lamdera tests/Exhaustive/ShipProwessMatrixTests.elm --workers 8 --fuzz 1`. Each case includes the one-second countdown and five seconds of combat. The fixed eight-worker limit leaves two cores free on the ten-core development machine. Keep long endurance coverage in `Property.LongGameTests` rather than making every exhaustive case long.
 
 `tests/Strategies/DirectPursuit.elm` is a deliberately simple experimental template, not a production replacement. Add candidate strategies under `tests/Strategies`, inject them with `Strategy.override`, and compare identical seeds through `LongGame.runWith`. Add focused properties that fail before a fix, and replay full games after it. AI intercept probes and real missiles share `Arsenal.mounts`, `mountPosition` and `launchState`; do not reintroduce a separate approximate weapon catalog.
 

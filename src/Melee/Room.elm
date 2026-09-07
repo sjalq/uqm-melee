@@ -598,10 +598,10 @@ tickRooms now host =
                                 current =
                                     room.game
                             in
-                            Game.advance elapsed (held room.inputs) { current | difficulty = Input.AwesomeCyborg }
+                            Game.advanceAuthoritative elapsed (held room.inputs) { current | difficulty = Input.AwesomeCyborg }
 
                         else if bothConnected room && running room.game.phase then
-                            Game.advance elapsed (held room.inputs) room.game
+                            Game.advanceAuthoritative elapsed (held room.inputs) room.game
 
                         else
                             room.game

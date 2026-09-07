@@ -2,6 +2,7 @@ module Melee.Rate exposing
     ( advancePump
     , cBattleFramesPerSecond
     , displayHz
+    , repeat
     )
 
 {-| Physics is one UQM battle frame (24 Hz). That is the game speed.
@@ -41,3 +42,12 @@ drain acc n =
 
     else
         ( n, acc )
+
+
+repeat : Int -> (a -> a) -> a -> a
+repeat count step value =
+    if count <= 0 then
+        value
+
+    else
+        repeat (count - 1) step (step value)

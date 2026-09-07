@@ -1,4 +1,4 @@
-module Melee.Masks exposing (Mask, get, opaque, overlap)
+module Melee.Masks exposing (Mask, get, maximumDimension, opaque, overlap)
 
 {-| Original sprite collision masks generated from the UQM PNG alpha channels.
 Coordinates and anchors are native display pixels, independent of presentation quality.
@@ -46,8 +46,20 @@ overlap a b dx dy =
                     Array.get (y - top) b.rows |> Maybe.withDefault []
             in
             List.any (\( x0, x1 ) -> List.any (\( z0, z1 ) -> x0 <= z1 + left && x1 >= z0 + left) br) ar
+
+        scanRows y =
+            if y > last then
+                False
+
+            else
+                row y || scanRows (y + 1)
     in
-    left < a.width && left + b.width > 0 && first <= last && List.any row (List.range first last)
+    left < a.width && left + b.width > 0 && first <= last && scanRows first
+
+
+maximumDimension : Int
+maximumDimension =
+    Dict.foldl (\_ mask largest -> max largest (max mask.width mask.height)) 0 masks
 
 
 masks : Dict.Dict String Mask

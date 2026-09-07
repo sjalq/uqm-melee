@@ -1,4 +1,4 @@
-module Melee.Step exposing (pump, tick)
+module Melee.Step exposing (pump, pumpAuthoritative, tick, tickAuthoritative)
 
 import Dict exposing (Dict)
 import Melee.Arsenal as Arsenal
@@ -23,7 +23,22 @@ import Melee.Velocity as Velocity
 
 tick : Sided BattleInput -> Arena -> Arena
 tick inputs arena =
-    { arena | previousLocations = Dict.map (\_ el -> el.current.location) arena.elements }
+    tickWithPresentation True inputs arena
+
+
+tickAuthoritative : Sided BattleInput -> Arena -> Arena
+tickAuthoritative inputs arena =
+    tickWithPresentation False inputs arena
+
+
+tickWithPresentation : Bool -> Sided BattleInput -> Arena -> Arena
+tickWithPresentation capturePrevious inputs arena =
+    (if capturePrevious then
+        { arena | previousLocations = Dict.map (\_ el -> el.current.location) arena.elements }
+
+     else
+        arena
+    )
         |> applyInputs inputs
         |> prepareAbilities
         |> preprocessAll
@@ -41,12 +56,22 @@ accumulator funds (usually 0 or 1).
 -}
 pump : Sided BattleInput -> Arena -> Arena
 pump inputs arena =
+    pumpWith tick inputs arena
+
+
+pumpAuthoritative : Sided BattleInput -> Arena -> Arena
+pumpAuthoritative inputs arena =
+    pumpWith tickAuthoritative inputs arena
+
+
+pumpWith : (Sided BattleInput -> Arena -> Arena) -> Sided BattleInput -> Arena -> Arena
+pumpWith step inputs arena =
     let
         ( frames, acc ) =
             Rate.advancePump arena.pumpAcc
 
         stepped =
-            List.foldl (\_ a -> tick inputs a) { arena | pumpAcc = acc } (List.range 1 frames)
+            Rate.repeat frames (step inputs) { arena | pumpAcc = acc }
     in
     stepped
 
@@ -472,41 +497,76 @@ inertialThrust vel core =
 
 collideAll : Arena -> Arena
 collideAll arena =
-    collideFrom arena.queue arena
+    arena.queue
+        |> List.filterMap (collisionElement arena)
+        |> (\elements -> collideFrom elements arena)
 
 
-collideFrom : List ElementId -> Arena -> Arena
-collideFrom ids arena =
-    case ids of
+type alias CollisionElement =
+    { element : Element, mask : Maybe Masks.Mask }
+
+
+collisionElement : Arena -> ElementId -> Maybe CollisionElement
+collisionElement arena id =
+    getEl id arena
+        |> Maybe.andThen
+            (\el ->
+                if el.flags.nonsolid || el.flags.disappearing then
+                    Nothing
+
+                else
+                    Just { element = el, mask = spritePath arena el |> Maybe.andThen Masks.get }
+            )
+
+
+collideFrom : List CollisionElement -> Arena -> Arena
+collideFrom elements arena =
+    case elements of
         [] ->
             arena
 
-        id0 :: rest ->
-            collideFrom rest (collideAgainst id0 rest arena)
+        first :: rest ->
+            let
+                ( next, updatedRest ) =
+                    collideAgainst first rest [] arena
+            in
+            collideFrom updatedRest next
 
 
-collideAgainst : ElementId -> List ElementId -> Arena -> Arena
-collideAgainst id0 others arena =
+collideAgainst : CollisionElement -> List CollisionElement -> List CollisionElement -> Arena -> ( Arena, List CollisionElement )
+collideAgainst first others processed arena =
     case others of
         [] ->
-            arena
+            ( arena, List.reverse processed )
 
-        id1 :: rest ->
-            collideAgainst id0 rest (tryCollide id0 id1 arena)
+        second :: rest ->
+            if collisionPossible first.element second.element && spritesHit arena first.element second.element first.mask second.mask then
+                let
+                    next =
+                        bounce arena first.element second.element
 
+                    refreshed el =
+                        if el.flags.nonsolid || el.flags.disappearing then
+                            Nothing
 
-tryCollide : ElementId -> ElementId -> Arena -> Arena
-tryCollide id0 id1 arena =
-    case ( getEl id0 arena, getEl id1 arena ) of
-        ( Just e0, Just e1 ) ->
-            if collisionPossible e0 e1 && spritesHit arena e0 e1 then
-                bounce arena e0 e1
+                        else
+                            Just { element = el, mask = spritePath next el |> Maybe.andThen Masks.get }
+
+                    nextSecond =
+                        getEl second.element.id next |> Maybe.andThen refreshed
+
+                    nextProcessed =
+                        nextSecond |> Maybe.map (\value -> value :: processed) |> Maybe.withDefault processed
+                in
+                case getEl first.element.id next |> Maybe.andThen refreshed of
+                    Nothing ->
+                        ( next, List.reverse nextProcessed ++ rest )
+
+                    Just nextFirst ->
+                        collideAgainst nextFirst rest nextProcessed next
 
             else
-                arena
-
-        _ ->
-            arena
+                collideAgainst first rest (second :: processed) arena
 
 
 collisionPossible : Element -> Element -> Bool
@@ -520,8 +580,24 @@ collisionPossible e0 e1 =
         && not (e0.flags.collision && e1.flags.collision)
         && (not (e0.flags.ignoreSimilar && e1.flags.ignoreSimilar) || e0.parent /= e1.parent)
         && (e0.mass /= 0 || e1.mass /= 0)
-        && not (List.member e0.body [ OrzMarine, UrQuanFighter, ChenjesuDogi ] && e1.flags.playerShip)
-        && not (List.member e1.body [ OrzMarine, UrQuanFighter, ChenjesuDogi ] && e0.flags.playerShip)
+        && not (shipIgnoringBody e0.body && e1.flags.playerShip)
+        && not (shipIgnoringBody e1.body && e0.flags.playerShip)
+
+
+shipIgnoringBody : Body -> Bool
+shipIgnoringBody body =
+    case body of
+        OrzMarine ->
+            True
+
+        UrQuanFighter ->
+            True
+
+        ChenjesuDogi ->
+            True
+
+        _ ->
+            False
 
 
 radiusDisplay : Element -> Int
@@ -574,36 +650,51 @@ spritePath arena el =
             Art.projectile el.body el.next.frameIndex |> Maybe.map .path
 
 
-spritesHit : Arena -> Element -> Element -> Bool
-spritesHit arena a b =
-    case ( spritePath arena a |> Maybe.andThen Masks.get, spritePath arena b |> Maybe.andThen Masks.get ) of
-        ( Just ma, Just mb ) ->
-            let
-                dx =
-                    Trig.wrapDelta (b.current.location.x - a.current.location.x) arena.space.width
+spritesHit : Arena -> Element -> Element -> Maybe Masks.Mask -> Maybe Masks.Mask -> Bool
+spritesHit arena a b aMask bMask =
+    let
+        dx =
+            Trig.wrapDelta (b.current.location.x - a.current.location.x) arena.space.width
 
-                dy =
-                    Trig.wrapDelta (b.current.location.y - a.current.location.y) arena.space.height
+        dy =
+            Trig.wrapDelta (b.current.location.y - a.current.location.y) arena.space.height
 
-                vx =
-                    Trig.wrapDelta (b.next.location.x - b.current.location.x) arena.space.width - Trig.wrapDelta (a.next.location.x - a.current.location.x) arena.space.width
+        vx =
+            Trig.wrapDelta (b.next.location.x - b.current.location.x) arena.space.width - Trig.wrapDelta (a.next.location.x - a.current.location.x) arena.space.width
 
-                vy =
-                    Trig.wrapDelta (b.next.location.y - b.current.location.y) arena.space.height - Trig.wrapDelta (a.next.location.y - a.current.location.y) arena.space.height
+        vy =
+            Trig.wrapDelta (b.next.location.y - b.current.location.y) arena.space.height - Trig.wrapDelta (a.next.location.y - a.current.location.y) arena.space.height
 
-                extent =
-                    (max ma.width ma.height + max mb.width mb.height) * 4
+        largestPossibleExtent =
+            Masks.maximumDimension * 8
+    in
+    if abs dx > largestPossibleExtent + abs vx || abs dy > largestPossibleExtent + abs vy then
+        False
 
-                steps =
-                    max 1 ((max (abs vx) (abs vy) + 3) // 4)
+    else
+        case ( aMask, bMask ) of
+            ( Just ma, Just mb ) ->
+                let
+                    extent =
+                        (max ma.width ma.height + max mb.width mb.height) * 4
 
-                at i =
-                    Masks.overlap ma mb ((dx + vx * i // steps) // 4) ((dy + vy * i // steps) // 4)
-            in
-            abs dx <= extent + abs vx && abs dy <= extent + abs vy && List.any at (List.range 0 steps)
+                    steps =
+                        max 1 ((max (abs vx) (abs vy) + 3) // 4)
 
-        _ ->
-            circlesHit arena.space a b
+                    scan i =
+                        if i > steps then
+                            False
+
+                        else if Masks.overlap ma mb ((dx + vx * i // steps) // 4) ((dy + vy * i // steps) // 4) then
+                            True
+
+                        else
+                            scan (i + 1)
+                in
+                abs dx <= extent + abs vx && abs dy <= extent + abs vy && scan 0
+
+            _ ->
+                circlesHit arena.space a b
 
 
 circlesHit : WorldExtent -> Element -> Element -> Bool
@@ -1134,7 +1225,11 @@ pullToward planet id arena =
 
 postprocessAll : Arena -> Arena
 postprocessAll arena =
-    List.foldl postprocessOne arena arena.queue
+    let
+        processed =
+            List.foldl postprocessOne arena arena.queue
+    in
+    { processed | queue = List.filter (\id -> Dict.member (toInt id) processed.elements) processed.queue }
 
 
 postprocessOne : ElementId -> Arena -> Arena
@@ -1145,7 +1240,7 @@ postprocessOne id arena =
 
         Just el ->
             if el.flags.disappearing then
-                removeEl id arena
+                removeElement id arena
 
             else
                 let
@@ -1157,7 +1252,7 @@ postprocessOne id arena =
                             ( arena, el )
                 in
                 if el1.flags.disappearing then
-                    removeEl id arena1
+                    removeElement id arena1
 
                 else
                     let
@@ -1173,6 +1268,11 @@ postprocessOne id arena =
                             }
                     in
                     putEl copied arena1
+
+
+removeElement : ElementId -> Arena -> Arena
+removeElement id arena =
+    { arena | elements = Dict.remove (toInt id) arena.elements }
 
 
 removeEl : ElementId -> Arena -> Arena
@@ -1838,8 +1938,18 @@ rayIntersection arena origin end target =
 
                 at i =
                     Masks.opaque mask ((dx * i // steps - tx) // 4) ((dy * i // steps - ty) // 4)
+
+                firstHit i =
+                    if i > steps then
+                        Nothing
+
+                    else if at i then
+                        Just (toFloat i / toFloat steps)
+
+                    else
+                        firstHit (i + 1)
             in
-            List.range 0 steps |> List.filter at |> List.head |> Maybe.map (\i -> toFloat i / toFloat steps)
+            firstHit 0
 
         Nothing ->
             rayCircle arena.space origin end target
