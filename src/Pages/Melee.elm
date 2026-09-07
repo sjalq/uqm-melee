@@ -283,18 +283,83 @@ hangar location client game =
 
           else
             p [ A.class "melee-message", A.attribute "role" "status" ] [ text game.notice ]
-        , div [ A.class "classic-roster-heading" ]
-            [ text ("ADD TO " ++ String.toUpper (Game.get game.editing game.names) ++ " · click an empty slot to choose a fleet; click a ship to remove it.") ]
-        , div [ A.class "classic-roster" ] (List.map (shipCard game) (pageItems 10 location.roster Catalog.all))
-        , pageControls location True 25
-        , controls client
-        , div [ A.class "classic-credits" ]
-            [ a [ A.href "https://sc2.sourceforge.net/screenshots.php" ] [ text "Original UQM reference" ]
-            , text " · Original art and sound © Toys for Bob · "
-            , a [ A.href "/UQM-COPYING.txt" ] [ text "CC BY-NC-SA 2.5" ]
-            , text " · "
-            , a [ A.href "/HD-CREDITS.txt" ] [ text "HD artwork credits" ]
+        , div [ A.class "hangar-catalog", A.attribute "aria-label" "Ship catalog" ]
+            [ div [ A.class "hangar-catalog-title" ] [ span [] [ text "SHIPYARD" ], span [] [ text "25 VESSELS" ] ]
+            , div [ A.class "hangar-fleet-targets", A.attribute "aria-label" "Fleet to edit" ]
+                (List.map
+                    (\side ->
+                        button
+                            [ A.class
+                                (if game.editing == side then
+                                    "fleet-target is-target"
+
+                                 else
+                                    "fleet-target"
+                                )
+                            , A.attribute "aria-pressed"
+                                (if game.editing == side then
+                                    "true"
+
+                                 else
+                                    "false"
+                                )
+                            , E.onClick (GameMsg (Game.Edit side))
+                            ]
+                            [ text
+                                ((if game.editing == side then
+                                    "▶ "
+
+                                  else
+                                    ""
+                                 )
+                                    ++ String.toUpper (sideName side)
+                                )
+                            ]
+                    )
+                    [ Bottom, Top ]
+                )
+            , div [ A.class "classic-roster" ] (List.map (hangarShipCard game) Catalog.all)
+            , div [ A.class "hangar-catalog-footer", A.attribute "role" "status" ]
+                [ span [] [ text (String.fromInt (List.length (Game.get game.editing game.fleets)) ++ " / 14 SHIPS") ]
+                , span []
+                    [ text
+                        (if List.length (Game.get game.editing game.fleets) >= 14 then
+                            "FLEET FULL"
+
+                         else
+                            "SELECT A SHIP TO ADD"
+                        )
+                    ]
+                ]
+            , div [ A.class "hangar-key-hints" ] [ text "ARROWS · MOVE     ENTER · ADD     CLICK FLEET SHIP · REMOVE" ]
             ]
+        ]
+
+
+hangarShipCard : Game.Model -> ShipKind -> Html FrontendMsg
+hangarShipCard game ship =
+    let
+        info =
+            Catalog.info ship
+
+        count =
+            Game.get game.editing game.fleets |> List.filter ((==) ship) |> List.length
+    in
+    button
+        [ A.class "classic-roster-ship hangar-ship"
+        , A.attribute "aria-label" ("Add " ++ info.name)
+        , A.title (info.name ++ " / " ++ info.vessel ++ " / " ++ info.help)
+        , A.disabled (List.length (Game.get game.editing game.fleets) >= 14)
+        , E.onClick (GameMsg (Game.Add ship))
+        ]
+        [ img [ A.src info.icon, A.alt "" ] []
+        , span [ A.class "hangar-ship-name" ] [ text info.name ]
+        , small [ A.class "hangar-ship-cost" ] [ text (String.fromInt (Ship.stock ship).cost) ]
+        , if count > 0 then
+            span [ A.class "hangar-ship-count", A.attribute "aria-label" (String.fromInt count ++ " in fleet") ] [ text ("×" ++ String.fromInt count) ]
+
+          else
+            text ""
         ]
 
 
@@ -307,6 +372,12 @@ fleet client game side =
     div
         [ A.class
             ("classic-fleet "
+                ++ (if game.editing == side then
+                        "editing-fleet "
+
+                    else
+                        ""
+                   )
                 ++ (if side == Top then
                         "fleet-top"
 
@@ -329,7 +400,7 @@ fleet client game side =
                                     [ A.disabled (not (canEdit client side))
                                     , A.class
                                         ("classic-slot "
-                                            ++ (if game.editing == side then
+                                            ++ (if game.editing == side && index == List.length ships then
                                                     "selected-fleet"
 
                                                 else
@@ -339,7 +410,12 @@ fleet client game side =
                                     , A.attribute "aria-label" ("Add ship to " ++ sideName side)
                                     , E.onClick (GameMsg (Game.Edit side))
                                     ]
-                                    []
+                                    [ if game.editing == side && index == List.length ships then
+                                        span [ A.class "empty-slot-cursor", A.attribute "aria-hidden" "true" ] [ text "+" ]
+
+                                      else
+                                        text ""
+                                    ]
                     )
             )
         , div [ A.class "classic-team-name" ]

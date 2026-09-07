@@ -65,12 +65,8 @@ init =
             , pollingJobs = Dict.empty
             , melee = Melee.init
             }
-
-        -- Initialize with test data for development
-        modelWithTestData =
-            initialModel
     in
-    ( modelWithTestData, Command.none )
+    ( initialModel, Command.none )
 
 
 update : BackendMsg -> Model -> ( Model, Command BackendOnly ToFrontend BackendMsg )

@@ -18,7 +18,7 @@ const DEFAULT_CONFIG = Object.freeze({
   environments: {
     local: {
       url: 'http://localhost:8000',
-      modelKey: '1234567890'
+      modelKey: ''
     }
   },
   defaultEnv: 'local'

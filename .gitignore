@@ -13,3 +13,11 @@ node_modules
 # Generated previews and local test/deployment scratch
 scripts/temp/
 tests/viewer.js
+
+# Private runtime credentials, backups, and local deployment metadata
+.env
+.env.*
+*.pem
+*.key
+.lamdera-app
+backups/

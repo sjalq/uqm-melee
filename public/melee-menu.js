@@ -26,8 +26,14 @@ class UqmMenu extends HTMLElement {
       if (options.includes(active)) {
         const box=active.getBoundingClientRect(), x=box.x+box.width/2, y=box.y+box.height/2;
         const dx=event.key==="ArrowRight"?1:event.key==="ArrowLeft"?-1:0, dy=event.key==="ArrowDown"?1:event.key==="ArrowUp"?-1:0;
-        const candidates=options.filter(e=>e!==active).map(e=>{const b=e.getBoundingClientRect(), vx=b.x+b.width/2-x,vy=b.y+b.height/2-y; return {e,along:vx*dx+vy*dy,across:Math.abs(vx*dy-vy*dx)};}).filter(c=>c.along>2).sort((a,b)=>(a.along+a.across*4)-(b.along+b.across*4));
-        next=candidates[0]?.e || options[(options.indexOf(active)+(dx+dy>0?1:options.length-1))%options.length];
+        let nearest=null, nearestScore=Infinity;
+        for (const option of options) {
+          if (option===active) continue;
+          const b=option.getBoundingClientRect(), vx=b.x+b.width/2-x, vy=b.y+b.height/2-y;
+          const along=vx*dx+vy*dy, score=along+Math.abs(vx*dy-vy*dx)*4;
+          if (along>2 && score<nearestScore) { nearest=option; nearestScore=score; }
+        }
+        next=nearest || options[(options.indexOf(active)+(dx+dy>0?1:options.length-1))%options.length];
       }
       next.focus({preventScroll:true}); this.play(0);
     };

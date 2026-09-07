@@ -29,13 +29,13 @@ alwaysApply: true
 30 app
 41 subscriptions model
 54 init
-77 update msg model
-175 updateFromFrontend sessionId clientId msg model
-306 updateFromFrontendCheckingRights sessionId clientId msg model
-342 getUserFromCookie browserCookie model
-348 userToFrontend user
-357 handleEmailPasswordAuth browserCookie connectionId authMsg model
-367 meleeResult
+73 update msg model
+171 updateFromFrontend sessionId clientId msg model
+302 updateFromFrontendCheckingRights sessionId clientId msg model
+338 getUserFromCookie browserCookie model
+344 userToFrontend user
+353 handleEmailPasswordAuth browserCookie connectionId authMsg model
+363 meleeResult
 
 ## src/Components/AuthControls.elm
 ### Components.AuthControls
@@ -579,35 +579,36 @@ alwaysApply: true
 33 view model _
 187 screen children
 192 hangar location client game
-302 fleet client game side
-353 shipCard game ship
-366 selection client game bottom top
-397 battle client game arena overlay
-484 controls client
-509 action label msg primary
-514 buttonAttrs primary
-526 eyebrow label
-531 muted label
-536 sideName side
-545 accent side
-554 graphicsButton game
-567 music game
-619 onlinePanel model
-890 isWatching client
-900 spectatorWaiting game
-909 isOnline client
-914 canEdit client side
-927 seatAction client side label message primary
-932 localAction client label message primary
-941 onlineFleetEditor location side ranked locked game
-956 pageItems size requested items
-961 pageControls location roster count
-998 screenClass model
-1026 isRanked client
-1036 isCancelled client
-1046 matchmaking model
-1099 rankedStatus model snapshot
-1195 pilotControls client game
+340 hangarShipCard game ship
+367 fleet client game side
+429 shipCard game ship
+442 selection client game bottom top
+473 battle client game arena overlay
+560 controls client
+585 action label msg primary
+590 buttonAttrs primary
+602 eyebrow label
+607 muted label
+612 sideName side
+621 accent side
+630 graphicsButton game
+643 music game
+695 onlinePanel model
+966 isWatching client
+976 spectatorWaiting game
+985 isOnline client
+990 canEdit client side
+1003 seatAction client side label message primary
+1008 localAction client label message primary
+1017 onlineFleetEditor location side ranked locked game
+1032 pageItems size requested items
+1037 pageControls location roster count
+1074 screenClass model
+1102 isRanked client
+1112 isCancelled client
+1122 matchmaking model
+1175 rankedStatus model snapshot
+1271 pilotControls client game
 
 ## src/Pages/PageFrame.elm
 ### Pages.PageFrame
@@ -707,13 +708,6 @@ alwaysApply: true
 41 stringifyRPCResult result
 85 encodeHttpBody body
 107 encodeRPCCallAndResult args result
-
-## src/TestData.elm
-### TestData
-12 defaultUsers
-26 defaultEmailPasswordCredentials
-46 defaultSessions
-53 initializeTestData model
 
 ## src/Theme.elm
 ### Theme
