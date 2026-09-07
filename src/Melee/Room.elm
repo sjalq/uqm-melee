@@ -548,7 +548,14 @@ tickRooms now host =
                         if room.code == "ARENA" && isVictory room.game.phase && now - room.touched >= 4000 then
                             (exhibition room.revision).game
 
-                        else if room.code == "ARENA" || (bothConnected room && running room.game.phase) then
+                        else if room.code == "ARENA" then
+                            let
+                                current =
+                                    room.game
+                            in
+                            Game.advance elapsed (held room.inputs) { current | difficulty = Input.AwesomeCyborg }
+
+                        else if bothConnected room && running room.game.phase then
                             Game.advance elapsed (held room.inputs) room.game
 
                         else
@@ -613,7 +620,7 @@ tickRooms now host =
     in
     let
         previewDue =
-            now - host.previewAt >= 500
+            now > host.previewAt
 
         preview =
             if previewDue && not (Dict.isEmpty host.previewClients) then
@@ -871,7 +878,7 @@ exhibition cycle =
             { bottom = List.take 6 roster, top = List.take 6 (List.drop 6 roster) }
 
         game =
-            Game.update Game.QuickStart { base | names = { bottom = "Solar Squadron", top = "Nebula Raiders" }, fleets = fleets, mode = Game.Demo, seed = Seed (1701 + cycle) }
+            Game.update Game.QuickStart { base | names = { bottom = "Solar Squadron", top = "Nebula Raiders" }, fleets = fleets, mode = Game.Demo, difficulty = Input.AwesomeCyborg, seed = Seed (1701 + cycle) }
     in
     { code = "ARENA", seats = { bottom = Nothing, top = Nothing }, controllers = { bottom = Computer, top = Computer }, game = game, inputs = { bottom = Input.idle, top = Input.idle }, ready = { bottom = True, top = True }, revision = cycle, touched = 0, spectators = Dict.empty, lastBroadcast = Nothing, broadcastAt = 0, ranked = Nothing }
 

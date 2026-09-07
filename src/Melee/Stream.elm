@@ -7,6 +7,7 @@ import Melee.Id exposing (ElementId)
 import Melee.Local as Game
 import Melee.ShipState exposing (Combatant)
 import Melee.Units exposing (FrameCount, Sided)
+import Melee.View as View
 
 
 type Stage
@@ -64,7 +65,7 @@ apply delta model =
                     List.foldl (\el -> Dict.insert (Melee.Id.toInt el.id) el) (List.foldl Dict.remove old.elements delta.removed) delta.changed
 
                 arena =
-                    { old | frame = delta.frame, combatants = delta.combatants, elements = elements, queue = delta.queue, previousLocations = Dict.map (\_ el -> el.current.location) old.elements, pumpAcc = 0 }
+                    { old | frame = delta.frame, combatants = delta.combatants, elements = elements, queue = delta.queue, previousLocations = Dict.map (\_ el -> View.displayLocation old el) old.elements, pumpAcc = 0 }
 
                 phase =
                     case delta.stage of

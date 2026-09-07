@@ -1,4 +1,4 @@
-module Melee.View exposing (camera, viewCockpit, viewCockpitWithControls)
+module Melee.View exposing (camera, displayLocation, viewCockpit, viewCockpitWithControls)
 
 import Dict
 import Html exposing (Html, div)

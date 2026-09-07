@@ -4,6 +4,7 @@ import Html exposing (Html, div, text)
 import Html.Attributes as A
 import Melee.Graphics exposing (Quality(..))
 import Melee.Local as Game
+import Melee.Rate as Rate
 import Melee.Stream as Stream
 import Melee.View as View
 
@@ -26,7 +27,7 @@ apply update previous =
                         updated =
                             Stream.apply delta game
                     in
-                    { updated | presentationStep = clamp 40 500 delta.interval }
+                    { updated | presentationStep = clamp (1000 / toFloat Rate.cBattleFramesPerSecond) 500 delta.interval }
                 )
                 previous
 

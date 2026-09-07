@@ -445,8 +445,8 @@ alwaysApply: true
 
 ## src/Melee/Preview.elm
 ### Melee.Preview
-17 apply update previous
-35 view preview
+18 apply update previous
+36 view preview
 
 ## src/Melee/Ranking.elm
 ### Melee.Ranking
@@ -482,30 +482,30 @@ alwaysApply: true
 404 act side message room
 517 held inputs
 532 tickRooms now host
-670 disconnect session client originalHost
-697 reconnect session client host
-727 running phase
-747 discover host
-787 games host
-794 stage phase
-819 removeSpectator client host
-829 modeFor controllers
-845 recipients room
-849 isVictory phase
-859 exhibition cycle
-880 identify session client host
-889 handle session client message host
-976 findMatch session client original
-1000 pairWaiting host
-1049 rankedAction session client side message room ranked host
-1154 launchRanked room
-1159 prepareRanked now room
-1220 settle code host
-1262 sweepRanked now host
-1296 tick now host
-1311 allocateCode session client host
-1327 customRoom code now setup
-1348 seatClients room
+677 disconnect session client originalHost
+704 reconnect session client host
+734 running phase
+754 discover host
+794 games host
+801 stage phase
+826 removeSpectator client host
+836 modeFor controllers
+852 recipients room
+856 isVictory phase
+866 exhibition cycle
+887 identify session client host
+896 handle session client message host
+983 findMatch session client original
+1007 pairWaiting host
+1056 rankedAction session client side message room ranked host
+1161 launchRanked room
+1166 prepareRanked now room
+1227 settle code host
+1269 sweepRanked now host
+1303 tick now host
+1318 allocateCode session client host
+1334 customRoom code now setup
+1355 seatClients room
 
 ## src/Melee/RoomCode.elm
 ### Melee.RoomCode
@@ -614,9 +614,9 @@ alwaysApply: true
 
 ## src/Melee/Stream.elm
 ### Melee.Stream
-23 stage phase
-42 between interval before after
-56 apply delta model
+24 stage phase
+43 between interval before after
+57 apply delta model
 
 ## src/Melee/Telemetry.elm
 ### Melee.Telemetry

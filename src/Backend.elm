@@ -47,7 +47,7 @@ subscriptions model =
             Subscription.none
 
           else
-            Time.every (Duration.milliseconds (1000 / 24)) (Time.posixToMillis >> MeleeTick)
+            Time.every (Duration.milliseconds (1000 / 60)) (Time.posixToMillis >> MeleeTick)
         ]
 
 
