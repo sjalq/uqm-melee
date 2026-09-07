@@ -8,6 +8,7 @@ import Melee.Local as Game
 import Melee.Preview as Preview
 import Melee.Ranking as Ranking
 import Melee.Rng exposing (Seed(..))
+import Melee.RoomCode as RoomCode
 import Melee.Ship exposing (ShipKind)
 import Melee.Stream as Stream
 import Melee.Units exposing (Side(..), Sided)
@@ -98,8 +99,15 @@ type alias Room =
     }
 
 
+type alias RoomSetup =
+    { names : Sided String
+    , fleets : Sided (List ShipKind)
+    , controllers : Sided SeatControl
+    }
+
+
 type alias Host =
-    { rooms : Dict String Room, nextId : Int, now : Int, previewClients : Dict String String, previewAt : Int, players : Dict String Ranking.Profile, queue : List { session : String, client : String } }
+    { rooms : Dict String Room, roomSetups : Dict String RoomSetup, clientRooms : Dict String String, nextId : Int, now : Int, previewClients : Dict String String, previewAt : Int, players : Dict String Ranking.Profile, queue : List { session : String, client : String } }
 
 
 type alias Delivery =
@@ -108,7 +116,7 @@ type alias Delivery =
 
 init : Host
 init =
-    { rooms = Dict.singleton "ARENA" (exhibition 0), nextId = 1, now = 0, previewClients = Dict.empty, previewAt = 0, players = Dict.empty, queue = [] }
+    { rooms = Dict.singleton "ARENA" (exhibition 0), roomSetups = Dict.empty, clientRooms = Dict.empty, nextId = 1, now = 0, previewClients = Dict.empty, previewAt = 0, players = Dict.empty, queue = [] }
 
 
 connected : Maybe Seat -> Bool
@@ -130,7 +138,9 @@ findSeat session client room =
 
 findRoom : String -> String -> Host -> Maybe ( Room, Side )
 findRoom session client host =
-    Dict.values host.rooms |> List.filterMap (\room -> findSeat session client room |> Maybe.map (Tuple.pair room)) |> List.head
+    Dict.get client host.clientRooms
+        |> Maybe.andThen (\code -> Dict.get code host.rooms)
+        |> Maybe.andThen (\room -> findSeat session client room |> Maybe.map (Tuple.pair room))
 
 
 deliver : Room -> List Delivery
@@ -167,7 +177,26 @@ save room host =
                 , broadcastAt = host.now
             }
     in
-    ( { host | rooms = Dict.insert room.code next host.rooms }, deliver next )
+    ( { host
+        | rooms = Dict.insert room.code next host.rooms
+        , clientRooms =
+            let
+                oldClients =
+                    Dict.get room.code host.rooms |> Maybe.map seatClients |> Maybe.withDefault []
+
+                cleared =
+                    List.foldl Dict.remove host.clientRooms oldClients
+            in
+            List.foldl (\client -> Dict.insert client room.code) cleared (seatClients next)
+        , roomSetups =
+            if room.code /= "ARENA" && room.ranked == Nothing then
+                Dict.insert room.code { names = room.game.names, fleets = room.game.fleets, controllers = room.controllers } host.roomSetups
+
+            else
+                host.roomSetups
+      }
+    , deliver next
+    )
 
 
 handleRoom : String -> String -> ToHost -> Host -> ( Host, List Delivery )
@@ -211,7 +240,11 @@ handleRoom session client message host =
                     else
                         Dict.remove client host.previewClients
               }
-            , []
+            , if enabled then
+                [ { client = client, message = RoomsAvailable (discover host) }, { client = client, message = GamesAvailable (games host) } ]
+
+              else
+                []
             )
 
         ( Visit code watching, _ ) ->
@@ -304,22 +337,27 @@ handleRoom session client message host =
 
         ( CreateRoom, Nothing ) ->
             let
-                code =
-                    "M" ++ String.padLeft 5 '0' (String.fromInt host.nextId)
-
-                game =
-                    Game.init
+                ( code, allocated ) =
+                    allocateCode session client host
 
                 room =
-                    { code = code, seats = { bottom = Just { session = session, client = Just client }, top = Nothing }, game = { game | mode = Game.Versus }, inputs = { bottom = Input.idle, top = Input.idle }, controllers = { bottom = Human, top = Human }, ready = { bottom = False, top = False }, revision = 0, lastBroadcast = Nothing, broadcastAt = host.now, spectators = Dict.empty, touched = host.now, ranked = Nothing }
+                    customRoom code host.now { names = Game.init.names, fleets = Game.init.fleets, controllers = { bottom = Human, top = Human } }
             in
-            save room { host | nextId = host.nextId + 1 }
-                |> Tuple.mapFirst (removeSpectator client)
+            save { room | seats = { bottom = Just { session = session, client = Just client }, top = Nothing } } (removeSpectator client allocated)
 
         ( JoinRoom rawCode, Nothing ) ->
             case Dict.get (String.toUpper (String.trim rawCode)) host.rooms of
                 Nothing ->
-                    reject "Room not found. Check the room code."
+                    let
+                        code =
+                            String.toUpper (String.trim rawCode)
+                    in
+                    case Dict.get code host.roomSetups of
+                        Just setup ->
+                            join (customRoom code host.now setup) Bottom
+
+                        Nothing ->
+                            reject "Room not found. Check the room code."
 
                 Just room ->
                     let
@@ -947,8 +985,8 @@ pairWaiting host =
                 tp =
                     Dict.get top.session host.players |> Maybe.withDefault (Ranking.initial 2)
 
-                code =
-                    "M" ++ String.padLeft 5 '0' (String.fromInt host.nextId)
+                ( code, allocated ) =
+                    allocateCode bottom.session bottom.client host
 
                 base =
                     Game.init
@@ -960,7 +998,7 @@ pairWaiting host =
                     { code = code, seats = { bottom = Just { session = bottom.session, client = Just bottom.client }, top = Just { session = top.session, client = Just top.client } }, game = game, inputs = { bottom = Input.idle, top = Input.idle }, controllers = { bottom = Human, top = Human }, ready = { bottom = False, top = False }, revision = 0, lastBroadcast = Nothing, broadcastAt = host.now, spectators = Dict.empty, touched = host.now, ranked = Just { players = { bottom = bottom.session, top = top.session }, ratings = { bottom = bp.rating, top = tp.rating }, deadline = Just (host.now + 120000), started = False, away = { bottom = Nothing, top = Nothing }, outcome = Nothing } }
 
                 clean =
-                    removeSpectator bottom.client (removeSpectator top.client { host | queue = remaining, nextId = host.nextId + 1 })
+                    removeSpectator bottom.client (removeSpectator top.client { allocated | queue = remaining })
 
                 ( next, messages ) =
                     save room clean
@@ -1226,9 +1264,10 @@ sweepRanked now host =
                                 ( scored, awards ) =
                                     settle code saved
                             in
-                            ( scored, messages ++ changes ++ awards )
+                            ( scored, List.reverse awards ++ List.reverse changes ++ messages )
             )
             ( host, [] )
+        |> Tuple.mapSecond List.reverse
 
 
 tick : Int -> Host -> ( Host, List Delivery )
@@ -1244,3 +1283,45 @@ tick now host =
             sweepRanked now advanced
     in
     ( settled, before ++ during ++ after )
+
+
+allocateCode : String -> String -> Host -> ( String, Host )
+allocateCode session client host =
+    let
+        code =
+            RoomCode.generate session client host.nextId
+
+        advanced =
+            { host | nextId = host.nextId + 1 }
+    in
+    if Dict.member code host.rooms || Dict.member code host.roomSetups then
+        allocateCode session client advanced
+
+    else
+        ( code, advanced )
+
+
+customRoom : String -> Int -> RoomSetup -> Room
+customRoom code now setup =
+    let
+        base =
+            Game.init
+    in
+    { code = code
+    , seats = { bottom = Nothing, top = Nothing }
+    , game = { base | names = setup.names, fleets = setup.fleets, mode = modeFor setup.controllers }
+    , inputs = { bottom = Input.idle, top = Input.idle }
+    , controllers = setup.controllers
+    , ready = { bottom = False, top = False }
+    , revision = 0
+    , lastBroadcast = Nothing
+    , broadcastAt = now
+    , spectators = Dict.empty
+    , touched = now
+    , ranked = Nothing
+    }
+
+
+seatClients : Room -> List String
+seatClients room =
+    [ room.seats.bottom, room.seats.top ] |> List.filterMap (Maybe.andThen .client)

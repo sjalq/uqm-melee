@@ -26,15 +26,16 @@ alwaysApply: true
 
 ## src/Backend.elm
 ### Backend
-32 app
-43 subscriptions model
-56 init
-79 update msg model
-173 updateFromFrontend sessionId clientId msg model
-292 updateFromFrontendCheckingRights sessionId clientId msg model
-331 getUserFromCookie browserCookie model
-337 userToFrontend user
-346 handleEmailPasswordAuth browserCookie connectionId authMsg model
+30 app
+41 subscriptions model
+54 init
+77 update msg model
+175 updateFromFrontend sessionId clientId msg model
+306 updateFromFrontendCheckingRights sessionId clientId msg model
+342 getUserFromCookie browserCookie model
+348 userToFrontend user
+357 handleEmailPasswordAuth browserCookie connectionId authMsg model
+367 meleeResult
 
 ## src/Components/AuthControls.elm
 ### Components.AuthControls
@@ -92,29 +93,9 @@ alwaysApply: true
 17 view config
 41 tabBar colors tabs
 
-## src/EndpointExample/Price.elm
-### EndpointExample.Price
-21 getPrice sessionId model headers json
-36 getPriceResult sessionId model headers json
-45 fetchEthPriceInZar
-118 fetchEthPrice
-139 fetchZarRate
-160 fetchJokeAboutEthPrice price
-202 openAiResponseDecoder responseBody
-
 ## src/Env.elm
 ### Env
-7 modelKey
-11 slackApiToken
-15 slackChannel
-19 logSize
-23 stillTesting
-28 auth0AppClientId
-33 auth0AppClientSecret
-38 auth0AppTenant
-43 sysAdminEmail
-48 openAiApiKey
-57 mode
+10 mode
 
 ## src/Frontend.elm
 ### Frontend
@@ -125,19 +106,19 @@ alwaysApply: true
 162 inits model route
 185 update msg model
 446 updateFromBackend msg model
-624 view model
-669 callbackForAuth0Auth model url key
-678 callbackForGoogleAuth model url key
-687 authCallbackCmd model url key
-704 initWithAuth url key
-722 updateEmailPasswordAuth authMsg model
-778 updateEmailPasswordForm msg model
-811 viewWithAuth model
-887 authUpdateFromBackend authToFrontendMsg model
-924 gameAction message model
-1008 sendControls held model
-1027 locationCommand model
-1069 redirectRoom model
+621 view model
+666 callbackForAuth0Auth model url key
+675 callbackForGoogleAuth model url key
+684 authCallbackCmd model url key
+701 initWithAuth url key
+719 updateEmailPasswordAuth authMsg model
+775 updateEmailPasswordForm msg model
+808 viewWithAuth model
+884 authUpdateFromBackend authToFrontendMsg model
+921 gameAction message model
+1005 sendControls held model
+1024 locationCommand model
+1066 redirectRoom model
 
 ## src/LamderaRPC.elm
 ### LamderaRPC
@@ -355,38 +336,46 @@ alwaysApply: true
 
 ## src/Melee/Room.elm
 ### Melee.Room
-110 init
-115 connected seat
-120 bothConnected room
-125 findSeat session client room
-132 findRoom session client host
-137 deliver room
-155 save room host
-174 handleRoom session client message host
-365 act side message room
-478 held inputs
-493 tickRooms now host
-610 disconnect session client originalHost
-637 reconnect session client host
-667 running phase
-687 discover host
-727 games host
-734 stage phase
-759 removeSpectator client host
-769 modeFor controllers
-785 recipients room
-789 isVictory phase
-799 exhibition cycle
-820 identify session client host
-829 handle session client message host
-916 findMatch session client original
-940 pairWaiting host
-989 rankedAction session client side message room ranked host
-1094 launchRanked room
-1099 prepareRanked now room
-1160 settle code host
-1202 sweepRanked now host
-1235 tick now host
+118 init
+123 connected seat
+128 bothConnected room
+133 findSeat session client room
+140 findRoom session client host
+147 deliver room
+165 save room host
+203 handleRoom session client message host
+403 act side message room
+516 held inputs
+531 tickRooms now host
+648 disconnect session client originalHost
+675 reconnect session client host
+705 running phase
+725 discover host
+765 games host
+772 stage phase
+797 removeSpectator client host
+807 modeFor controllers
+823 recipients room
+827 isVictory phase
+837 exhibition cycle
+858 identify session client host
+867 handle session client message host
+954 findMatch session client original
+978 pairWaiting host
+1027 rankedAction session client side message room ranked host
+1132 launchRanked room
+1137 prepareRanked now room
+1198 settle code host
+1240 sweepRanked now host
+1274 tick now host
+1289 allocateCode session client host
+1305 customRoom code now setup
+1326 seatClients room
+
+## src/Melee/RoomCode.elm
+### Melee.RoomCode
+12 generate session client serial
+24 pairs chars
 
 ## src/Melee/Ship.elm
 ### Melee.Ship
@@ -618,7 +607,7 @@ alwaysApply: true
 1036 isCancelled client
 1046 matchmaking model
 1099 rankedStatus model snapshot
-1146 pilotControls client game
+1195 pilotControls client game
 
 ## src/Pages/PageFrame.elm
 ### Pages.PageFrame
@@ -639,27 +628,21 @@ alwaysApply: true
 
 ## src/RPC.elm
 ### RPC
-25 lamdera_handleEndpoints rawReq args model
-74 getLogs _ model headers _
-98 getModel _ model request
-124 setModel _ currentModel request
-163 makeModelImportUrl remoteLamderaUrl
-169 fetchImportedModel remoteLamderaUrl modelKey
+8 lamdera_handleEndpoints _ _ model
 
 ## src/Rights/Auth0.elm
 ### Rights.Auth0
-14 renewSession _ _ model
-27 handleAuthSuccess backendModel sessionId clientId userInfo _ _ _
-43 logout sessionId _ model
-48 backendConfig model
-62 config
-76 customizeAuth0Method method
+12 renewSession _ _ model
+25 handleAuthSuccess backendModel sessionId clientId userInfo _ _ _
+41 logout sessionId _ model
+46 backendConfig model
+60 config
 
 ## src/Rights/Permissions.elm
 ### Rights.Permissions
 12 actionRoleMap msg
-63 canPerformAction user action
-77 sessionCanPerformAction model browserCookie action
+60 canPerformAction user action
+74 sessionCanPerformAction model browserCookie action
 
 ## src/Rights/Role.elm
 ### Rights.Role
@@ -668,10 +651,10 @@ alwaysApply: true
 
 ## src/Rights/User.elm
 ### Rights.User
-10 isSysAdmin user
-16 getUserRole user
-25 createUser userInfo initialPreferences
-33 insertUser email newUser model
+9 isSysAdmin _
+14 getUserRole user
+23 createUser userInfo initialPreferences
+31 insertUser email newUser model
 
 ## src/Route.elm
 ### Route

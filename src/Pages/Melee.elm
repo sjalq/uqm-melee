@@ -749,7 +749,7 @@ onlinePanel model =
                             ]
                         , div [ A.class "room-invite" ]
                             [ label [ A.for "invite-code" ] [ text "Have a room code?" ]
-                            , input [ A.id "invite-code", A.class "melee-room-code", A.value model.roomCode, A.attribute "aria-label" "Room code", A.placeholder "M00001", E.onInput RoomCodeChanged ] []
+                            , input [ A.id "invite-code", A.class "melee-room-code", A.value model.roomCode, A.attribute "aria-label" "Room code", A.placeholder "Room code", E.onInput RoomCodeChanged ] []
                             , button (buttonAttrs False ++ [ A.id "join-room", A.disabled (String.trim model.roomCode == ""), E.onClick (Online (Room.JoinRoom model.roomCode)) ]) [ text "Join room" ]
                             ]
                         , section [ A.class "exhibition-card", A.attribute "aria-label" "Live arena preview" ]

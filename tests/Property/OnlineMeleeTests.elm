@@ -6,6 +6,7 @@ import Fuzz
 import Melee.Input as Input
 import Melee.Local as Game
 import Melee.Room as Room
+import Melee.RoomCode as RoomCode
 import Melee.Ship exposing (ShipKind(..))
 import Melee.Units exposing (Side(..))
 import Test exposing (..)
@@ -18,11 +19,11 @@ send session client message host =
 joined =
     Room.init
         |> send "gold" "g" Room.CreateRoom
-        |> send "cyan" "c" (Room.JoinRoom "m00001")
+        |> send "cyan" "c" (Room.JoinRoom (String.toLower code))
 
 
 room host =
-    Dict.get "M00001" host.rooms
+    Dict.get code host.rooms
 
 
 playing =
@@ -31,6 +32,10 @@ playing =
         |> send "cyan" "c" Room.Ready
         |> send "gold" "g" (Room.Pick 0)
         |> send "cyan" "c" (Room.Pick 0)
+
+
+code =
+    RoomCode.generate "gold" "g" 1
 
 
 suite : Test
@@ -43,7 +48,7 @@ suite =
                         send "gold" "g" Room.CreateRoom Room.init
 
                     ( _, deliveries ) =
-                        Room.handle "cyan" "c" (Room.JoinRoom "m00001") initial
+                        Room.handle "cyan" "c" (Room.JoinRoom (String.toLower code)) initial
                 in
                 deliveries
                     |> List.filterMap
@@ -127,7 +132,7 @@ suite =
                     restored =
                         detached |> Room.reconnect "gold" "new" |> Tuple.first
                 in
-                Expect.equal ( Just ( "M00001", Bottom ), Nothing ) ( Room.findRoom "gold" "new" restored |> Maybe.map (\( r, s ) -> ( r.code, s )), Room.findRoom "gold" "g" restored |> Maybe.map (\( r, s ) -> ( r.code, s )) )
+                Expect.equal ( Just ( code, Bottom ), Nothing ) ( Room.findRoom "gold" "new" restored |> Maybe.map (\( r, s ) -> ( r.code, s )), Room.findRoom "gold" "g" restored |> Maybe.map (\( r, s ) -> ( r.code, s )) )
         , test "a second tab cannot steal a connected seat" <|
             \() -> joined |> Room.reconnect "gold" "new" |> Tuple.first |> Expect.equal joined
         , test "empty abandoned rooms expire" <|

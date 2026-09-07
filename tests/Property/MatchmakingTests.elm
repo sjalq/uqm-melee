@@ -7,6 +7,7 @@ import Melee.Keys as Keys
 import Melee.Local as Game
 import Melee.Ranking as Ranking
 import Melee.Room as Room
+import Melee.RoomCode as RoomCode
 import Melee.Ship exposing (ShipKind(..))
 import Melee.Units exposing (Side(..))
 import Test exposing (..)
@@ -21,11 +22,15 @@ paired =
 
 
 match host =
-    Dict.get "M00001" host.rooms
+    Dict.get code host.rooms
 
 
 launched =
     paired |> send "alice-cookie" "a" Room.Ready |> send "bob-cookie" "b" Room.Ready
+
+
+code =
+    RoomCode.generate "alice-cookie" "a" 1
 
 
 suite : Test
@@ -63,7 +68,7 @@ suite =
                                 _ ->
                                     Nothing
                         )
-                    |> Expect.equal [ "M00001", "M00001" ]
+                    |> Expect.equal (List.repeat 2 (RoomCode.generate "alice" "a" 1))
         , test "equal-rated draw records the result without exchanging points" <|
             \() ->
                 let
@@ -119,7 +124,7 @@ suite =
                     won =
                         { launched
                             | rooms =
-                                Dict.update "M00001"
+                                Dict.update code
                                     (Maybe.map
                                         (\room ->
                                             let

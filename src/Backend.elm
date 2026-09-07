@@ -81,8 +81,12 @@ update msg model =
 
         MeleeConnected session client ->
             let
-                ( known, identityMessages ) = Melee.identify session client model.melee
-                ( resumed, reconnectMessages ) = Melee.reconnect session client known
+                ( known, identityMessages ) =
+                    Melee.identify session client model.melee
+
+                ( resumed, reconnectMessages ) =
+                    Melee.reconnect session client known
+
                 ( next, cmd ) =
                     meleeResult model ( resumed, identityMessages ++ reconnectMessages )
             in
@@ -279,10 +283,23 @@ updateFromFrontend sessionId clientId msg model =
             -- Echo websocket message back to frontend
             ( model, Effect.Lamdera.sendToFrontend clientId (A0 ("Echo: " ++ message)) )
 
-
-
         MeleeToBackend message ->
-            meleeResult model (Melee.handle browserCookie connectionId message model.melee)
+            let
+                directoryChanged =
+                    case message of
+                        Melee.Controls _ ->
+                            False
+
+                        Melee.Suspend ->
+                            False
+
+                        Melee.PreviewSubscription _ ->
+                            False
+
+                        _ ->
+                            True
+            in
+            meleeResultWithDirectory directoryChanged model (Melee.handle browserCookie connectionId message model.melee)
 
 
 updateFromFrontendCheckingRights : Effect.Lamdera.SessionId -> Effect.Lamdera.ClientId -> ToBackend -> Model -> ( Model, Command BackendOnly ToFrontend BackendMsg )
@@ -347,19 +364,46 @@ handleEmailPasswordAuth browserCookie connectionId authMsg model =
 
 
 meleeResult : Model -> ( Melee.Host, List Melee.Delivery ) -> ( Model, Command BackendOnly ToFrontend BackendMsg )
-meleeResult model ( host, deliveries ) =
+meleeResult =
+    meleeResultWithDirectory True
+
+
+meleeResultWithDirectory : Bool -> Model -> ( Melee.Host, List Melee.Delivery ) -> ( Model, Command BackendOnly ToFrontend BackendMsg )
+meleeResultWithDirectory checkDirectory model ( host, deliveries ) =
+    let
+        directory =
+            if checkDirectory && not (Dict.isEmpty host.previewClients) then
+                let
+                    games =
+                        Melee.games host
+
+                    rooms =
+                        Melee.discover host
+
+                    sendToBrowsers message =
+                        Dict.keys host.previewClients
+                            |> List.map (\client -> Effect.Lamdera.sendToFrontend (Effect.Lamdera.clientIdFromString client) (MeleeToFrontend message))
+                            |> Command.batch
+                in
+                Command.batch
+                    [ if games /= Melee.games model.melee then
+                        sendToBrowsers (Melee.GamesAvailable games)
+
+                      else
+                        Command.none
+                    , if rooms /= Melee.discover model.melee then
+                        sendToBrowsers (Melee.RoomsAvailable rooms)
+
+                      else
+                        Command.none
+                    ]
+
+            else
+                Command.none
+    in
     ( { model | melee = host }
     , Command.batch
-        [ if Melee.games host /= Melee.games model.melee then
-            Effect.Lamdera.broadcast (MeleeToFrontend (Melee.GamesAvailable (Melee.games host)))
-
-          else
-            Command.none
+        [ directory
         , deliveries |> List.map (\delivery -> Effect.Lamdera.sendToFrontend (Effect.Lamdera.clientIdFromString delivery.client) (MeleeToFrontend delivery.message)) |> Command.batch
-        , if Melee.discover host /= Melee.discover model.melee then
-            Effect.Lamdera.broadcast (MeleeToFrontend (Melee.RoomsAvailable (Melee.discover host)))
-
-          else
-            Command.none
         ]
     )
