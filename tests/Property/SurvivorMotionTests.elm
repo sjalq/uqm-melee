@@ -2,6 +2,7 @@ module Property.SurvivorMotionTests exposing (suite)
 
 import Dict
 import Expect
+import Melee.Id
 import Melee.Init as Init
 import Melee.Input exposing (CyborgRating(..))
 import Melee.Keys as Keys
@@ -38,7 +39,16 @@ suite =
                 after =
                     List.foldl (\_ m -> Game.advance 100 Keys.none m) model (List.range 1 50)
 
-                positions =
-                    Game.phaseArena >> Maybe.map (\ar -> Dict.filter (\id _ -> id == 2 || id == 3) ar.elements |> Dict.map (\_ e -> e.current.location))
+                position side phase =
+                    Game.phaseArena phase
+                        |> Maybe.andThen
+                            (\arena ->
+                                Dict.get (Melee.Id.toInt (State.core (Game.get side arena.combatants)).element) arena.elements
+                                    |> Maybe.map (\el -> el.current.location)
+                            )
             in
-            Expect.notEqual (positions model.phase) (positions after.phase)
+            Expect.all
+                [ \_ -> Expect.notEqual (position Bottom model.phase) (position Bottom after.phase)
+                , \_ -> Expect.notEqual (position Top model.phase) (position Top after.phase)
+                ]
+                ()

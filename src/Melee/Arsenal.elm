@@ -4,6 +4,9 @@ import Melee.Element exposing (..)
 import Melee.Projectile exposing (..)
 import Melee.Ship exposing (..)
 import Melee.ShipState exposing (..)
+import Melee.Trig as Trig
+import Melee.Units exposing (Facing(..), VelocityDesc, WorldPoint)
+import Melee.Velocity as Velocity
 
 
 primary : Combatant -> Weapon
@@ -697,3 +700,52 @@ isProjectile body =
 
         _ ->
             True
+
+
+mounts : MissileSpec -> List { forward : Int, sideways : Int, facingOffset : Int }
+mounts missile =
+    case missile.launch of
+        Nose forward ->
+            List.map (\direction -> { forward = forward, sideways = 0, facingOffset = direction }) missile.directions
+
+        Ports ports ->
+            ports
+
+
+mountPosition : MissileSpec -> Int -> WorldPoint -> { forward : Int, sideways : Int, facingOffset : Int } -> WorldPoint
+mountPosition missile facing origin mount =
+    let
+        angle =
+            (if List.length missile.directions > 1 then
+                facing + mount.facingOffset
+
+             else
+                facing
+            )
+                * 4
+    in
+    { x = origin.x + Trig.cosine angle (mount.forward * 4) + Trig.cosine (angle + 16) (mount.sideways * 4)
+    , y = origin.y + Trig.sine angle (mount.forward * 4) + Trig.sine (angle + 16) (mount.sideways * 4)
+    }
+
+
+{-| Shared by real spawning and AI intercept probes, including the C launch
+position compensation for projectiles that inherit their ship's velocity.
+-}
+launchState : MissileSpec -> Facing -> VelocityDesc -> WorldPoint -> { position : WorldPoint, velocity : VelocityDesc }
+launchState missile (Facing facing) parent at =
+    let
+        ( dx, dy ) =
+            case missile.inheritance of
+                InheritVelocity ->
+                    Velocity.getCurrent parent
+
+                Independent ->
+                    ( 0, 0 )
+
+        world v =
+            floor (toFloat v / 32)
+    in
+    { position = { x = at.x - world dx, y = at.y - world dy }
+    , velocity = Velocity.setComponents (Trig.cosine (facing * 4) (missile.speed * 32) + dx) (Trig.sine (facing * 4) (missile.speed * 32) + dy)
+    }

@@ -10,6 +10,18 @@
 - Original-game fidelity: reproduce the original UQM C behavior for every original ship, weapon, special ability, AI rating, collision, gravity interaction, timing, resource cost, and round transition. Use `/Users/sjalq/git/uqm/sc2/src/uqm/` as the local reference. Do not substitute approximate dynamics, balance changes, arbitrary unsticking behavior, or visual animation for simulation correctness. Verify changes against the C implementation and regression tests; do not claim full parity from compilation alone.
 - UI fidelity: match original Super Melee screenshots and asset coordinates for existing screens. Use the original palette, pixel assets, proportions, and control treatment as the basis for new online features. Verify desktop, mobile, keyboard, and both online seats in an actual browser.
 
+## Strategy simulation and regression workflow
+
+`Melee.Strategy` defines pure ship strategies. `Strategy.controls` receives a context (side, rating, arena, seed) and returns controls plus the next seed; it cannot directly mutate combat state. Use `Strategy.override ShipKind candidate Strategy.originalRoster` for a single-ship experiment. Pass separate bottom/top rosters to `Game.advanceWith`. Default online and local play still use `Strategy.originalPilots`. Never store strategy functions in Lamdera models or messages.
+
+`Helpers.LongGame.runWith` executes the real 60 Hz update loop, including the 24 Hz physics pump, natural deaths, selection and survivor transitions. It accepts separate bottom/top cyborg ratings and returns `Completed` or `Invalidated` at an explicit display-tick budget, plus the round, ships, crew and longest interval without crew/round changes. Random properties must fuzz both ships, both ratings and the seed. An invalidation is a diagnostic result, not proof of an impossible loop. Compare the same seeds and fleets in both seat orientations. Do not add forced damage, arbitrary unsticking or timeouts to production to make a simulation pass.
+
+```sh
+elm-test-rs --compiler lamdera tests/Property/LongGameTests.elm tests/Property/StrategyTests.elm --fuzz 100
+```
+
+`tests/Strategies/DirectPursuit.elm` is a deliberately simple experimental template, not a production replacement. Add candidate strategies under `tests/Strategies`, inject them with `Strategy.override`, and compare identical seeds through `LongGame.runWith`. Add focused properties that fail before a fix, and replay full games after it. AI intercept probes and real missiles share `Arsenal.mounts`, `mountPosition` and `launchState`; do not reintroduce a separate approximate weapon catalog.
+
 At the start of each session, make sure you read the .cursor/*.mdc files so you know how to operate this project. Please note, you can do compiler checks with ./compile.sh
 
 **IMPORTANT**: Always use `http://localhost:8000` instead of `http://0.0.0.0:8000` when accessing the Lamdera development server. The 0.0.0.0 binding is for the server to listen on all interfaces, but clients should connect via localhost.

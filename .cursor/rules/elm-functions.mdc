@@ -185,13 +185,15 @@ alwaysApply: true
 
 ## src/Melee/Arsenal.elm
 ### Melee.Arsenal
-10 primary ship
-24 standard ship
-103 spec missile
-542 missileBody missile
-633 beamBody beam
-658 homing body
-663 isProjectile body
+13 primary ship
+27 standard ship
+106 spec missile
+545 missileBody missile
+636 beamBody beam
+661 homing body
+666 isProjectile body
+706 mounts missile
+716 mountPosition missile facing origin mount
 
 ## src/Melee/Art.elm
 ### Melee.Art
@@ -218,97 +220,98 @@ alwaysApply: true
 
 ## src/Melee/Cyborg.elm
 ### Melee.Cyborg
-31 closeRange
-36 longRange
-41 fastShip
-46 mediumShip
-51 slowShip
-56 fullCircle
-61 halfCircle
-66 quadrant
-71 octant
-76 displayToWorld n
-81 worldToTurn d
-137 blank
-142 maneuverability chars
-158 think rating side arena seed
-242 idle
-247 combatant side arena
-257 otherSide side
-272 weaponReady work
-277 specialReady work
-282 ultra work
-287 isGravity el
-292 isCrew el
-297 isCrewBody body
-307 isShip el
-312 samePlayer a b
-317 colliding el
-322 radiusWorld el
-341 travelAngle vel
-348 isVelocityZero vel
-353 displacement turns vel
-358 wrapLoc
-363 angleToFacing a
-368 facingToAngle f
-373 marginOfError rating
-389 plotIntercept space a b maxTurns margin
-398 plotFrom space a b margin maxTurns t
-433 fillConcerns work
-442 consider work el concerns
-474 lifeSpan el
-484 considerGravity work el _ _ concerns
-530 considerEnemy work el dx dy concerns
-611 considerEmpty work el dx dy concerns
-635 considerWeapon work el dx dy concerns
-673 seekingWeapon work el dx dy
-715 isSpecialBody body
-758 considerCrew work el dx dy concerns
-778 shipIntelligence work0 concerns
-822 moveAndFire work eval fireOk fireTarget margin
-854 shipMovement work eval
-878 shipWeapons work other margin
-942 facingAligned work other
-964 shot kind
-1029 pursue work eval
-1078 entice work eval
-1126 enticeAvoid work eval toward canTurn canThrust
-1156 enticePlanet work toward away canTurn canThrust
-1195 enticeTarget work eval other toward away canTurn canThrust
-1237 turnShip work angle
-1271 thrustShip work angle
-1297 inertial work
-1302 withFacing facing core
-1306 enemyMi work
-1311 enemyRange work
-1316 enemyAbility work
-1321 coin work sides
-1330 raceIntelligence work concerns
-1409 shofixti work0 concerns
-1438 yehat work0 concerns0
-1489 earthling work0 concerns
-1511 arilou work0 concerns
-1540 pkunk work0 concerns
-1555 mycon work0 concerns0
-1599 spathi work0 concerns
-1631 androsynth work0 concerns
-1701 chenjesu work0 concerns
-1725 ilwrath work0 concerns
-1748 thraddash work0 concerns
-1763 druuge work0 concerns
-1781 slylandro work0 concerns
-1790 melnorme work0 concerns
-1802 utwig work0 concerns
-1814 orz work0 concerns
-1830 chmmr work0 concerns
-1842 urquan work0 concerns
-1854 kohrah work0 concerns
-1866 vux work0 concerns
-1878 umgah work0 concerns
-1890 supox work0 concerns
-1902 syreen work0 concerns
-1914 mmrnmhrm work0 concerns
-1926 zoqfot work0 concerns
+33 closeRange
+38 longRange
+43 fastShip
+48 mediumShip
+53 slowShip
+58 fullCircle
+63 halfCircle
+68 quadrant
+73 octant
+78 displayToWorld n
+83 worldToTurn d
+139 blank
+144 maneuverability chars
+160 think rating side arena seed
+172 pilot rating side arena
+194 decide rating side arena seed
+285 idle
+290 combatant side arena
+300 otherSide side
+315 weaponReady work
+320 specialReady work
+325 ultra work
+330 isGravity el
+335 isCrew el
+340 isCrewBody body
+350 isShip el
+355 samePlayer a b
+360 colliding el
+365 radiusWorld el
+384 travelAngle vel
+391 isVelocityZero vel
+396 displacement turns vel
+401 wrapLoc
+406 angleToFacing a
+411 facingToAngle f
+416 marginOfError rating
+432 plotIntercept space a b maxTurns margin
+441 plotFrom space a b margin maxTurns t
+476 fillConcerns work
+485 consider work el concerns
+517 lifeSpan el
+527 considerGravity work el _ _ concerns
+573 considerEnemy work el dx dy concerns
+657 considerEmpty work el dx dy concerns
+681 considerWeapon work el dx dy concerns
+719 seekingWeapon work el dx dy
+761 isSpecialBody body
+804 considerCrew work el dx dy concerns
+825 shipIntelligence work0 concerns
+880 moveAndFire concern work eval margin
+912 shipMovement work eval
+936 shipWeapons work other margin
+1005 facingAligned work other
+1023 pursue work eval
+1072 entice work eval
+1120 enticeAvoid work eval toward canTurn canThrust
+1150 enticePlanet work toward away canTurn canThrust
+1189 enticeTarget work eval other toward away canTurn canThrust
+1303 turnShip work angle
+1337 thrustShip work angle
+1363 inertial work
+1368 withFacing facing core
+1373 enemyMi work
+1378 enemyRange work
+1383 enemyAbility work
+1388 coin work sides
+1397 raceIntelligence work concerns
+1476 shofixti work0 concerns
+1505 yehat work0 concerns0
+1556 earthling work0 concerns
+1578 arilou work0 concerns
+1607 pkunk work0 concerns
+1627 mycon work0 concerns0
+1671 spathi work0 concerns
+1703 androsynth work0 concerns
+1773 chenjesu work0 concerns
+1797 ilwrath work0 concerns
+1820 thraddash work0 concerns
+1835 druuge work0 concerns
+1853 slylandro work0 concerns
+1862 melnorme work0 concerns
+1874 utwig work0 concerns
+1886 orz work0 concerns
+1902 chmmr work0 concerns
+1914 urquan work0 concerns
+1926 kohrah work0 concerns
+1938 vux work0 concerns
+1950 umgah work0 concerns0
+2074 supox work0 concerns
+2086 syreen work0 concerns
+2098 mmrnmhrm work0 concerns
+2110 zoqfot work0 concerns
 
 ## src/Melee/Element.elm
 ### Melee.Element
@@ -382,21 +385,24 @@ alwaysApply: true
 310 choose side index model
 360 crew ship arena
 365 tick held model
-400 removeFirst item list
-414 finishRound arena model
-483 preserveSurvivor old model
-493 carrySurvivors old fresh
-528 battleFrame held model arena
-560 advance milliseconds held model
-575 collectSounds old next sounds
-630 computer rating side arena
-635 encode model
-647 load source model
-702 dittyFrames arena
-714 mapArena fn phase
-733 phaseArena phase
-752 animate milliseconds model
-776 present milliseconds model
+370 tickWith pilots ratings held model
+405 removeFirst item list
+419 finishRound arena model
+488 preserveSurvivor old model
+498 carrySurvivors old fresh
+533 battleFrame held model arena
+538 battleFrameWith pilots ratings held model arena
+567 advance milliseconds held model
+572 advanceWith pilots ratings milliseconds held model
+587 collectSounds old next sounds
+642 computer rating side arena
+647 encode model
+659 load source model
+714 dittyFrames arena
+726 mapArena fn phase
+745 phaseArena phase
+764 animate milliseconds model
+788 present milliseconds model
 
 ## src/Melee/Location.elm
 ### Melee.Location
@@ -574,66 +580,76 @@ alwaysApply: true
 220 decLife life
 230 applyVelocity arena el
 267 shipPre arena el
-350 ownerSide owner
-374 turnShip input c el
-406 thrustShip input el c
-437 inertialThrust vel core
-446 collideAll arena
-451 collideFrom ids arena
-461 collideAgainst id0 others arena
-471 tryCollide id0 id1 arena
-485 collisionPossible e0 e1
-500 radiusDisplay el
-531 spritePath arena el
-550 spritesHit arena a b
-582 circlesHit space e0 e1
-616 bounce arena e0 e1
-709 weaponHit a b
-718 isWeapon el
-723 applyHit maybeHit arena
-803 impact weapon target arena
-880 damageShip amount target arena
-918 startExplosion ship arena
-933 explosions arena
-1005 updateElement id fn arena
-1015 gravityAll arena
-1025 findPlanet ids arena
-1044 isPlanet el
-1049 pullToward planet id arena
-1108 postprocessAll arena
-1113 postprocessOne id arena
-1151 removeEl id arena
-1159 shipPost arena el
-1216 fireWeapon arena el original combatant
-1329 spawnDart arena ship c
-1406 glory arena el c combatant
-1433 gloryOne self origin rangeDisp id arena
-1472 fire weapon el c arena
-1526 limitSaws missile owner arena
-1542 spawnMissile spec ship c at arena
-1608 animationFrame animation facing age damage
-1646 beamGeometry beam facing center
-1688 fireBeam beam el c arena
-1707 castRay beam origin end source c arena
-1808 rayIntersection arena origin end target
-1837 rayCircle space origin end target
-1874 fireContact contact ship c arena
-1925 fireLightning ship c arena
-1976 enemy owner arena
-1993 bearing arena from to
-1998 distance arena from to
-2010 effect body at life arena
-2043 special combatant el c arena
-2359 steerWithSeed arena el
-2455 steer arena el
-2587 flyMissile missile flight arena el
-2751 steerLegacy arena el
-2820 collectCrew ship crew arena
-2838 prepareAbilities arena
-2953 environment arena
-2985 auxiliaries arena
-3169 isSatellite element
-3179 countOwned body owner arena
+353 umgahPre combatant el c
+378 ownerSide owner
+402 turnShip input c el
+434 thrustShip input el c
+465 inertialThrust vel core
+474 collideAll arena
+479 collideFrom ids arena
+489 collideAgainst id0 others arena
+499 tryCollide id0 id1 arena
+513 collisionPossible e0 e1
+528 radiusDisplay el
+559 spritePath arena el
+578 spritesHit arena a b
+610 circlesHit space e0 e1
+644 bounce arena e0 e1
+737 weaponHit a b
+746 isWeapon el
+751 applyHit maybeHit arena
+831 impact weapon target arena
+908 damageShip amount target arena
+946 startExplosion ship arena
+961 explosions arena
+1033 updateElement id fn arena
+1043 gravityAll arena
+1053 findPlanet ids arena
+1072 isPlanet el
+1077 pullToward planet id arena
+1136 postprocessAll arena
+1141 postprocessOne id arena
+1179 removeEl id arena
+1187 shipPost arena el
+1250 fireWeapon arena el original combatant
+1363 spawnDart arena ship c
+1440 glory arena el c combatant
+1467 gloryOne self origin rangeDisp id arena
+1506 fire weapon el c arena
+1543 limitSaws missile owner arena
+1559 spawnMissile spec ship c at arena
+1620 animationFrame animation facing age damage
+1658 beamGeometry beam facing center
+1700 fireBeam beam el c arena
+1719 castRay beam origin end source c arena
+1820 rayIntersection arena origin end target
+1849 rayCircle space origin end target
+1886 fireContact contact ship c arena
+1937 fireLightning ship c arena
+1988 enemy owner arena
+2005 bearing arena from to
+2010 distance arena from to
+2022 effect body at life arena
+2055 special combatant el c arena
+2371 steerWithSeed arena el
+2467 steer arena el
+2599 flyMissile missile flight arena el
+2763 steerLegacy arena el
+2832 collectCrew ship crew arena
+2850 prepareAbilities arena
+2965 environment arena
+2997 auxiliaries arena
+3181 isSatellite element
+3191 countOwned body owner arena
+
+## src/Melee/Strategy.elm
+### Melee.Strategy
+40 original
+45 controls
+50 originalRoster _
+55 originalPilots
+60 override kind strategy fallback selected
+69 run roster rating side arena
 
 ## src/Melee/Stream.elm
 ### Melee.Stream

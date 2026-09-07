@@ -300,6 +300,9 @@ shipPre arena el =
                     else
                         ( True, el, { c0 | energyWait = decWait c0.energyWait } )
 
+                ( cRace, elRace ) =
+                    umgahPre combatant el cEnergy
+
                 turned =
                     turnShip
                         (if input.special && List.member (kind combatant) [ Supox, Orz ] then
@@ -308,21 +311,21 @@ shipPre arena el =
                          else
                             input
                         )
-                        cEnergy
-                        el
+                        cRace
+                        elRace
 
                 cTurn =
-                    { cEnergy | facing = turned.facing }
+                    { cRace | facing = turned.facing }
 
                 ( elThrust, cThrust ) =
-                    if waitReady el.turnWait then
-                        ( { el
+                    if waitReady elRace.turnWait then
+                        ( { elRace
                             | turnWait = turned.turnWait
-                            , next = { location = el.next.location, frameIndex = turned.frame }
+                            , next = { location = elRace.next.location, frameIndex = turned.frame }
                             , flags =
                                 let
                                     f =
-                                        el.flags
+                                        elRace.flags
                                 in
                                 { f | changing = turned.changing || f.changing }
                           }
@@ -330,7 +333,7 @@ shipPre arena el =
                         )
 
                     else
-                        ( { el | turnWait = decWait el.turnWait }, cTurn )
+                        ( { elRace | turnWait = decWait elRace.turnWait }, cTurn )
 
                 ( el2, c2 ) =
                     thrustShip
@@ -344,6 +347,31 @@ shipPre arena el =
                         cThrust
             in
             ( mapCombatant (ownerSide el.owner) (setCore c2) arena, el2 )
+
+
+umgahPre : Combatant -> Element -> CombatantCore -> ( CombatantCore, Element )
+umgahPre combatant el c =
+    if kind combatant == Umgah && c.input.special && waitReady el.thrustWait then
+        let
+            ( paid, _, charged ) =
+                Energy.deltaEnergy -c.characteristics.specialEnergyCost el c
+
+            (Facing facing) =
+                c.facing
+
+            flags =
+                charged.flags
+        in
+        if paid then
+            ( { charged | specialWait = Wait 2, flags = { flags | atMaxSpeed = False, beyondMaxSpeed = False } }
+            , { el | velocity = Velocity.delta (Trig.cosine (facing * 4 + 32) (160 * 32)) (Trig.sine (facing * 4 + 32) (160 * 32)) el.velocity }
+            )
+
+        else
+            ( charged, el )
+
+    else
+        ( c, el )
 
 
 ownerSide : Owner -> Side
@@ -1209,7 +1237,13 @@ shipPost arena el =
                     ( c1, arena1, el1 ) =
                         fireWeapon (mapCombatant (ownerSide el.owner) (\_ -> aimed) arena) el c0 aimed
                 in
-                ( mapCombatant (ownerSide el.owner) (setCore c1) arena1, el1 )
+                if kind combatant == Umgah && not (waitReady c1.specialWait) then
+                    -- umgah.c postprocess: the reverse impulse only moves this
+                    -- frame, then stops. It is not a persistent flight velocity.
+                    ( mapCombatant (ownerSide el.owner) (setCore { c1 | specialWait = Wait 0 }) arena1, { el1 | velocity = Velocity.zero } )
+
+                else
+                    ( mapCombatant (ownerSide el.owner) (setCore c1) arena1, el1 )
 
 
 fireWeapon : Arena -> Element -> CombatantCore -> Combatant -> ( CombatantCore, Arena, Element )
@@ -1318,7 +1352,7 @@ fireWeapon arena el original combatant =
     if kind combatant == Shofixti && c1.input.special /= c1.oldInput.special then
         special combatant e1 c1 a1
 
-    else if c1.input.special && kind combatant /= Shofixti && waitReady original.specialWait && (c1.energy >= c1.characteristics.specialEnergyCost || List.member (kind combatant) [ Druuge, Pkunk, Supox ]) then
+    else if c1.input.special && not (List.member (kind combatant) [ Shofixti, Umgah ]) && waitReady original.specialWait && (c1.energy >= c1.characteristics.specialEnergyCost || List.member (kind combatant) [ Druuge, Pkunk, Supox ]) then
         special combatant e1 c1 a1
 
     else
@@ -1490,32 +1524,15 @@ fire weapon el c arena =
                         c.facing
 
                     ports =
-                        case spec.launch of
-                            Nose forward ->
-                                List.map (\offset -> { forward = forward, sideways = 0, facingOffset = offset }) spec.directions
-
-                            Ports values ->
-                                values
+                        Arsenal.mounts spec
 
                     launch mount state =
                         let
                             direction =
                                 modBy 16 (facing + mount.facingOffset)
 
-                            angle =
-                                (if List.length spec.directions > 1 then
-                                    direction
-
-                                 else
-                                    facing
-                                )
-                                    * 4
-
                             at =
-                                Trig.wrapPoint state.space
-                                    { x = el.next.location.x + Trig.cosine angle (mount.forward * 4) + Trig.cosine (angle + 16) (mount.sideways * 4)
-                                    , y = el.next.location.y + Trig.sine angle (mount.forward * 4) + Trig.sine (angle + 16) (mount.sideways * 4)
-                                    }
+                                Arsenal.mountPosition spec facing el.next.location mount |> Trig.wrapPoint state.space
                         in
                         spawnMissile spec el { c | facing = Facing direction } at state |> Tuple.first
                 in
@@ -1547,16 +1564,11 @@ spawnMissile spec ship c at arena =
         (Facing facing) =
             c.facing
 
-        ( inheritedX, inheritedY ) =
-            case spec.inheritance of
-                InheritVelocity ->
-                    Velocity.getCurrent ship.velocity
-
-                Independent ->
-                    ( 0, 0 )
+        launch =
+            Arsenal.launchState spec c.facing ship.velocity at
 
         image =
-            { location = at, frameIndex = animationFrame spec.animation facing 0 spec.damage }
+            { location = Trig.wrapPoint arena.space launch.position, frameIndex = animationFrame spec.animation facing 0 spec.damage }
 
         trackingWait =
             case spec.guidance of
@@ -1595,7 +1607,7 @@ spawnMissile spec ship c at arena =
                         Velocity.zero
 
                     else
-                        Velocity.setComponents (Trig.cosine (facing * 4) (spec.speed * 32) + inheritedX) (Trig.sine (facing * 4) (spec.speed * 32) + inheritedY)
+                        launch.velocity
                 , flags = { emptyFlags | appearing = True, finiteLife = True, ignoreSimilar = not spec.friendlyFire }
             }
         )
@@ -2311,7 +2323,7 @@ special combatant el c arena =
             ( { paid | specialWait = Wait 1 }, burned, { el | velocity = Velocity.setVector 80 c.facing } )
 
         LiveUmgah _ _ ->
-            ( paid, arena, { el | velocity = Velocity.setVector 160 (Facing (modBy 16 (facing + 8))) } )
+            ( c, arena, el )
 
         LiveUrQuan _ ->
             if el.points > 2 && countOwned UrQuanFighter el.owner arena <= 6 then

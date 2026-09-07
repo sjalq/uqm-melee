@@ -5,7 +5,6 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import Melee.Battle exposing (Arena)
 import Melee.Catalog as Catalog
-import Melee.Cyborg as Cyborg
 import Melee.Element exposing (Body(..), Owner(..))
 import Melee.Graphics exposing (Quality(..))
 import Melee.Id exposing (toInt)
@@ -19,6 +18,7 @@ import Melee.Rng as Rng exposing (Seed(..))
 import Melee.Ship exposing (..)
 import Melee.ShipState as State
 import Melee.Step as Step
+import Melee.Strategy as Strategy
 import Melee.Units exposing (..)
 import Melee.View as View
 
@@ -363,6 +363,11 @@ crew ship arena =
 
 tick : Keys.Held -> Model -> Model
 tick held model =
+    tickWith Strategy.originalPilots { bottom = model.difficulty, top = model.difficulty } held model
+
+
+tickWith : Strategy.Pilots -> Sided CyborgRating -> Keys.Held -> Model -> Model
+tickWith pilots ratings held model =
     case model.phase of
         Countdown frames arena ->
             if frames <= 1 then
@@ -377,7 +382,7 @@ tick held model =
                     Rate.advancePump arena.pumpAcc
 
                 next =
-                    List.foldl (\_ a -> battleFrame held model a) { arena | pumpAcc = acc } (List.range 1 frames)
+                    List.foldl (\_ a -> battleFrameWith pilots ratings held model a) { arena | pumpAcc = acc } (List.range 1 frames)
             in
             if crew next.combatants.bottom next == 0 || crew next.combatants.top next == 0 then
                 { model | phase = RoundOver (90 + dittyFrames next) next, seed = next.seed, sounds = collectSounds arena next model.sounds }
@@ -526,6 +531,11 @@ carrySurvivors old fresh =
 -}
 battleFrame : Keys.Held -> Model -> Arena -> Arena
 battleFrame held model arena =
+    battleFrameWith Strategy.originalPilots { bottom = model.difficulty, top = model.difficulty } held model arena
+
+
+battleFrameWith : Strategy.Pilots -> Sided CyborgRating -> Keys.Held -> Model -> Arena -> Arena
+battleFrameWith pilots ratings held model arena =
     let
         human =
             Keys.inputs held
@@ -536,28 +546,30 @@ battleFrame held model arena =
         computerTop =
             not (model.mode == Versus || model.mode == ReverseSolo)
 
-        ( bottomIn, seed1 ) =
+        ( bottomIn, arena1 ) =
             if computerBottom then
-                Cyborg.think model.difficulty Bottom arena arena.seed
+                Strategy.run pilots.bottom ratings.bottom Bottom arena
 
             else
-                ( human.bottom, arena.seed )
+                ( human.bottom, arena )
 
-        arena1 =
-            { arena | seed = seed1 }
-
-        ( topIn, seed2 ) =
+        ( topIn, arena2 ) =
             if computerTop then
-                Cyborg.think model.difficulty Top arena1 seed1
+                Strategy.run pilots.top ratings.top Top arena1
 
             else
-                ( human.top, seed1 )
+                ( human.top, arena1 )
     in
-    Step.tick { bottom = bottomIn, top = topIn } { arena1 | seed = seed2 }
+    Step.tick { bottom = bottomIn, top = topIn } arena2
 
 
 advance : Float -> Keys.Held -> Model -> Model
 advance milliseconds held model =
+    advanceWith Strategy.originalPilots { bottom = model.difficulty, top = model.difficulty } milliseconds held model
+
+
+advanceWith : Strategy.Pilots -> Sided CyborgRating -> Float -> Keys.Held -> Model -> Model
+advanceWith pilots ratings milliseconds held model =
     let
         total =
             model.clock + clamp 0 250 milliseconds
@@ -568,7 +580,7 @@ advance milliseconds held model =
         next =
             { model | clock = total - toFloat frames * (1000 / 60) }
     in
-    List.foldl (\_ state -> tick held state) next (List.range 1 frames)
+    List.foldl (\_ state -> tickWith pilots ratings held state) next (List.range 1 frames)
 
 
 collectSounds : Arena -> Arena -> List { id : Int, source : String, age : Int } -> List { id : Int, source : String, age : Int }
@@ -628,7 +640,7 @@ collectSounds old next sounds =
 
 computer : CyborgRating -> Side -> Arena -> BattleInput
 computer rating side arena =
-    Cyborg.think rating side arena arena.seed |> Tuple.first
+    Strategy.run Strategy.originalRoster rating side arena |> Tuple.first
 
 
 encode : Model -> String

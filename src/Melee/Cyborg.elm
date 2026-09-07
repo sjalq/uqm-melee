@@ -1,4 +1,4 @@
-module Melee.Cyborg exposing (maneuverability, think)
+module Melee.Cyborg exposing (maneuverability, pilot, think)
 
 {-| Original Super Melee cyborg (cyborg.c, intel.c, per-ship intelligence\_func).
 
@@ -14,11 +14,13 @@ suppresses specials.
 -}
 
 import Dict exposing (Dict)
+import Melee.Arsenal as Arsenal
 import Melee.Battle exposing (Arena)
 import Melee.Element exposing (Body(..), Element, Life(..), Owner(..), objectCloaked)
 import Melee.Id exposing (toInt)
 import Melee.Input exposing (BattleInput, CyborgRating(..), Turn(..))
 import Melee.Motion as Motion
+import Melee.Projectile as Projectile
 import Melee.Rng as Rng exposing (Seed)
 import Melee.Ship exposing (Ability, Characteristics, ShipKind(..), intelRange, stock)
 import Melee.ShipState as State exposing (AndrosynthExtra(..), Combatant(..), CombatantCore)
@@ -156,13 +158,47 @@ maneuverability chars =
 
 think : CyborgRating -> Side -> Arena -> Seed -> ( BattleInput, Seed )
 think rating side arena seed =
+    let
+        ( input, nextSeed, _ ) =
+            decide rating side arena seed
+    in
+    ( input, nextSeed )
+
+
+{-| Apply the original AI's remembered characteristics as well as its controls.
+Umgah stores its reverse-approach duration in characteristics.special\_wait.
+-}
+pilot : CyborgRating -> Side -> Arena -> ( BattleInput, Arena )
+pilot rating side arena =
+    let
+        ( input, seed, updated ) =
+            decide rating side arena arena.seed
+
+        ships =
+            arena.combatants
+    in
+    ( input
+    , { arena
+        | seed = seed
+        , combatants =
+            if side == Bottom then
+                { ships | bottom = updated }
+
+            else
+                { ships | top = updated }
+      }
+    )
+
+
+decide : CyborgRating -> Side -> Arena -> Seed -> ( BattleInput, Seed, Combatant )
+decide rating side arena seed =
     case Dict.get (toInt (State.core (combatant side arena)).element) arena.elements of
         Nothing ->
-            ( idle, seed )
+            ( idle, seed, combatant side arena )
 
         Just ship ->
             if ship.points == 0 then
-                ( idle, seed )
+                ( idle, seed, combatant side arena )
 
             else
                 let
@@ -235,6 +271,13 @@ think rating side arena seed =
                             work1.special
                   }
                 , work1.seed
+                , case combatant side arena of
+                    LiveUmgah originalCore extra ->
+                        LiveUmgah { originalCore | characteristics = work1.core.characteristics }
+                            extra
+
+                    other ->
+                        other
                 )
 
 
@@ -811,19 +854,30 @@ shipIntelligence work0 concerns =
                 work1
 
         afterGravity =
-            moveAndFire work2 concerns.gravity False True margin
+            moveAndFire GravityConcern work2 concerns.gravity margin
 
         afterWeapon =
-            moveAndFire afterGravity concerns.weapon True (concerns.weapon.move /= Avoid) margin
+            moveAndFire WeaponConcern afterGravity concerns.weapon margin
 
         afterCrew =
-            moveAndFire afterWeapon concerns.crew False True margin
+            moveAndFire CrewConcern afterWeapon concerns.crew margin
     in
-    moveAndFire afterCrew concerns.enemy True True margin
+    moveAndFire EnemyConcern afterCrew concerns.enemy margin
 
 
-moveAndFire : Work -> Eval -> Bool -> Bool -> Int -> Work
-moveAndFire work eval fireOk fireTarget margin =
+{-| C cyborg.c restricts evasive movement against ENEMY\_WEAPON\_INDEX only.
+Enemy ships always qualify for movement, including slow ships choosing ENTICE.
+Keep concern identity explicit: permission to fire cannot encode that distinction.
+-}
+type Concern
+    = GravityConcern
+    | WeaponConcern
+    | CrewConcern
+    | EnemyConcern
+
+
+moveAndFire : Concern -> Work -> Eval -> Int -> Work
+moveAndFire concern work eval margin =
     case eval.object of
         Nothing ->
             work
@@ -833,7 +887,7 @@ moveAndFire work eval fireOk fireTarget margin =
                 moved =
                     if
                         not work.moved
-                            && (not fireOk || eval.move == Pursue || other.flags.crewObject || work.mi >= mediumShip)
+                            && (concern /= WeaponConcern || eval.move == Pursue || other.flags.crewObject || work.mi >= mediumShip)
                     then
                         shipMovement { work | moved = True } eval
 
@@ -841,7 +895,7 @@ moveAndFire work eval fireOk fireTarget margin =
                         work
 
                 fired =
-                    if not moved.fired && fireOk && fireTarget then
+                    if not moved.fired && (concern == EnemyConcern || (concern == WeaponConcern && eval.move /= Avoid)) then
                         if shipWeapons moved other margin then
                             { moved | weapon = True, fired = True }
 
@@ -906,8 +960,37 @@ shipWeapons work other margin =
         dist <= work.range && (delta <= 1 || delta >= 15)
 
     else
-        case shot work.kind of
-            Nothing ->
+        case Arsenal.primary (combatant work.side work.arena) of
+            Projectile.Missile spec ->
+                let
+                    ( dx, dy ) =
+                        displacement 1 work.velocity
+
+                    origin =
+                        { x = work.ship.current.location.x + dx, y = work.ship.current.location.y + dy }
+
+                    hits mount =
+                        let
+                            facing =
+                                Facing (modBy 16 (work.facing + mount.facingOffset))
+
+                            launch =
+                                Arsenal.launchState spec facing work.velocity (Arsenal.mountPosition spec work.facing origin mount)
+
+                            ship =
+                                work.ship
+
+                            flags =
+                                ship.flags
+
+                            ghost =
+                                { ship | current = { location = launch.position, frameIndex = work.facing }, velocity = launch.velocity, body = Arsenal.missileBody spec.kind, flags = { flags | playerShip = False } }
+                        in
+                        plotIntercept work.space ghost other spec.life margin > 0
+                in
+                List.any hits (Arsenal.mounts spec)
+
+            _ ->
                 let
                     dx =
                         Trig.wrapDelta (other.current.location.x - work.ship.current.location.x) work.space.width
@@ -916,30 +999,6 @@ shipWeapons work other margin =
                         Trig.wrapDelta (other.current.location.y - work.ship.current.location.y) work.space.height
                 in
                 Trig.squareRoot (dx * dx + dy * dy) <= work.range && facingAligned work other
-
-            Just spec ->
-                let
-                    angle =
-                        facingToAngle work.facing
-
-                    ship =
-                        work.ship
-
-                    ghost : Element
-                    ghost =
-                        { ship
-                            | current =
-                                { location =
-                                    { x = ship.next.location.x + Trig.cosine angle spec.offset
-                                    , y = ship.next.location.y + Trig.sine angle spec.offset
-                                    }
-                                , frameIndex = work.facing
-                                }
-                            , velocity = Velocity.setVector spec.speed (Facing work.facing)
-                            , body = ShofixtiDart
-                        }
-                in
-                plotIntercept work.space ghost other spec.life margin > 0
 
 
 facingAligned : Work -> Element -> Bool
@@ -958,75 +1017,6 @@ facingAligned work other =
             Trig.normalizeFacing (wanted - work.facing)
     in
     delta <= 2 || delta >= 14
-
-
-type alias Shot =
-    { speed : Int, life : Int, offset : Int }
-
-
-shot : ShipKind -> Maybe Shot
-shot kind =
-    let
-        d n =
-            displayToWorld n
-    in
-    case kind of
-        Shofixti ->
-            Just { speed = d 24, life = 10, offset = d 15 }
-
-        Yehat ->
-            Just { speed = d 20, life = 10, offset = d 15 }
-
-        Spathi ->
-            Just { speed = d 30, life = 10, offset = d 15 }
-
-        Thraddash ->
-            Just { speed = d 30, life = 15, offset = d 15 }
-
-        Druuge ->
-            Just { speed = d 30, life = 20, offset = d 15 }
-
-        Pkunk ->
-            Just { speed = d 24, life = 5, offset = d 15 }
-
-        Orz ->
-            Just { speed = d 30, life = 12, offset = d 15 }
-
-        Chenjesu ->
-            Just { speed = d 16, life = 90, offset = d 15 }
-
-        Ilwrath ->
-            Just { speed = 25, life = 8, offset = d 15 }
-
-        Utwig ->
-            Just { speed = d 30, life = 10, offset = d 15 }
-
-        Supox ->
-            Just { speed = d 30, life = 10, offset = d 15 }
-
-        UrQuan ->
-            Just { speed = d 20, life = 20, offset = d 15 }
-
-        Syreen ->
-            Just { speed = d 30, life = 10, offset = d 15 }
-
-        Mmrnmhrm ->
-            Just { speed = d 20, life = 40, offset = d 15 }
-
-        Mycon ->
-            Just { speed = d 8, life = 40, offset = d 15 }
-
-        ZoqFotPik ->
-            Just { speed = d 10, life = 10, offset = d 15 }
-
-        KohrAh ->
-            Just { speed = 64, life = 64, offset = d 15 }
-
-        Earthling ->
-            Just { speed = d 20, life = 60, offset = d 15 }
-
-        _ ->
-            Nothing
 
 
 pursue : Work -> Eval -> Work
@@ -1198,43 +1188,115 @@ enticePlanet work toward away canTurn canThrust =
 enticeTarget : Work -> Eval -> Element -> Int -> Int -> Bool -> Bool -> Work
 enticeTarget work eval other toward away canTurn canThrust =
     let
-        inRange =
-            plotIntercept work.space work.ship other 10 (work.range - work.range // 4)
-
-        tooClose =
-            plotIntercept work.space work.ship other 40 (closeRange * 2) > 0
-
         atSpeed =
             Motion.atLimit work.velocity work.core.flags
 
-        turnAngle =
-            if tooClose then
-                away
+        ( shipDx, shipDy ) =
+            displacement eval.whichTurn work.velocity
+
+        ( otherDx, otherDy ) =
+            displacement eval.whichTurn other.velocity
+
+        shipTravel =
+            Trig.arctan shipDx shipDy
+
+        enemy =
+            enemyAbility work
+
+        fireDirections =
+            [ ( enemy.firesFore, 0 ), ( enemy.firesRight, quadrant ), ( enemy.firesAft, halfCircle ), ( enemy.firesLeft, quadrant * 3 ) ]
+
+        danger ( enabled, offset ) ( priorCone, found ) =
+            if found || not enabled then
+                ( priorCone, found )
 
             else
-                toward
+                let
+                    facing =
+                        eval.facing + offset
 
-        work1 =
-            if canTurn then
-                turnShip work turnAngle
+                    nextCone =
+                        Trig.normalizeAngle (away - facing + octant)
+                in
+                ( nextCone, nextCone <= quadrant && (otherDx /= 0 || otherDy /= 0) && Trig.normalizeAngle (travelAngle other.velocity + halfCircle - facing + octant) <= quadrant )
+
+        ( cone, backing ) =
+            if isShip other then
+                List.foldl danger ( Trig.normalizeAngle (away - eval.facing + octant), False ) fireDirections
 
             else
-                work
+                ( Trig.normalizeAngle (away - eval.facing + octant), False )
 
-        coast =
-            work.core.characteristics.thrustIncrement /= work.core.characteristics.maxThrust && atSpeed && not tooClose
+        intercept frames range =
+            plotIntercept work.space work.ship other frames range
+
+        maneuver angle thrust =
+            let
+                turned =
+                    if canTurn then
+                        turnShip work angle
+
+                    else
+                        work
+            in
+            if canThrust && thrust then
+                thrustShip turned angle
+
+            else
+                turned
+
+        inRange =
+            intercept 10 (work.range - work.range // 4)
+
+        usesInertia =
+            work.core.characteristics.thrustIncrement /= work.core.characteristics.maxThrust
     in
-    if canThrust && not coast then
-        thrustShip work1
-            (if inRange > 0 then
-                away
+    -- These are the ordered DoManeuver branches in C Entice. In particular,
+    -- reaching full speed does not authorize coasting while out of range.
+    if isShip other && backing && work.range < longRange && eval.whichTurn <= 32 then
+        maneuver away True
 
-             else
-                toward
-            )
+    else if isShip other && eval.whichTurn <= 8 && work.core.characteristics.maxThrust <= (State.core (combatant (otherSide work.side) work.arena)).characteristics.maxThrust then
+        maneuver toward True
+
+    else if not atSpeed && intercept 40 (closeRange * 2) > 0 then
+        if Trig.normalizeAngle (toward - facingToAngle work.facing + octant) <= quadrant || cone > quadrant then
+            maneuver away True
+
+        else
+            maneuver (facingToAngle work.facing) True
+
+    else if inRange > 0 then
+        if usesInertia && atSpeed && (Trig.normalizeAngle (away - shipTravel + 10) <= 20 || intercept 30 (closeRange * 2) == 0) then
+            maneuver toward False
+
+        else if inRange == 1 || usesInertia then
+            let
+                turned =
+                    if canTurn then
+                        turnShip work away
+
+                    else
+                        work
+
+                angle =
+                    if Trig.normalizeAngle (toward - shipTravel + 10) <= 20 then
+                        facingToAngle turned.facing
+
+                    else
+                        away
+            in
+            if canThrust then
+                thrustShip turned angle
+
+            else
+                turned
+
+        else
+            maneuver toward True
 
     else
-        work1
+        maneuver toward True
 
 
 turnShip : Work -> Int -> Work
@@ -1544,16 +1606,21 @@ arilou work0 concerns =
 pkunk : Work -> Concerns -> Work
 pkunk work0 concerns =
     let
-        ( sing, work1 ) =
-            coin work0 256
+        work =
+            if work0.core.energy >= work0.core.maxEnergy then
+                { work0 | special = False }
 
-        work2 =
-            { work1
-                | special =
-                    work1.core.energy < work1.core.maxEnergy && (specialReady work1 || sing && work1.core.energy < work1.core.maxEnergy)
-            }
+            else if waitN work0.core.specialWait == 0 then
+                { work0 | special = True }
+
+            else
+                let
+                    ( random, seed ) =
+                        Rng.next work0.seed
+                in
+                { work0 | seed = seed, special = modBy 256 random < 20 }
     in
-    shipIntelligence work2 concerns
+    shipIntelligence work concerns
 
 
 mycon : Work -> Concerns -> Work
@@ -1880,15 +1947,127 @@ vux work0 concerns =
 
 
 umgah : Work -> Concerns -> Work
-umgah work0 concerns =
+umgah work0 concerns0 =
     let
-        work1 =
-            shipIntelligence work0 concerns
+        -- Think runs before Step applies new controls, so input is the previous
+        -- frame's status (the C old_status_flags at this point).
+        previous =
+            work0.core.input
 
-        zip =
-            specialReady work1 && (concerns.weapon.whichTurn <= 4 || concerns.enemy.whichTurn >= 16)
+        weapon =
+            concerns0.weapon
+
+        concerns =
+            if weapon.object /= Nothing && weapon.move == Entice then
+                if weapon.whichTurn > 3 || previous.special then
+                    { concerns0 | weapon = blank }
+
+                else
+                    { concerns0
+                        | weapon =
+                            { weapon
+                                | move =
+                                    if weapon.object |> Maybe.map (\el -> el.flags.finiteLife && not el.flags.crewObject) |> Maybe.withDefault False then
+                                        Avoid
+
+                                    else
+                                        Pursue
+                            }
+                    }
+
+            else
+                concerns0
+
+        enemy =
+            concerns.enemy
+
+        remember distance work =
+            let
+                core =
+                    work.core
+
+                chars =
+                    core.characteristics
+            in
+            { work | core = { core | characteristics = { chars | specialWait = Wait distance } } }
+
+        finish work =
+            if work.special then
+                work
+
+            else
+                remember 255 work
     in
-    { work1 | special = zip }
+    case enemy.object of
+        Nothing ->
+            shipIntelligence { work0 | range = closeRange } concerns |> (\work -> { work | special = False }) |> finish
+
+        Just target ->
+            if not (specialReady work0) || concerns.gravity.object /= Nothing then
+                let
+                    work =
+                        shipIntelligence { work0 | range = closeRange } concerns
+                in
+                { work | weapon = work.weapon || enemy.whichTurn < 16, special = False } |> finish
+
+            else
+                let
+                    thisTurn =
+                        min 255 enemy.whichTurn
+
+                    enough =
+                        worldToTurn (160 * work0.core.energy // work0.core.characteristics.specialEnergyCost) > thisTurn
+
+                    behindAngle =
+                        Trig.arctan (target.next.location.x - work0.ship.next.location.x) (target.next.location.y - work0.ship.next.location.y)
+
+                    behind =
+                        Trig.normalizeAngle (behindAngle - (work0.facing * 4 + halfCircle) + 10) <= 20
+
+                    longApproach =
+                        enough && (previous.special || behind || (thisTurn > 6 && enemyMi work0 <= slowShip) || (thisTurn >= 16 && thisTurn <= 24))
+
+                    work =
+                        shipIntelligence
+                            { work0
+                                | range =
+                                    if longApproach then
+                                        longRange * 8
+
+                                    else
+                                        closeRange
+                            }
+                            concerns
+
+                    linedUp =
+                        work0.turnWait == 0 && previous.turn == NoTurn
+
+                    prepared =
+                        if not longApproach then
+                            { work | special = False }
+
+                        else if (previous.special && thisTurn <= waitN work0.core.characteristics.specialWait) || (not previous.special && behind && (linedUp || thisTurn < 16)) then
+                            let
+                                backing =
+                                    remember thisTurn { work | thrust = False, special = True }
+                            in
+                            if thisTurn <= 8 && linedUp then
+                                let
+                                    ( left, randomized ) =
+                                        coin backing 2
+                                in
+                                { randomized | left = left || randomized.left, right = not left || randomized.right }
+
+                            else
+                                backing
+
+                        else if previous.special then
+                            { work | thrust = True, special = False, left = False, right = False }
+
+                        else
+                            { work | thrust = False }
+                in
+                { prepared | weapon = prepared.weapon || (thisTurn < 16 && not behind) } |> finish
 
 
 supox : Work -> Concerns -> Work
