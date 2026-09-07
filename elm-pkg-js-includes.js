@@ -3,6 +3,8 @@
 // In future this will be more structured + restricted once the design is done
 
 const consoleLogger = require('./elm-pkg-js/console-logger.js')
+const meleeMusic = require('./elm-pkg-js/melee-music.js')
+const meleeBrowser = require('./elm-pkg-js/melee-browser.js')
 const clipboard = require('./elm-pkg-js/clipboard.js')
 
 exports.init = async function init(app) {
@@ -11,4 +13,6 @@ exports.init = async function init(app) {
     // automatically generated in Local Development for every file in elm-pkg-js/
     await consoleLogger.init(app)
     await clipboard.init(app)
+    await meleeMusic.init(app)
+    await meleeBrowser.init(app)
 }

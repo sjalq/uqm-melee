@@ -24,7 +24,9 @@ Menus support mouse, arrow keys, Enter, and Escape. In local two-player combat, 
 
 ## Rooms and simulation
 
-The backend resolves online combat. Controls are sent when they change; combat deltas are capped at ten updates per second and lobby previews at two. Empty custom rooms retain only their fleet setup, outside the simulation loop. Eight-character room codes are reusable and collision-checked, but rooms remain publicly discoverable.
+The backend resolves online combat. Controls are sent when they change; combat deltas are capped at ten updates per second and lobby previews at two. The front page renders the actual exhibition through the same Elm cockpit view as spectating, with sound muted until enabled. Empty custom rooms retain only their fleet setup, outside the simulation loop. Eight-character room codes are reusable and collision-checked, but rooms remain publicly discoverable.
+
+Elm owns menu navigation, countdown timing, audio selection, and presentation state. Browser API adapters live in `elm-pkg-js/` and are registered by `elm-pkg-js-includes.js`. Styling uses compiled CSS; run `npm run build:css` after changing Tailwind utility classes.
 
 ## Artwork and source credits
 

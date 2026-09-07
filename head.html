@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Aldrich&family=VT323&display=swap" rel="stylesheet">
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="/tailwind.css">
 <style>
 body { background: #000; }
 uqm-music { display:none; }
@@ -479,9 +479,83 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
  .hangar-catalog-footer { font-size:13px; padding:3px 1px; }
  .hangar-key-hints { display:none; }
 }
+
+.lobby-screen { height:100dvh !important; overflow:hidden; padding:0 20px 12px; }
+.lobby-screen > .room-shell { height:100%; min-height:0; max-width:1680px; display:flex; flex-direction:column; }
+.lobby-screen .room-masthead { padding:16px 0 12px; }
+.lobby-layout { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(320px,1fr); align-items:stretch; gap:18px; flex:1; min-height:0; }
+.lobby-layout .room-browser { display:flex; flex-direction:column; gap:8px; padding:0; min-width:0; min-height:0; }
+.lobby-layout .matchmaking-panel { margin:0; padding:12px; }
+.lobby-layout .room-browser-actions { align-items:flex-start; flex-direction:column; gap:8px; }
+.lobby-layout .room-browser-actions > button { width:100%; }
+.lobby-layout .room-invite { flex-wrap:wrap; gap:6px; padding:10px; }
+.lobby-layout .room-invite label { flex-basis:100%; }
+.lobby-layout .room-invite input { flex:1; width:80px; }
+.lobby-layout .room-list { flex:1; min-height:0; overflow:hidden; }
+.lobby-layout .directory-tabs { flex-wrap:wrap; }
+.lobby-layout .directory-tabs button { padding:6px; }
+.lobby-layout .room-list-heading { display:none; }
+.lobby-layout .room-empty { margin:0; padding:14px; }
+.lobby-layout .room-empty h3 { margin-top:0; }
+.lobby-layout .room-row { padding:10px; }
+.lobby-layout .room-row-actions { flex-direction:column; }
+.lobby-layout .menu-pagination { padding:0; }
+.exhibition-card { display:flex; flex-direction:column; grid-column:auto; grid-row:auto; height:100%; min-height:0; border-color:#608eab; }
+.exhibition-preview { position:relative; width:100%; flex:1; min-height:0; aspect-ratio:auto; background:#030916; }
+.exhibition-caption { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; border:0; border-top:1px solid #365574; }
+.exhibition-caption h2 { margin:4px 0 0; }
+.exhibition-caption button { width:auto; margin:0; flex-shrink:0; }
+.exhibition-connecting { display:grid; place-items:center; height:100%; color:#bcd0e5; }
+@media(max-width:900px) {
+ .lobby-screen { padding:0 10px 12px; }
+ .lobby-layout { grid-template-columns:1fr; grid-template-rows:minmax(130px,0.75fr) minmax(0,1.4fr); gap:8px; }
+ .lobby-screen .room-masthead { padding:10px 0; }
+ .lobby-layout .room-browser { gap:10px; }
+ .exhibition-caption { padding:8px 10px; }
+ .exhibition-caption h2 { font-size:22px; }
+ .exhibition-caption button { min-height:34px; font-size:17px; padding:6px 8px; }
+ .lobby-layout .room-browser-actions { flex-direction:row; align-items:center; }
+ .lobby-layout .room-browser-actions > button { width:auto; }
+ .lobby-layout .room-invite { flex-wrap:nowrap; }
+ .lobby-layout .room-invite label { flex-basis:auto; }
+ .lobby-layout .room-list-heading { display:none; }
+}
+@media(max-width:420px) {
+ .lobby-layout .room-invite label { font-size:15px; }
+}
+
+.exhibition-preview { display:grid; place-items:center; container-type:size; }
+.exhibition-preview .melee-cockpit { width:min(100cqw,133.333cqh); height:min(75cqw,100cqh); }
+.exhibition-connecting { display:grid; place-items:center; height:100%; padding:12px; color:#b6d4f3; font:20px VT323,monospace; }
+
+.exhibition-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+.exhibition-caption { flex-shrink:0; }
+@media(max-height:560px) and (min-width:650px) { .lobby-layout { grid-template-columns:minmax(0,1.2fr) minmax(300px,1fr); grid-template-rows:minmax(0,1fr); } .lobby-layout .matchmaking-panel { padding:4px; } .lobby-layout .room-browser { gap:4px; } .lobby-layout .room-empty { padding:5px; } }
+
+.exhibition-actions .exhibition-sound-toggle { display:flex; align-items:center; justify-content:center; gap:9px; min-height:48px; padding:7px 12px; color:#ffe791; border:2px solid #ffe791; background:#24213b; font-size:20px; }
+.exhibition-sound-toggle[aria-pressed="true"] { color:#a0fff0; border-color:#a0fff0; background:#10352f; }
+.exhibition-sound-toggle svg { flex-shrink:0; }
+@media(max-width:600px), (max-height:560px) { .exhibition-actions .exhibition-sound-toggle { min-height:40px; padding:4px 7px; gap:5px; font-size:17px; } .exhibition-sound-toggle svg { width:27px; height:27px; } }
+
+@media(max-width:600px) {
+ .lobby-layout { grid-template-rows:minmax(150px,0.95fr) minmax(0,1.4fr); }
+ .exhibition-caption { gap:4px; padding:5px; }
+ .exhibition-caption h2 { display:none; }
+ .exhibition-actions { flex-wrap:nowrap; gap:4px; }
+ .exhibition-sound-label { display:none; }
+ .exhibition-actions .exhibition-sound-toggle { width:44px; height:44px; padding:5px; }
+ .exhibition-caption .live-badge { font-size:12px; }
+}
+@media(max-height:560px) and (min-width:650px) {
+ .lobby-layout .matchmaking-panel { display:flex; flex-direction:column; align-items:stretch; gap:3px; }
+ .lobby-layout .pilot-profile { min-width:0; }
+ .lobby-layout .matchmaking-actions { min-width:0; flex-wrap:wrap; }
+ .lobby-layout .room-browser-actions { gap:4px; }
+ .lobby-layout .room-browser-actions h2 { font-size:17px; }
+ .lobby-layout .room-browser-actions > button { font-size:14px; }
+ .lobby-layout .directory-tabs button { font-size:14px; padding:3px; }
+ .lobby-layout .room-empty { font-size:13px; }
+ .lobby-layout .room-empty p { display:none; }
+ .lobby-layout .room-list-heading { display:none; }
+}
 </style>
-
-<script src="/melee-audio.js" defer></script>
-<script src="/melee-menu.js" defer></script>
-
-<script src="/melee-countdown.js" defer></script>

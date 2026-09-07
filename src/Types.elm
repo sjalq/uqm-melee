@@ -12,6 +12,7 @@ import Melee.Battle exposing (Arena)
 import Melee.Keys exposing (Held)
 import Melee.Local
 import Melee.Location
+import Melee.Menu
 import Melee.Preview
 import Melee.Ranking
 import Melee.Room as Melee
@@ -85,10 +86,11 @@ type alias FrontendModel =
     , player : Maybe Melee.Ranking.Profile
     , playerName : String
     , searching : Bool
+    , meleeVisible : Bool
     , meleeNow : Int
     , creatingRoom : Bool
     , location : Melee.Location.Location
-    , arenaPreview : Maybe Melee.Preview.Preview
+    , arenaPreview : Maybe Melee.Local.Model
     , showLocalGame : Bool
     , watchableGames : List Melee.GameListing
     , availableRooms : Maybe (List Melee.Listing)
@@ -180,6 +182,7 @@ type FrontendMsg
     | ShowLocalGame Bool
     | NavigateMelee Melee.Location.Location
     | PlayerNameChanged String
+    | MeleeBrowser Melee.Menu.Event
     | MeleeClock Int
     | MeleeVisibility Bool
     | SaveFleets

@@ -24,6 +24,9 @@ import Melee.Init
 import Melee.Keys as Keys
 import Melee.Local as Game
 import Melee.Location as Location
+import Melee.Menu as Menu
+import Melee.Presentation as Presentation
+import Melee.Preview as Preview
 import Melee.Rate as MeleeRate
 import Melee.Rng exposing (Seed(..))
 import Melee.Room as Melee
@@ -36,6 +39,7 @@ import Pages.Melee
 import Pages.PageFrame exposing (viewCurrentPage, viewTabs)
 import Ports.Clipboard
 import Ports.ConsoleLogger
+import Ports.MeleeBrowser
 import Route
 import Task
 import Theme
@@ -82,7 +86,8 @@ app =
 subscriptions : Model -> Subscription FrontendOnly FrontendMsg
 subscriptions model =
     Subscription.batch
-        [ Effect.Time.every (Duration.seconds 1) (Effect.Time.posixToMillis >> MeleeClock)
+        [ Subscription.fromJs "melee_browser_from_js" Ports.MeleeBrowser.receive (Menu.decode >> MeleeBrowser)
+        , Effect.Time.every (Duration.seconds 1) (Effect.Time.posixToMillis >> MeleeClock)
         , Effect.Browser.Events.onAnimationFrameDelta (Duration.inMilliseconds >> MeleeFrame)
         , Effect.Browser.Events.onVisibilityChange (\visibility -> MeleeVisibility (visibility /= Effect.Browser.Events.Hidden))
         , Effect.Browser.Events.onKeyDown
@@ -114,6 +119,9 @@ init url key =
         initialPreferences =
             { darkMode = True }
 
+        initialGame =
+            Location.configure (Location.fromUrl url) Game.init
+
         model =
             { key = key
             , currentRoute = route
@@ -142,6 +150,7 @@ init url key =
             , player = Nothing
             , playerName = ""
             , searching = False
+            , meleeVisible = True
             , meleeNow = 0
             , creatingRoom = False
             , location = Location.fromUrl url
@@ -151,7 +160,7 @@ init url key =
             , availableRooms = Nothing
             , roomCode = ""
             , meleeHeld = Keys.none
-            , game = Location.configure (Location.fromUrl url) Game.init
+            , game = { initialGame | sound = False }
             }
     in
     inits model route
@@ -183,6 +192,10 @@ inits model route =
 
 update : FrontendMsg -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
 update msg model =
+    updateCore msg model |> Presentation.effects model
+
+
+updateCore msg model =
     case msg of
         NoOpFrontendMsg ->
             ( model, Command.none )
@@ -341,6 +354,9 @@ update msg model =
         PlayerNameChanged name ->
             ( { model | playerName = name }, Command.none )
 
+        MeleeBrowser value ->
+            ( model, Presentation.browserCommands (Menu.respond (model.game.sound && model.meleeVisible) value) )
+
         MeleeClock now ->
             ( { model | meleeNow = now }, Command.none )
 
@@ -353,7 +369,7 @@ update msg model =
                     else
                         gameAction Game.Suspend model
             in
-            ( next, Command.batch [ cmd, Effect.Lamdera.sendToBackend (MeleeToBackend (Melee.PreviewSubscription (visible && model.location.room == Nothing && not model.showLocalGame))) ] )
+            ( { next | meleeVisible = visible }, Command.batch [ cmd, Effect.Lamdera.sendToBackend (MeleeToBackend (Melee.PreviewSubscription (visible && model.location.room == Nothing && not model.showLocalGame))) ] )
 
         NavigateMelee location ->
             ( model, Effect.Browser.Navigation.pushUrl model.key (Location.toUrl location) )
@@ -392,7 +408,13 @@ update msg model =
         MeleeFrame milliseconds ->
             if model.currentRoute == Melee || model.currentRoute == Default then
                 ( { model
-                    | game =
+                    | arenaPreview =
+                        if model.location.room == Nothing && not model.showLocalGame then
+                            Maybe.map (Game.present milliseconds) model.arenaPreview
+
+                        else
+                            model.arenaPreview
+                    , game =
                         case model.melee of
                             Melee.Browsing ->
                                 Game.advance milliseconds model.meleeHeld model.game |> Game.animate milliseconds
@@ -444,6 +466,10 @@ update msg model =
 
 updateFromBackend : ToFrontend -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
 updateFromBackend msg model =
+    updateFromBackendCore msg model |> Presentation.effects model
+
+
+updateFromBackendCore msg model =
     case msg of
         NoOpToFrontend ->
             ( model, Command.none )
@@ -496,7 +522,8 @@ updateFromBackend msg model =
 
                 Melee.MatchFound snapshot ->
                     let
-                        location = Location.lobby
+                        location =
+                            Location.lobby
                     in
                     updateFromBackend (MeleeToFrontend (Melee.RoomSnapshot snapshot)) { model | creatingRoom = True, searching = False, showLocalGame = False, location = { location | room = Just snapshot.code } }
 
@@ -504,7 +531,7 @@ updateFromBackend msg model =
                     ( { model | availableRooms = Just rooms }, Command.none )
 
                 Melee.ArenaPreview preview ->
-                    ( { model | arenaPreview = Just preview }, Command.none )
+                    ( { model | arenaPreview = Preview.apply preview model.arenaPreview }, Command.none )
 
                 Melee.CombatDelta code revision delta ->
                     let
@@ -922,8 +949,11 @@ gameAction message model =
     case model.melee of
         Melee.Browsing ->
             let
-                location = model.location
-                changed = { model | game = Game.update message model.game, meleeHeld = Keys.none }
+                location =
+                    model.location
+
+                changed =
+                    { model | game = Game.update message model.game, meleeHeld = Keys.none }
             in
             case message of
                 Game.SetMode mode ->
@@ -988,12 +1018,14 @@ gameAction message model =
                 Game.Menu ->
                     if snapshot.ranked /= Nothing then
                         update (Online Melee.LeaveRoom) model
+
                     else
                         send Melee.Hangar
 
                 Game.Rematch ->
                     if snapshot.ranked /= Nothing then
                         update (Online Melee.LeaveRoom) model
+
                     else
                         send Melee.Rematch
 

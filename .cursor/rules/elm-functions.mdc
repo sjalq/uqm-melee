@@ -75,6 +75,11 @@ alwaysApply: true
 166 inputStyles colors
 177 buttonStyles colors
 
+## src/Components/Exhibition.elm
+### Components.Exhibition
+14 view config
+56 soundIcon enabled
+
 ## src/Components/Header.elm
 ### Components.Header
 23 view config
@@ -99,26 +104,28 @@ alwaysApply: true
 
 ## src/Frontend.elm
 ### Frontend
-70 app
-83 subscriptions model
-104 keyDecoder
-109 init url key
-162 inits model route
-185 update msg model
-446 updateFromBackend msg model
-621 view model
-666 callbackForAuth0Auth model url key
-675 callbackForGoogleAuth model url key
-684 authCallbackCmd model url key
-701 initWithAuth url key
-719 updateEmailPasswordAuth authMsg model
-775 updateEmailPasswordForm msg model
-808 viewWithAuth model
-884 authUpdateFromBackend authToFrontendMsg model
-921 gameAction message model
-1005 sendControls held model
-1024 locationCommand model
-1066 redirectRoom model
+74 app
+87 subscriptions model
+109 keyDecoder
+114 init url key
+171 inits model route
+194 update msg model
+198 updateCore msg model
+468 updateFromBackend msg model
+472 updateFromBackendCore msg model
+648 view model
+693 callbackForAuth0Auth model url key
+702 callbackForGoogleAuth model url key
+711 authCallbackCmd model url key
+728 initWithAuth url key
+746 updateEmailPasswordAuth authMsg model
+802 updateEmailPasswordForm msg model
+835 viewWithAuth model
+911 authUpdateFromBackend authToFrontendMsg model
+948 gameAction message model
+1037 sendControls held model
+1056 locationCommand model
+1098 redirectRoom model
 
 ## src/LamderaRPC.elm
 ### LamderaRPC
@@ -193,6 +200,11 @@ alwaysApply: true
 1622 captain combatant
 1627 captainNames
 1658 portraitLayers combatant
+
+## src/Melee/Audio.elm
+### Melee.Audio
+12 music game
+64 effects game
 
 ## src/Melee/Catalog.elm
 ### Melee.Catalog
@@ -292,6 +304,16 @@ alwaysApply: true
 26 overlap a b dx dy
 54 masks
 
+## src/Melee/Menu.elm
+### Melee.Menu
+12 target
+17 command op id
+22 play channel src volume
+27 stop channel
+32 isBack label
+43 decode value
+64 respond sound event
+
 ## src/Melee/Music.elm
 ### Melee.Music
 9 folder ship
@@ -308,10 +330,16 @@ alwaysApply: true
 9 text x y centered label
 35 characters
 
+## src/Melee/Presentation.elm
+### Melee.Presentation
+9 browserCommands values
+17 countdown model
+38 commands before after
+
 ## src/Melee/Preview.elm
 ### Melee.Preview
-22 fromArena arena
-53 view preview
+17 apply update previous
+27 view preview
 
 ## src/Melee/Ranking.elm
 ### Melee.Ranking
@@ -344,33 +372,33 @@ alwaysApply: true
 147 deliver room
 165 save room host
 203 handleRoom session client message host
-403 act side message room
-516 held inputs
-531 tickRooms now host
-648 disconnect session client originalHost
-675 reconnect session client host
-705 running phase
-725 discover host
-765 games host
-772 stage phase
-797 removeSpectator client host
-807 modeFor controllers
-823 recipients room
-827 isVictory phase
-837 exhibition cycle
-858 identify session client host
-867 handle session client message host
-954 findMatch session client original
-978 pairWaiting host
-1027 rankedAction session client side message room ranked host
-1132 launchRanked room
-1137 prepareRanked now room
-1198 settle code host
-1240 sweepRanked now host
-1274 tick now host
-1289 allocateCode session client host
-1305 customRoom code now setup
-1326 seatClients room
+404 act side message room
+517 held inputs
+532 tickRooms now host
+672 disconnect session client originalHost
+699 reconnect session client host
+729 running phase
+749 discover host
+789 games host
+796 stage phase
+821 removeSpectator client host
+831 modeFor controllers
+847 recipients room
+851 isVictory phase
+861 exhibition cycle
+882 identify session client host
+891 handle session client message host
+978 findMatch session client original
+1002 pairWaiting host
+1051 rankedAction session client side message room ranked host
+1156 launchRanked room
+1161 prepareRanked now room
+1222 settle code host
+1264 sweepRanked now host
+1298 tick now host
+1313 allocateCode session client host
+1329 customRoom code now setup
+1350 seatClients room
 
 ## src/Melee/RoomCode.elm
 ### Melee.RoomCode
@@ -577,38 +605,37 @@ alwaysApply: true
 ### Pages.Melee
 28 init model
 33 view model _
-187 screen children
-192 hangar location client game
-340 hangarShipCard game ship
-367 fleet client game side
-429 shipCard game ship
-442 selection client game bottom top
-473 battle client game arena overlay
-560 controls client
-585 action label msg primary
-590 buttonAttrs primary
-602 eyebrow label
-607 muted label
-612 sideName side
-621 accent side
-630 graphicsButton game
-643 music game
-695 onlinePanel model
-966 isWatching client
-976 spectatorWaiting game
-985 isOnline client
-990 canEdit client side
-1003 seatAction client side label message primary
-1008 localAction client label message primary
-1017 onlineFleetEditor location side ranked locked game
-1032 pageItems size requested items
-1037 pageControls location roster count
-1074 screenClass model
-1102 isRanked client
-1112 isCancelled client
-1122 matchmaking model
-1175 rankedStatus model snapshot
-1271 pilotControls client game
+202 screen children
+207 hangar location client game
+355 hangarShipCard game ship
+382 fleet client game side
+444 shipCard game ship
+457 selection client game bottom top
+488 battle client game arena overlay
+568 controls client
+593 action label msg primary
+598 buttonAttrs primary
+610 eyebrow label
+615 muted label
+620 sideName side
+629 accent side
+638 graphicsButton game
+651 onlinePanel model
+917 isWatching client
+927 spectatorWaiting game
+936 isOnline client
+941 canEdit client side
+954 seatAction client side label message primary
+959 localAction client label message primary
+968 onlineFleetEditor location side ranked locked game
+983 pageItems size requested items
+988 pageControls location roster count
+1025 screenClass model
+1053 isRanked client
+1063 isCancelled client
+1073 matchmaking model
+1126 rankedStatus model snapshot
+1222 pilotControls client game
 
 ## src/Pages/PageFrame.elm
 ### Pages.PageFrame
@@ -618,14 +645,19 @@ alwaysApply: true
 131 viewNotFoundPage colors
 
 ## src/Ports/Clipboard.elm
-### 
+###
 14 copyToClipboard text
 19 copyResult toMsg
 
 ## src/Ports/ConsoleLogger.elm
-### 
+###
 14 log message
 19 logReceived toMsg
+
+## src/Ports/MeleeBrowser.elm
+###
+12 send
+16 receive
 
 ## src/RPC.elm
 ### RPC

@@ -1,3 +1,4 @@
+exports.init = async function () {
 // Browser playback only; Elm owns track selection, pause and sound settings.
 class UqmMusic extends HTMLElement {
   static observedAttributes = ["src", "playing", "muted", "loop"];
@@ -35,3 +36,5 @@ class UqmMusic extends HTMLElement {
   }
 }
 if (!customElements.get("uqm-music")) customElements.define("uqm-music", UqmMusic);
+
+};

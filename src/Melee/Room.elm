@@ -107,7 +107,7 @@ type alias RoomSetup =
 
 
 type alias Host =
-    { rooms : Dict String Room, roomSetups : Dict String RoomSetup, clientRooms : Dict String String, nextId : Int, now : Int, previewClients : Dict String String, previewAt : Int, players : Dict String Ranking.Profile, queue : List { session : String, client : String } }
+    { rooms : Dict String Room, roomSetups : Dict String RoomSetup, clientRooms : Dict String String, nextId : Int, now : Int, previewClients : Dict String String, previewAt : Int, previewGame : Maybe Game.Model, players : Dict String Ranking.Profile, queue : List { session : String, client : String } }
 
 
 type alias Delivery =
@@ -116,7 +116,7 @@ type alias Delivery =
 
 init : Host
 init =
-    { rooms = Dict.singleton "ARENA" (exhibition 0), roomSetups = Dict.empty, clientRooms = Dict.empty, nextId = 1, now = 0, previewClients = Dict.empty, previewAt = 0, players = Dict.empty, queue = [] }
+    { rooms = Dict.singleton "ARENA" (exhibition 0), roomSetups = Dict.empty, clientRooms = Dict.empty, nextId = 1, now = 0, previewClients = Dict.empty, previewAt = 0, previewGame = Nothing, players = Dict.empty, queue = [] }
 
 
 connected : Maybe Seat -> Bool
@@ -242,6 +242,7 @@ handleRoom session client message host =
               }
             , if enabled then
                 [ { client = client, message = RoomsAvailable (discover host) }, { client = client, message = GamesAvailable (games host) } ]
+                    ++ (host.previewGame |> Maybe.map (\game -> [ { client = client, message = ArenaPreview (Preview.Snapshot game) } ]) |> Maybe.withDefault [])
 
               else
                 []
@@ -618,20 +619,43 @@ tickRooms now host =
 
         preview =
             if previewDue && not (Dict.isEmpty host.previewClients) then
-                Dict.get "ARENA" nextRooms |> Maybe.andThen (.game >> .phase >> Game.phaseArena) |> Maybe.map Preview.fromArena
+                Dict.get "ARENA" nextRooms |> Maybe.map .game
 
             else
                 Nothing
 
         previews =
             if previewDue then
-                preview |> Maybe.map (\scene -> Dict.keys host.previewClients |> List.map (\client -> { client = client, message = ArenaPreview scene })) |> Maybe.withDefault []
+                preview
+                    |> Maybe.map
+                        (\game ->
+                            let
+                                update =
+                                    host.previewGame
+                                        |> Maybe.andThen (\previous -> Stream.between (toFloat (now - host.previewAt)) previous game)
+                                        |> Maybe.map Preview.Delta
+                                        |> Maybe.withDefault (Preview.Snapshot game)
+                            in
+                            Dict.keys host.previewClients |> List.map (\client -> { client = client, message = ArenaPreview update })
+                        )
+                    |> Maybe.withDefault []
 
             else
                 []
     in
     ( { host
         | rooms = nextRooms
+        , previewGame =
+            if Dict.isEmpty host.previewClients then
+                Nothing
+
+            else
+                case preview of
+                    Just game ->
+                        Just game
+
+                    Nothing ->
+                        host.previewGame
         , now = now
         , previewAt =
             if previewDue then

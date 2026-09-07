@@ -1,18 +1,19 @@
 module Pages.Melee exposing (init, view)
 
+import Components.Exhibition as Exhibition
 import Html exposing (..)
 import Html.Attributes as A
 import Html.Events as E
 import Html.Keyed
 import Json.Decode as Decode
+import Melee.Audio as Audio
 import Melee.Battle
 import Melee.Catalog as Catalog
 import Melee.Graphics exposing (Quality(..))
 import Melee.Input exposing (CyborgRating(..))
 import Melee.Local as Game exposing (Mode(..), Phase(..))
 import Melee.Location as Location
-import Melee.Music as Music
-import Melee.Preview as Preview
+import Melee.Presentation as Presentation
 import Melee.Ranking as Ranking
 import Melee.Room as Room
 import Melee.Ship as Ship exposing (ShipKind)
@@ -35,7 +36,7 @@ view model _ =
         game =
             model.game
     in
-    Html.node "uqm-menu"
+    div
         [ A.class ("melee-screen " ++ screenClass model)
         , A.attribute "data-playing"
             (if Room.running game.phase && not (isWatching model.melee) then
@@ -89,7 +90,22 @@ view model _ =
                 (Decode.field "key" Decode.string)
             )
         ]
-        [ music game
+        [ Audio.music
+            { game
+                | sound = game.sound && model.meleeVisible
+                , phase =
+                    if model.melee == Room.Browsing && not model.showLocalGame then
+                        model.arenaPreview |> Maybe.map .phase |> Maybe.withDefault game.phase
+
+                    else
+                        game.phase
+                , survivor =
+                    if model.melee == Room.Browsing && not model.showLocalGame then
+                        model.arenaPreview |> Maybe.andThen .survivor
+
+                    else
+                        game.survivor
+            }
         , if model.melee == Room.Browsing && game.phase /= Hangar then
             text ""
 
@@ -472,14 +488,7 @@ selection client game bottom top =
 battle : Room.Client -> Game.Model -> Melee.Battle.Arena -> Maybe ( String, String ) -> Html FrontendMsg
 battle client game arena overlay =
     div [ A.class "classic-battle-page" ]
-        [ Html.Keyed.node "div"
-            [ A.style "display" "none" ]
-            (if game.sound then
-                List.map (\sound -> ( String.fromInt sound.id, audio [ A.src sound.source, A.autoplay True ] [] )) game.sounds
-
-             else
-                []
-            )
+        [ Audio.effects game
         , div [ A.class "classic-battle-toolbar" ]
             [ if isWatching client || isRanked client then
                 text ""
@@ -639,58 +648,6 @@ graphicsButton game =
         False
 
 
-music : Game.Model -> Html FrontendMsg
-music game =
-    let
-        ditty arena =
-            let
-                ship =
-                    if Game.crew arena.combatants.bottom arena > 0 then
-                        arena.combatants.bottom
-
-                    else
-                        arena.combatants.top
-            in
-            if Game.dittyFrames arena == 0 then
-                ""
-
-            else
-                Music.ditty (ShipState.kind ship)
-
-        ( source, playing, looping ) =
-            case game.phase of
-                Combat _ ->
-                    ( "/music/battle.m4a", True, True )
-
-                Countdown _ _ ->
-                    ( "/music/battle.m4a", True, True )
-
-                Paused _ ->
-                    ( "/music/battle.m4a", False, True )
-
-                RoundOver frames arena ->
-                    if frames > Game.dittyFrames arena then
-                        ( "", False, False )
-
-                    else
-                        ( ditty arena, True, False )
-
-                Victory _ ->
-                    ( game.survivor |> Maybe.map ditty |> Maybe.withDefault "", True, False )
-
-                _ ->
-                    ( "", False, False )
-
-        flag value =
-            if value then
-                "true"
-
-            else
-                "false"
-    in
-    Html.node "uqm-music" [ A.attribute "src" source, A.attribute "playing" (flag playing), A.attribute "muted" (flag (not game.sound)), A.attribute "loop" (flag looping) ] []
-
-
 onlinePanel : FrontendModel -> Html FrontendMsg
 onlinePanel model =
     let
@@ -808,90 +765,85 @@ onlinePanel model =
                     text ""
 
                   else
-                    matchmaking model
-                , if model.showLocalGame then
-                    text ""
+                    div [ A.class "lobby-layout" ]
+                        [ Exhibition.view { game = model.arenaPreview, sound = model.game.sound && model.meleeVisible, onToggleSound = GameMsg Game.ToggleSound, onWatch = Online (Room.WatchRoom "ARENA") }
+                        , div [ A.class "room-browser" ]
+                            [ matchmaking model
+                            , if model.game.notice == "" then
+                                text ""
 
-                  else
-                    div [ A.class "room-browser" ]
-                        [ if model.game.notice == "" then
-                            text ""
+                              else
+                                p [ A.class "room-error", A.attribute "role" "alert" ] [ text model.game.notice ]
+                            , div [ A.class "room-browser-actions" ]
+                                [ div [] [ h2 [] [ text "Find your next battle" ], p [] [ text "Join an open seat, host a match, or watch another crew fight." ] ]
+                                , button (buttonAttrs True ++ [ A.id "create-room", E.onClick (Online Room.CreateRoom) ]) [ text "+ Create online room" ]
+                                ]
+                            , div [ A.class "room-invite" ]
+                                [ label [ A.for "invite-code" ] [ text "Have a room code?" ]
+                                , input [ A.id "invite-code", A.class "melee-room-code", A.value model.roomCode, A.attribute "aria-label" "Room code", A.placeholder "Room code", E.onInput RoomCodeChanged ] []
+                                , button (buttonAttrs False ++ [ A.id "join-room", A.disabled (String.trim model.roomCode == ""), E.onClick (Online (Room.JoinRoom model.roomCode)) ]) [ text "Join room" ]
+                                ]
+                            , div [ A.class "directory-tabs" ]
+                                [ button (buttonAttrs (not location.watchingList) ++ [ E.onClick (NavigateMelee { location | watchingList = False, page = 0 }) ]) [ text ("Open seats · " ++ String.fromInt (List.length openRooms)) ]
+                                , button (buttonAttrs location.watchingList ++ [ E.onClick (NavigateMelee { location | watchingList = True, page = 0 }) ]) [ text ("Watch matches · " ++ String.fromInt (List.length model.watchableGames)) ]
+                                , command "Refresh rooms" Room.DiscoverRooms False
+                                ]
+                            , if location.watchingList then
+                                text ""
 
-                          else
-                            p [ A.class "room-error", A.attribute "role" "alert" ] [ text model.game.notice ]
-                        , div [ A.class "room-browser-actions" ]
-                            [ div [] [ h2 [] [ text "Find your next battle" ], p [] [ text "Join an open seat, host a match, or watch another crew fight." ] ]
-                            , button (buttonAttrs True ++ [ A.id "create-room", E.onClick (Online Room.CreateRoom) ]) [ text "+ Create online room" ]
-                            ]
-                        , div [ A.class "room-invite" ]
-                            [ label [ A.for "invite-code" ] [ text "Have a room code?" ]
-                            , input [ A.id "invite-code", A.class "melee-room-code", A.value model.roomCode, A.attribute "aria-label" "Room code", A.placeholder "Room code", E.onInput RoomCodeChanged ] []
-                            , button (buttonAttrs False ++ [ A.id "join-room", A.disabled (String.trim model.roomCode == ""), E.onClick (Online (Room.JoinRoom model.roomCode)) ]) [ text "Join room" ]
-                            ]
-                        , section [ A.class "exhibition-card", A.attribute "aria-label" "Live arena preview" ]
-                            [ div [ A.class "exhibition-preview" ] [ Preview.view model.arenaPreview ]
-                            , div [ A.class "exhibition-caption" ] [ span [ A.class "room-badge live-badge" ] [ text "LIVE · ALWAYS ON" ], h2 [] [ text "The proving ground" ], p [] [ text "Twelve ships. Two bot fleets. A new clash every match." ], command "Watch exhibition" (Room.WatchRoom "ARENA") True ]
-                            ]
-                        , div [ A.class "directory-tabs" ]
-                            [ button (buttonAttrs (not location.watchingList) ++ [ E.onClick (NavigateMelee { location | watchingList = False, page = 0 }) ]) [ text ("Open seats · " ++ String.fromInt (List.length openRooms)) ]
-                            , button (buttonAttrs location.watchingList ++ [ E.onClick (NavigateMelee { location | watchingList = True, page = 0 }) ]) [ text ("Watch matches · " ++ String.fromInt (List.length model.watchableGames)) ]
-                            , command "Refresh rooms" Room.DiscoverRooms False
-                            ]
-                        , if location.watchingList then
-                            text ""
+                              else
+                                section [ A.id "available-rooms", A.class "room-list", A.attribute "aria-label" "Available rooms" ]
+                                    [ div [ A.class "room-list-heading" ] [ h2 [] [ text ("Open seats · " ++ String.fromInt (List.length openRooms)) ] ]
+                                    , case model.availableRooms of
+                                        Nothing ->
+                                            div [ A.class "room-empty", A.attribute "role" "status" ] [ h3 [] [ text "Scanning the arena" ], p [] [ text "Finding available opponents…" ] ]
 
-                          else
-                            section [ A.id "available-rooms", A.class "room-list", A.attribute "aria-label" "Available rooms" ]
-                                [ div [ A.class "room-list-heading" ] [ h2 [] [ text ("Open seats · " ++ String.fromInt (List.length openRooms)) ] ]
-                                , case model.availableRooms of
-                                    Nothing ->
-                                        div [ A.class "room-empty", A.attribute "role" "status" ] [ h3 [] [ text "Scanning the arena" ], p [] [ text "Finding available opponents…" ] ]
+                                        Just [] ->
+                                            div [ A.class "room-empty", A.attribute "role" "status" ] [ h3 [] [ text "The arena is clear" ], p [] [ text "Create a room to invite a human opponent or battle a computer." ] ]
 
-                                    Just [] ->
-                                        div [ A.class "room-empty", A.attribute "role" "status" ] [ h3 [] [ text "The arena is clear" ], p [] [ text "Create a room to invite a human opponent or battle a computer." ] ]
+                                        Just rooms ->
+                                            div [ A.class "room-rows" ]
+                                                (List.map
+                                                    (\room ->
+                                                        article [ A.class "room-row" ]
+                                                            [ div [ A.class "room-ship-icons" ] (List.map (\ship -> img [ A.src (Catalog.info ship).icon, A.alt (Catalog.info ship).name ] []) (List.take 3 room.fleet))
+                                                            , div [ A.class "room-row-details" ] [ span [ A.class "room-badge" ] [ text "OPEN SEAT" ], h3 [] [ text (room.name ++ " · " ++ room.code) ], p [] [ text (String.fromInt room.ships ++ " ships · " ++ String.fromInt room.points ++ " fleet points") ] ]
+                                                            , div [ A.class "room-row-actions" ] [ button (buttonAttrs True ++ [ A.attribute "aria-label" ("Join " ++ room.code), E.onClick (Online (Room.JoinRoom room.code)) ]) [ text "Join battle" ], button (buttonAttrs False ++ [ E.onClick (Online (Room.WatchRoom room.code)), A.attribute "aria-label" ("Watch " ++ room.code) ]) [ text "Watch" ] ]
+                                                            ]
+                                                    )
+                                                    (pageItems 2 location.page rooms)
+                                                )
+                                    ]
+                            , if not location.watchingList then
+                                text ""
 
-                                    Just rooms ->
+                              else
+                                section [ A.class "room-list", A.attribute "aria-label" "Watch games" ]
+                                    [ div [ A.class "room-list-heading" ] [ h2 [] [ text "Watch the arena" ], span [] [ text "Spectators welcome" ] ]
+                                    , if List.isEmpty model.watchableGames then
+                                        div [ A.class "room-empty" ] [ p [] [ text "Matches will appear here when a room opens." ] ]
+
+                                      else
                                         div [ A.class "room-rows" ]
                                             (List.map
-                                                (\room ->
+                                                (\game ->
                                                     article [ A.class "room-row" ]
-                                                        [ div [ A.class "room-ship-icons" ] (List.map (\ship -> img [ A.src (Catalog.info ship).icon, A.alt (Catalog.info ship).name ] []) (List.take 3 room.fleet))
-                                                        , div [ A.class "room-row-details" ] [ span [ A.class "room-badge" ] [ text "OPEN SEAT" ], h3 [] [ text (room.name ++ " · " ++ room.code) ], p [] [ text (String.fromInt room.ships ++ " ships · " ++ String.fromInt room.points ++ " fleet points") ] ]
-                                                        , div [ A.class "room-row-actions" ] [ button (buttonAttrs True ++ [ A.attribute "aria-label" ("Join " ++ room.code), E.onClick (Online (Room.JoinRoom room.code)) ]) [ text "Join battle" ], button (buttonAttrs False ++ [ E.onClick (Online (Room.WatchRoom room.code)), A.attribute "aria-label" ("Watch " ++ room.code) ]) [ text "Watch" ] ]
+                                                        [ div [ A.class "room-row-details" ] [ span [ A.class "room-badge live-badge" ] [ text (String.toUpper game.stage) ], h3 [] [ text (game.names.bottom ++ " vs " ++ game.names.top) ], p [] [ text (game.code ++ " · " ++ String.fromInt game.viewers ++ " watching") ] ]
+                                                        , button (buttonAttrs False ++ [ E.onClick (Online (Room.WatchRoom game.code)), A.attribute "aria-label" ("Spectate " ++ game.code) ]) [ text "Watch match" ]
                                                         ]
                                                 )
-                                                (pageItems 2 location.page rooms)
+                                                (pageItems 2 location.page model.watchableGames)
                                             )
-                                ]
-                        , if not location.watchingList then
-                            text ""
+                                    ]
+                            , pageControls location
+                                False
+                                (if location.watchingList then
+                                    List.length model.watchableGames
 
-                          else
-                            section [ A.class "room-list", A.attribute "aria-label" "Watch games" ]
-                                [ div [ A.class "room-list-heading" ] [ h2 [] [ text "Watch the arena" ], span [] [ text "Spectators welcome" ] ]
-                                , if List.isEmpty model.watchableGames then
-                                    div [ A.class "room-empty" ] [ p [] [ text "Matches will appear here when a room opens." ] ]
-
-                                  else
-                                    div [ A.class "room-rows" ]
-                                        (List.map
-                                            (\game ->
-                                                article [ A.class "room-row" ]
-                                                    [ div [ A.class "room-row-details" ] [ span [ A.class "room-badge live-badge" ] [ text (String.toUpper game.stage) ], h3 [] [ text (game.names.bottom ++ " vs " ++ game.names.top) ], p [] [ text (game.code ++ " · " ++ String.fromInt game.viewers ++ " watching") ] ]
-                                                    , button (buttonAttrs False ++ [ E.onClick (Online (Room.WatchRoom game.code)), A.attribute "aria-label" ("Spectate " ++ game.code) ]) [ text "Watch match" ]
-                                                    ]
-                                            )
-                                            (pageItems 2 location.page model.watchableGames)
-                                        )
-                                ]
-                        , pageControls location
-                            False
-                            (if location.watchingList then
-                                List.length model.watchableGames
-
-                             else
-                                List.length openRooms
-                            )
+                                 else
+                                    List.length openRooms
+                                )
+                            ]
                         ]
                 ]
 
@@ -1208,13 +1160,9 @@ rankedStatus model snapshot =
                             Just deadline ->
                                 let
                                     seconds =
-                                        if model.meleeNow == 0 then
-                                            120
-
-                                        else
-                                            max 0 ((deadline - model.meleeNow + 999) // 1000)
+                                        Presentation.remainingSeconds model.meleeNow deadline
                                 in
-                                Html.node "uqm-countdown"
+                                div
                                     [ A.id "draft-timer"
                                     , A.class
                                         ("draft-countdown"

@@ -10,5 +10,8 @@
   "devDependencies": {
     "elm-review": "^2.13.4",
     "puppeteer": "^24.23.0"
+  },
+  "scripts": {
+    "build:css": "npx --yes tailwindcss@3.4.17 -i styles/tailwind.css --content \"./src/**/*.elm\" -o public/tailwind.css --minify"
   }
 }
