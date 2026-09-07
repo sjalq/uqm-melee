@@ -558,6 +558,32 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
  .lobby-layout .room-empty p { display:none; }
  .lobby-layout .room-list-heading { display:none; }
 }
+
+.pick-stage { position:relative; width:min(100cqw,133.333cqh); height:min(75cqw,100cqh); }
+.pick-stage:has(.has-pilot-controls) { width:min(100cqw,160cqh); height:min(62.5cqw,100cqh); }
+.pick-stage > .melee-cockpit { width:100% !important; height:100% !important; }
+.pick-void { width:100%; height:100%; background:#000008; }
+.pick-layer { position:absolute; left:0; top:0; bottom:0; width:80%; pointer-events:none; z-index:4; }
+.pick-stage:has(.has-pilot-controls) .pick-layer { width:83.333%; }
+.pick-frame { position:absolute; left:21.09%; width:58.2%; height:22.92%; background-size:100% 100%; background-repeat:no-repeat; image-rendering:pixelated; pointer-events:auto; font:clamp(8px,2.4cqw,14px)/1 VT323,monospace; color:#5252ff; }
+.pick-top { top:6.25%; background-image:url('/classic/meleepickship-001.png'); }
+.pick-bottom { top:47.92%; background-image:url('/classic/meleepickship-000.png'); }
+.pick-start-value { position:absolute; left:2.7%; top:3%; color:#2129ff; }
+.pick-live-value { position:absolute; right:16%; top:3%; color:#9c0000; }
+.pick-team-name { position:absolute; left:0; right:14%; bottom:2%; text-align:center; color:#5252ff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 4px; }
+.pick-icons { position:absolute; left:2.7%; top:16.4%; width:84.6%; height:65.5%; display:grid; grid-template-columns:repeat(7,1fr); grid-template-rows:repeat(2,1fr); gap:1px; }
+.pick-slot { position:relative; min-width:0; min-height:0; padding:0; border:0; background:transparent; display:flex; align-items:center; justify-content:center; }
+.pick-slot img { width:90%; height:90%; object-fit:contain; image-rendering:pixelated; }
+.pick-slot.live { cursor:pointer; }
+.pick-slot.spent img { opacity:.85; }
+.pick-slot.spent::after { content:''; position:absolute; inset:10% 8%; background:linear-gradient(to top left,transparent calc(50% - 1px),#c00 50%,transparent calc(50% + 1px)),linear-gradient(to top right,transparent calc(50% - 1px),#c00 50%,transparent calc(50% + 1px)); pointer-events:none; }
+.pick-extra { position:absolute; right:1%; width:14%; height:42%; padding:0; border:0; background:transparent; cursor:pointer; }
+.pick-random { top:8%; }
+.pick-exit { top:50%; }
+.pick-slot.flashing, .pick-extra.flashing { box-shadow:inset 0 0 0 1px #fff; animation:pick-flash .125s steps(2) infinite; }
+@keyframes pick-flash { from { box-shadow:inset 0 0 0 1px #fff8; background:#fff2; } to { box-shadow:inset 0 0 0 1px #0000; background:transparent; } }
+.pick-slot.live:disabled, .pick-extra:disabled { cursor:default; }
+@media(max-width:600px) { .pick-start-value,.pick-live-value,.pick-team-name { font-size:10px; } }
 </style>
 
 <style>

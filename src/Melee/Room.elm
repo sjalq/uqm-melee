@@ -538,9 +538,9 @@ tickRooms now host =
             else
                 toFloat (clamp 0 250 (now - host.now))
 
-        step room ( rooms, messages ) =
+        step _ room ( rooms, messages ) =
             if room.code /= "ARENA" && not (connected room.seats.bottom || connected room.seats.top) && now - room.touched > 600000 then
-                ( rooms, List.map (\viewer -> { client = viewer, message = RoomLeft }) (Dict.keys room.spectators) ++ messages )
+                ( rooms, List.foldl (::) messages (List.map (\viewer -> { client = viewer, message = RoomLeft }) (Dict.keys room.spectators)) )
 
             else
                 let
@@ -548,7 +548,7 @@ tickRooms now host =
                         if room.code == "ARENA" && isVictory room.game.phase && now - room.touched >= 4000 then
                             (exhibition room.revision).game
 
-                        else if bothConnected room && running room.game.phase then
+                        else if room.code == "ARENA" || (bothConnected room && running room.game.phase) then
                             Game.advance elapsed (held room.inputs) room.game
 
                         else
@@ -571,10 +571,10 @@ tickRooms now host =
                             }
 
                     due =
-                        now - room.broadcastAt >= 100 && room.lastBroadcast /= Just game
+                        now - room.broadcastAt >= 100 && room.lastBroadcast /= Just game && not (List.isEmpty (recipients next))
 
                     packet =
-                        if due && not (List.isEmpty (recipients next)) then
+                        if due then
                             room.lastBroadcast |> Maybe.andThen (\before -> Stream.between (toFloat (now - room.broadcastAt)) before game)
 
                         else
@@ -587,7 +587,7 @@ tickRooms now host =
                         else
                             case packet of
                                 Just delta ->
-                                    recipients next |> List.map (\client -> { client = client, message = CombatDelta room.code next.revision delta })
+                                    List.map (\client -> { client = client, message = CombatDelta room.code next.revision delta }) (recipients next)
 
                                 Nothing ->
                                     deliver next
@@ -599,19 +599,17 @@ tickRooms now host =
                         else
                             next
                 in
-                ( Dict.insert room.code stored rooms, deliveries ++ messages )
+                ( Dict.insert room.code stored rooms, List.foldl (::) messages deliveries )
+
+        rooms0 =
+            if Dict.member "ARENA" host.rooms then
+                host.rooms
+
+            else
+                Dict.insert "ARENA" (exhibition 0) host.rooms
 
         ( nextRooms, tickDeliveries ) =
-            List.foldl step
-                ( Dict.empty, [] )
-                (Dict.values
-                    (if Dict.member "ARENA" host.rooms then
-                        host.rooms
-
-                     else
-                        Dict.insert "ARENA" (exhibition 0) host.rooms
-                    )
-                )
+            Dict.foldl step ( Dict.empty, [] ) rooms0
     in
     let
         previewDue =

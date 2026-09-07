@@ -106,28 +106,31 @@ alwaysApply: true
 
 ## src/Frontend.elm
 ### Frontend
-77 app
-90 subscriptions model
-113 keyDecoder
-118 init url key
-177 inits model route
-203 update msg model
-217 updateCore msg model
-514 updateFromBackend msg model
-518 updateFromBackendCore msg model
-701 view model
-753 callbackForAuth0Auth model url key
-762 callbackForGoogleAuth model url key
-771 authCallbackCmd model url key
-788 initWithAuth url key
-806 updateEmailPasswordAuth authMsg model
-862 updateEmailPasswordForm msg model
-895 viewWithAuth model
-971 authUpdateFromBackend authToFrontendMsg model
-1008 gameAction message model
-1097 sendControls held model
-1116 locationCommand model
-1158 redirectRoom model
+79 app
+92 subscriptions model
+115 keyDecoder
+120 init url key
+180 inits model route
+206 update msg model
+220 updateCore msg model
+527 updateFromBackend msg model
+531 updateFromBackendCore msg model
+715 view model
+767 callbackForAuth0Auth model url key
+776 callbackForGoogleAuth model url key
+785 authCallbackCmd model url key
+802 initWithAuth url key
+820 updateEmailPasswordAuth authMsg model
+876 updateEmailPasswordForm msg model
+909 viewWithAuth model
+985 authUpdateFromBackend authToFrontendMsg model
+1022 gameAction message model
+1114 refreshPickCell previous next current
+1127 nudgeCell drow dcol cell
+1134 pickKey key bottom top model
+1286 sendControls held model
+1305 locationCommand model
+1347 redirectRoom model
 
 ## src/LamderaRPC.elm
 ### LamderaRPC
@@ -214,6 +217,99 @@ alwaysApply: true
 16 info kind
 95 sprite kind facing
 
+## src/Melee/Cyborg.elm
+### Melee.Cyborg
+30 closeRange
+35 longRange
+40 fastShip
+45 mediumShip
+50 slowShip
+55 fullCircle
+60 halfCircle
+65 quadrant
+70 octant
+75 displayToWorld n
+80 worldToTurn d
+136 blank
+141 maneuverability chars
+157 think rating side arena seed
+241 idle
+246 combatant side arena
+256 otherSide side
+271 weaponReady work
+276 specialReady work
+281 ultra work
+286 isGravity el
+291 isCrew el
+296 isCrewBody body
+306 isShip el
+311 samePlayer a b
+316 colliding el
+321 radiusWorld el
+340 travelAngle vel
+347 isVelocityZero vel
+352 displacement turns vel
+357 wrapLoc
+362 angleToFacing a
+367 facingToAngle f
+372 marginOfError rating
+388 plotIntercept space a b maxTurns margin
+397 plotFrom space a b margin maxTurns t
+432 fillConcerns work
+441 consider work el concerns
+473 lifeSpan el
+483 considerGravity work el _ _ concerns
+529 considerEnemy work el dx dy concerns
+610 considerEmpty work el dx dy concerns
+634 considerWeapon work el dx dy concerns
+672 seekingWeapon work el dx dy
+714 isSpecialBody body
+757 considerCrew work el dx dy concerns
+777 shipIntelligence work0 concerns
+821 moveAndFire work eval fireOk fireTarget margin
+853 shipMovement work eval
+877 shipWeapons work other margin
+941 facingAligned work other
+963 shot kind
+1028 pursue work eval
+1077 entice work eval
+1125 enticeAvoid work eval toward canTurn canThrust
+1155 enticePlanet work toward away canTurn canThrust
+1194 enticeTarget work eval other toward away canTurn canThrust
+1236 turnShip work angle
+1270 thrustShip work angle
+1296 inertial work
+1330 enemyMi work
+1335 enemyRange work
+1340 enemyAbility work
+1345 coin work sides
+1354 raceIntelligence work concerns
+1433 shofixti work0 concerns
+1462 yehat work0 concerns0
+1513 earthling work0 concerns
+1535 arilou work0 concerns
+1564 pkunk work0 concerns
+1579 mycon work0 concerns0
+1623 spathi work0 concerns
+1655 androsynth work0 concerns
+1725 chenjesu work0 concerns
+1749 ilwrath work0 concerns
+1772 thraddash work0 concerns
+1787 druuge work0 concerns
+1805 slylandro work0 concerns
+1814 melnorme work0 concerns
+1826 utwig work0 concerns
+1838 orz work0 concerns
+1854 chmmr work0 concerns
+1866 urquan work0 concerns
+1878 kohrah work0 concerns
+1890 vux work0 concerns
+1902 umgah work0 concerns
+1914 supox work0 concerns
+1926 syreen work0 concerns
+1938 mmrnmhrm work0 concerns
+1950 zoqfot work0 concerns
+
 ## src/Melee/Element.elm
 ### Melee.Element
 39 maxDisplayElements
@@ -266,31 +362,39 @@ alwaysApply: true
 
 ## src/Melee/Local.elm
 ### Melee.Local
-84 init
-93 get side sided
-102 set side value sided
-111 update msg model
-184 begin model
-193 chooseComputers model
-209 autoPick side model
-225 choose side index model
-275 crew ship arena
-280 tick held model
-330 removeFirst item list
-344 finishRound arena model
-413 preserveSurvivor old model
-423 carrySurvivors old fresh
-455 ai side arena
-589 advance milliseconds held model
-604 collectSounds old next sounds
-659 computer rating side arena
-683 encode model
-695 load source model
-750 dittyFrames arena
-762 mapArena fn phase
-781 phaseArena phase
-800 animate milliseconds model
-824 present milliseconds model
+93 pickColumns
+98 pickRows
+103 fleetSize
+108 defaultPickCell
+113 fleetSlots fleet remaining
+122 slotAt index slots
+130 markSlots liveIndex fleet remaining
+149 humanNeedsPick mode side selected
+168 init
+177 get side sided
+186 set side value sided
+195 update msg model
+268 begin model
+277 chooseComputers model
+293 autoPick side model
+309 choose side index model
+359 crew ship arena
+364 tick held model
+399 removeFirst item list
+413 finishRound arena model
+482 preserveSurvivor old model
+492 carrySurvivors old fresh
+527 battleFrame held model arena
+559 advance milliseconds held model
+574 collectSounds old next sounds
+629 computer rating side arena
+634 encode model
+646 load source model
+701 dittyFrames arena
+713 mapArena fn phase
+732 phaseArena phase
+751 animate milliseconds model
+775 present milliseconds model
 
 ## src/Melee/Location.elm
 ### Melee.Location
@@ -378,30 +482,30 @@ alwaysApply: true
 404 act side message room
 517 held inputs
 532 tickRooms now host
-672 disconnect session client originalHost
-699 reconnect session client host
-729 running phase
-749 discover host
-789 games host
-796 stage phase
-821 removeSpectator client host
-831 modeFor controllers
-847 recipients room
-851 isVictory phase
-861 exhibition cycle
-882 identify session client host
-891 handle session client message host
-978 findMatch session client original
-1002 pairWaiting host
-1051 rankedAction session client side message room ranked host
-1156 launchRanked room
-1161 prepareRanked now room
-1222 settle code host
-1264 sweepRanked now host
-1298 tick now host
-1313 allocateCode session client host
-1329 customRoom code now setup
-1350 seatClients room
+670 disconnect session client originalHost
+697 reconnect session client host
+727 running phase
+747 discover host
+787 games host
+794 stage phase
+819 removeSpectator client host
+829 modeFor controllers
+845 recipients room
+849 isVictory phase
+859 exhibition cycle
+880 identify session client host
+889 handle session client message host
+976 findMatch session client original
+1000 pairWaiting host
+1049 rankedAction session client side message room ranked host
+1154 launchRanked room
+1159 prepareRanked now room
+1220 settle code host
+1262 sweepRanked now host
+1296 tick now host
+1311 allocateCode session client host
+1327 customRoom code now setup
+1348 seatClients room
 
 ## src/Melee/RoomCode.elm
 ### Melee.RoomCode
@@ -618,37 +722,38 @@ alwaysApply: true
 ### Pages.Melee
 29 init model
 34 view model _
-203 screen children
-208 hangar location client game
-356 hangarShipCard game ship
-383 fleet client game side
-445 shipCard game ship
-458 selection client game bottom top
-489 battle client game arena overlay
-569 controls client
-594 action label msg primary
-599 buttonAttrs primary
-611 eyebrow label
-616 muted label
-621 sideName side
-630 accent side
-639 graphicsButton game
-652 onlinePanel model
-918 isWatching client
-928 spectatorWaiting game
-937 isOnline client
-942 canEdit client side
-955 seatAction client side label message primary
-960 localAction client label message primary
-969 onlineFleetEditor location side ranked locked game
-984 pageItems size requested items
-989 pageControls location roster count
-1026 screenClass model
-1054 isRanked client
-1064 isCancelled client
-1074 matchmaking model
-1127 rankedStatus model snapshot
-1219 pilotControls client game
+206 screen children
+211 hangar location client game
+359 hangarShipCard game ship
+386 fleet client game side
+448 shipCard game ship
+461 pickScreen client game bottom top cells
+482 pickFrame client game side selected cell
+584 battle client game arena overlay
+664 controls client
+689 action label msg primary
+694 buttonAttrs primary
+706 eyebrow label
+711 muted label
+716 sideName side
+725 accent side
+734 graphicsButton game
+747 onlinePanel model
+1013 isWatching client
+1023 spectatorWaiting game
+1032 isOnline client
+1037 canEdit client side
+1050 seatAction client side label message primary
+1055 localAction client label message primary
+1064 onlineFleetEditor location side ranked locked game
+1079 pageItems size requested items
+1084 pageControls location roster count
+1121 screenClass model
+1149 isRanked client
+1159 isCancelled client
+1169 matchmaking model
+1222 rankedStatus model snapshot
+1314 pilotControls client game
 
 ## src/Pages/Metrics.elm
 ### Pages.Metrics

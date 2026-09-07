@@ -101,6 +101,7 @@ type alias FrontendModel =
     , roomCode : String
     , meleeHeld : Held
     , game : Melee.Local.Model
+    , pickCell : { bottom : { row : Int, col : Int }, top : { row : Int, col : Int } }
     }
 
 

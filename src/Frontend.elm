@@ -30,6 +30,8 @@ import Melee.Preview as Preview
 import Melee.Rate as MeleeRate
 import Melee.Rng exposing (Seed(..))
 import Melee.Room as Melee
+import Melee.Ship as Ship
+import Melee.Units exposing (Side(..))
 import Melee.Step as MeleeStep
 import Melee.Stream as Stream
 import Melee.Telemetry as Telemetry
@@ -167,6 +169,7 @@ init url key =
             , roomCode = ""
             , meleeHeld = Keys.none
             , game = { initialGame | sound = False }
+            , pickCell = { bottom = Game.defaultPickCell, top = Game.defaultPickCell }
             }
     in
     inits model route
@@ -453,6 +456,15 @@ updateCore msg model =
 
         MeleeFrame milliseconds ->
             if model.currentRoute == Melee || model.currentRoute == Default then
+                let
+                    nextGame =
+                        case model.melee of
+                            Melee.Browsing ->
+                                Game.advance milliseconds model.meleeHeld model.game |> Game.animate milliseconds
+
+                            _ ->
+                                Game.present milliseconds model.game
+                in
                 ( { model
                     | arenaPreview =
                         if model.location.room == Nothing && not model.showLocalGame then
@@ -460,13 +472,8 @@ updateCore msg model =
 
                         else
                             model.arenaPreview
-                    , game =
-                        case model.melee of
-                            Melee.Browsing ->
-                                Game.advance milliseconds model.meleeHeld model.game |> Game.animate milliseconds
-
-                            _ ->
-                                Game.present milliseconds model.game
+                    , game = nextGame
+                    , pickCell = refreshPickCell model.game.phase nextGame.phase model.pickCell
                   }
                 , Command.none
                 )
@@ -484,11 +491,17 @@ updateCore msg model =
             if model.currentRoute /= Melee && model.currentRoute /= Default then
                 ( model, Command.none )
 
-            else if k == "Escape" || k == "p" || k == "P" then
-                gameAction Game.TogglePause model
-
             else
-                sendControls (Keys.press k model.meleeHeld) model
+                case model.game.phase of
+                    Game.Selecting bottom top ->
+                        pickKey k bottom top model
+
+                    _ ->
+                        if k == "Escape" || k == "p" || k == "P" then
+                            gameAction Game.TogglePause model
+
+                        else
+                            sendControls (Keys.press k model.meleeHeld) model
 
         MeleeLocal (Melee.KeyUp k) ->
             sendControls (Keys.release k model.meleeHeld) model
@@ -661,6 +674,7 @@ updateFromBackendCore msg model =
                             | melee = Melee.Seated snapshot
                             , creatingRoom = False
                             , roomCode = snapshot.code
+                            , pickCell = refreshPickCell old.phase game.phase model.pickCell
                             , game =
                                 { game
                                     | graphics = old.graphics
@@ -1012,8 +1026,11 @@ gameAction message model =
                 location =
                     model.location
 
+                nextGame =
+                    Game.update message model.game
+
                 changed =
-                    { model | game = Game.update message model.game, meleeHeld = Keys.none }
+                    { model | game = nextGame, meleeHeld = Keys.none, pickCell = refreshPickCell model.game.phase nextGame.phase model.pickCell }
             in
             case message of
                 Game.SetMode mode ->
@@ -1091,6 +1108,178 @@ gameAction message model =
 
                 _ ->
                     ( model, Command.none )
+
+
+refreshPickCell : Game.Phase -> Game.Phase -> { bottom : { row : Int, col : Int }, top : { row : Int, col : Int } } -> { bottom : { row : Int, col : Int }, top : { row : Int, col : Int } }
+refreshPickCell previous next current =
+    case ( previous, next ) of
+        ( Game.Selecting _ _, Game.Selecting _ _ ) ->
+            current
+
+        ( _, Game.Selecting _ _ ) ->
+            { bottom = Game.defaultPickCell, top = Game.defaultPickCell }
+
+        _ ->
+            current
+
+
+nudgeCell : Int -> Int -> { row : Int, col : Int } -> { row : Int, col : Int }
+nudgeCell drow dcol cell =
+    { row = modBy Game.pickRows (cell.row + drow + Game.pickRows)
+    , col = modBy (Game.pickColumns + 1) (cell.col + dcol + Game.pickColumns + 1)
+    }
+
+
+pickKey : String -> Maybe Ship.ShipKind -> Maybe Ship.ShipKind -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
+pickKey key bottom top model =
+    let
+        needs side selected =
+            Game.humanNeedsPick model.game.mode side selected
+                && (case model.melee of
+                        Melee.Seated snapshot ->
+                            snapshot.side == side
+
+                        Melee.Watching _ ->
+                            False
+
+                        Melee.Browsing ->
+                            True
+                   )
+
+        move side drow dcol =
+            if side == Bottom then
+                { model | pickCell = { bottom = nudgeCell drow dcol model.pickCell.bottom, top = model.pickCell.top } }
+
+            else
+                { model | pickCell = { bottom = model.pickCell.bottom, top = nudgeCell drow dcol model.pickCell.top } }
+
+        confirm side cell =
+            if cell.col == Game.pickColumns then
+                if cell.row == 0 then
+                    gameAction (Game.RandomPick side) model
+
+                else
+                    gameAction Game.Menu model
+
+            else
+                case Game.slotAt (cell.row * Game.pickColumns + cell.col) (Game.fleetSlots (Game.get side model.game.fleets) (Game.get side model.game.remaining)) of
+                    Game.Ready index _ ->
+                        gameAction (Game.Pick side index) model
+
+                    _ ->
+                        ( model, Command.none )
+    in
+    case key of
+        "Escape" ->
+            gameAction Game.Menu model
+
+        "ArrowLeft" ->
+            if needs Bottom bottom then
+                ( move Bottom 0 -1, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "ArrowRight" ->
+            if needs Bottom bottom then
+                ( move Bottom 0 1, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "ArrowUp" ->
+            if needs Bottom bottom then
+                ( move Bottom -1 0, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "ArrowDown" ->
+            if needs Bottom bottom then
+                ( move Bottom 1 0, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "Enter" ->
+            if needs Bottom bottom then
+                confirm Bottom model.pickCell.bottom
+
+            else
+                ( model, Command.none )
+
+        "a" ->
+            if needs Top top then
+                ( move Top 0 -1, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "A" ->
+            if needs Top top then
+                ( move Top 0 -1, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "d" ->
+            if needs Top top then
+                ( move Top 0 1, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "D" ->
+            if needs Top top then
+                ( move Top 0 1, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "w" ->
+            if needs Top top then
+                ( move Top -1 0, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "W" ->
+            if needs Top top then
+                ( move Top -1 0, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "s" ->
+            if needs Top top then
+                ( move Top 1 0, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "S" ->
+            if needs Top top then
+                ( move Top 1 0, Command.none )
+
+            else
+                ( model, Command.none )
+
+        "j" ->
+            if needs Top top then
+                confirm Top model.pickCell.top
+
+            else
+                ( model, Command.none )
+
+        "J" ->
+            if needs Top top then
+                confirm Top model.pickCell.top
+
+            else
+                ( model, Command.none )
+
+        _ ->
+            ( model, Command.none )
 
 
 sendControls : Keys.Held -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )

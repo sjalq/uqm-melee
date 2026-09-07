@@ -83,6 +83,9 @@ view model _ =
                         Countdown _ _ ->
                             not (isWatching model.melee) && List.member key [ "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Enter" ]
 
+                        Selecting _ _ ->
+                            List.member key [ "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "a", "A", "d", "D", "w", "W", "s", "S", "j", "J" ]
+
                         _ ->
                             False
                     )
@@ -128,7 +131,7 @@ view model _ =
                         onlineFleetEditor model.location snapshot.side (snapshot.ranked /= Nothing) (snapshot.ranked /= Nothing && Game.get snapshot.side snapshot.ready) game
 
             Selecting bottom top ->
-                selection model.melee game bottom top
+                pickScreen model.melee game bottom top model.pickCell
 
             Countdown frames arena ->
                 battle model.melee game arena (Just ( "WARPING IN", String.fromInt (max 1 ((frames + 29) // 30)) ))
@@ -454,34 +457,126 @@ shipCard game ship =
         ]
 
 
-selection : Room.Client -> Game.Model -> Maybe ShipKind -> Maybe ShipKind -> Html FrontendMsg
-selection client game bottom top =
-    let
-        pick side selected =
-            div [ A.class "ship-choice-panel", A.style "padding" "24px", A.style "background" "#070730", A.style "border" ("1px solid " ++ accent side), A.style "border-radius" "0px", A.style "flex" "1 1 350px" ]
-                [ eyebrow (sideName side)
-                , case selected of
-                    Just ship ->
-                        div [ A.style "margin" "25px 0" ] [ text ((Catalog.info ship).name ++ " ready") ]
+pickScreen : Room.Client -> Game.Model -> Maybe ShipKind -> Maybe ShipKind -> { bottom : { row : Int, col : Int }, top : { row : Int, col : Int } } -> Html FrontendMsg
+pickScreen client game bottom top cells =
+    div [ A.class "classic-battle-page" ]
+        [ Audio.effects game
+        , div [ A.class "classic-battle-frame" ]
+            [ div [ A.class "pick-stage" ]
+                [ case game.survivor of
+                    Just arena ->
+                        Melee.View.viewCockpit game.graphics game.zoomWidth arena
 
                     Nothing ->
-                        div [ A.class "ship-pick-options", A.style "display" "flex", A.style "gap" "10px", A.style "flex-wrap" "wrap", A.style "margin-top" "24px" ]
-                            (List.indexedMap (\index ship -> seatAction client side (Catalog.info ship).name (Game.Pick side index) False) (Game.get side game.remaining)
-                                ++ [ seatAction client side "Random ship" (Game.RandomPick side) True ]
-                            )
+                        div [ A.class "pick-void melee-cockpit", A.attribute "aria-hidden" "true" ] []
+                , div [ A.class "pick-layer", A.attribute "aria-label" "Choose the next ship" ]
+                    [ pickFrame client game Top top cells.top
+                    , pickFrame client game Bottom bottom cells.bottom
+                    ]
                 ]
-    in
-    screen
-        [ eyebrow "DEPLOYMENT"
-        , h1 [ A.style "font-size" "42px", A.style "margin" "24px 0" ] [ text "Choose your next ship" ]
-        , muted "The surviving ship keeps its crew and energy. Destroy every opposing ship to win."
-        , div [ A.class "ship-choices", A.style "display" "flex", A.style "gap" "24px", A.style "flex-wrap" "wrap", A.style "margin" "32px 0" ] [ pick Bottom bottom, pick Top top ]
-        , if isWatching client then
-            text ""
+            ]
+        ]
 
-          else
-            action "Back to hangar" Game.Menu False
-        , controls client
+
+pickFrame : Room.Client -> Game.Model -> Side -> Maybe ShipKind -> { row : Int, col : Int } -> Html FrontendMsg
+pickFrame client game side selected cell =
+    let
+        slots =
+            Game.fleetSlots (Game.get side game.fleets) (Game.get side game.remaining)
+
+        startValue =
+            List.sum (List.map (\ship -> (Ship.stock ship).cost) (Game.get side game.fleets))
+
+        liveValue =
+            List.sum (List.map (\ship -> (Ship.stock ship).cost) (Game.get side game.remaining))
+
+        choosing =
+            Game.humanNeedsPick game.mode side selected
+                && (case client of
+                        Room.Seated snapshot ->
+                            snapshot.side == side
+
+                        Room.Watching _ ->
+                            False
+
+                        Room.Browsing ->
+                            True
+                   )
+
+        extra row name label msg =
+            button
+                [ A.class
+                    ("pick-extra "
+                        ++ name
+                        ++ (if choosing && cell.col == Game.pickColumns && cell.row == row then
+                                " flashing"
+
+                            else
+                                ""
+                           )
+                    )
+                , A.attribute "aria-label" label
+                , A.disabled (not choosing)
+                , E.onClick (GameMsg msg)
+                ]
+                []
+    in
+    div
+        [ A.class
+            ("pick-frame"
+                ++ (if side == Top then
+                        " pick-top"
+
+                    else
+                        " pick-bottom"
+                   )
+            )
+        ]
+        [ span [ A.class "pick-start-value" ] [ text (String.fromInt startValue) ]
+        , span [ A.class "pick-live-value" ] [ text (String.fromInt liveValue) ]
+        , div [ A.class "pick-icons" ]
+            (List.indexedMap
+                (\index slot ->
+                    let
+                        row =
+                            index // Game.pickColumns
+
+                        col =
+                            modBy Game.pickColumns index
+
+                        flashing =
+                            choosing && cell.row == row && cell.col == col
+                    in
+                    case slot of
+                        Game.Ready remainingIndex ship ->
+                            button
+                                [ A.class
+                                    ("pick-slot live"
+                                        ++ (if flashing then
+                                                " flashing"
+
+                                            else
+                                                ""
+                                           )
+                                    )
+                                , A.attribute "aria-label" ("Select " ++ (Catalog.info ship).name)
+                                , A.disabled (not choosing)
+                                , E.onClick (GameMsg (Game.Pick side remainingIndex))
+                                ]
+                                [ img [ A.src (Catalog.info ship).icon, A.alt "" ] [] ]
+
+                        Game.Spent ship ->
+                            div [ A.class "pick-slot spent", A.attribute "aria-label" ((Catalog.info ship).name ++ " destroyed") ]
+                                [ img [ A.src (Catalog.info ship).icon, A.alt "" ] [] ]
+
+                        Game.Vacant ->
+                            div [ A.class "pick-slot vacant" ] []
+                )
+                slots
+            )
+        , extra 0 "pick-random" "Random ship" (Game.RandomPick side)
+        , extra 1 "pick-exit" "Exit to hangar" Game.Menu
+        , span [ A.class "pick-team-name" ] [ text (Game.get side game.names) ]
         ]
 
 
@@ -1041,7 +1136,7 @@ screenClass model =
                     "waiting-screen"
 
         Selecting _ _ ->
-            "pick-screen"
+            "battle-screen pick-active"
 
         Victory _ ->
             "result-screen"

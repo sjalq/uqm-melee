@@ -5,6 +5,7 @@ import Expect
 import Fuzz
 import Melee.Battle exposing (Arena)
 import Melee.Catalog as Catalog
+import Melee.Cyborg as Cyborg
 import Melee.Element exposing (..)
 import Melee.Id exposing (ElementId(..), toInt)
 import Melee.Init as Init
@@ -24,7 +25,18 @@ import Test exposing (..)
 suite : Test
 suite =
     describe "Playable melee"
-        [ test "fleet files round-trip with names and ship order" <|
+        [ test "fleet slots keep hangar order and cross out the dead ship" <|
+            \() ->
+                Game.fleetSlots [ Earthling, Yehat, Orz, Earthling ] [ Earthling, Orz, Earthling ]
+                    |> Expect.equal
+                        ([ Game.Ready 0 Earthling
+                         , Game.Spent Yehat
+                         , Game.Ready 1 Orz
+                         , Game.Ready 2 Earthling
+                         ]
+                            ++ List.repeat 10 Game.Vacant
+                        )
+        , test "fleet files round-trip with names and ship order" <|
             \() ->
                 let
                     original =
@@ -262,7 +274,14 @@ simulate frames arena =
         arena
 
     else
-        simulate (frames - 1) (Step.tick { bottom = Game.ai Bottom arena, top = Game.ai Top arena } arena)
+        let
+            ( bottomIn, seed1 ) =
+                Cyborg.think GoodCyborg Bottom arena arena.seed
+
+            ( topIn, seed2 ) =
+                Cyborg.think GoodCyborg Top { arena | seed = seed1 } seed1
+        in
+        simulate (frames - 1) (Step.tick { bottom = bottomIn, top = topIn } { arena | seed = seed2 })
 
 
 valid : Arena -> Bool

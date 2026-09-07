@@ -5,6 +5,7 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import Melee.Battle exposing (Arena)
 import Melee.Catalog as Catalog
+import Melee.Cyborg as Cyborg
 import Melee.Element exposing (Body(..), Owner(..))
 import Melee.Graphics exposing (Quality(..))
 import Melee.Id exposing (toInt)
@@ -12,13 +13,12 @@ import Melee.Init as Init
 import Melee.Input exposing (..)
 import Melee.Keys as Keys
 import Melee.Music as Music
+import Melee.Rate as Rate
 import Melee.Rng as Rng exposing (Seed(..))
 import Melee.Ship exposing (..)
 import Melee.ShipState as State
 import Melee.Step as Step
-import Melee.Trig as Trig
 import Melee.Units exposing (..)
-import Melee.Velocity as Velocity
 import Melee.View as View
 
 
@@ -78,6 +78,90 @@ type Msg
     | ToggleGraphics
     | ToggleSound
     | Suspend
+
+
+{-| One of the 14 Super Melee fleet slots, plus vacant padding.
+`Ready` carries the compacted `remaining` index used by `Pick`.
+-}
+type FleetSlot
+    = Vacant
+    | Ready Int ShipKind
+    | Spent ShipKind
+
+
+pickColumns : Int
+pickColumns =
+    7
+
+
+pickRows : Int
+pickRows =
+    2
+
+
+fleetSize : Int
+fleetSize =
+    14
+
+
+defaultPickCell : { row : Int, col : Int }
+defaultPickCell =
+    { row = 0, col = pickColumns }
+
+
+fleetSlots : List ShipKind -> List ShipKind -> List FleetSlot
+fleetSlots fleet remaining =
+    let
+        marked =
+            markSlots 0 fleet remaining
+    in
+    marked ++ List.repeat (max 0 (fleetSize - List.length marked)) Vacant
+
+
+slotAt : Int -> List FleetSlot -> FleetSlot
+slotAt index slots =
+    slots
+        |> List.drop index
+        |> List.head
+        |> Maybe.withDefault Vacant
+
+
+markSlots : Int -> List ShipKind -> List ShipKind -> List FleetSlot
+markSlots liveIndex fleet remaining =
+    case fleet of
+        [] ->
+            []
+
+        ship :: rest ->
+            case remaining of
+                next :: more ->
+                    if ship == next then
+                        Ready liveIndex ship :: markSlots (liveIndex + 1) rest more
+
+                    else
+                        Spent ship :: markSlots liveIndex rest remaining
+
+                [] ->
+                    Spent ship :: markSlots liveIndex rest []
+
+
+humanNeedsPick : Mode -> Side -> Maybe ShipKind -> Bool
+humanNeedsPick mode side selected =
+    selected
+        == Nothing
+        && (case ( mode, side ) of
+                ( Versus, _ ) ->
+                    True
+
+                ( Solo, Bottom ) ->
+                    True
+
+                ( ReverseSolo, Top ) ->
+                    True
+
+                _ ->
+                    False
+           )
 
 
 init : Model
@@ -288,26 +372,11 @@ tick held model =
 
         Combat arena ->
             let
-                human =
-                    Keys.inputs held
-
-                inputs =
-                    { bottom =
-                        if model.mode == Demo || model.mode == ReverseSolo then
-                            computer model.difficulty Bottom arena
-
-                        else
-                            human.bottom
-                    , top =
-                        if model.mode == Versus || model.mode == ReverseSolo then
-                            human.top
-
-                        else
-                            computer model.difficulty Top arena
-                    }
+                ( frames, acc ) =
+                    Rate.advancePump arena.pumpAcc
 
                 next =
-                    Step.pump inputs arena
+                    List.foldl (\_ a -> battleFrame held model a) { arena | pumpAcc = acc } (List.range 1 frames)
             in
             if crew next.combatants.bottom next == 0 || crew next.combatants.top next == 0 then
                 { model | phase = RoundOver (90 + dittyFrames next) next, seed = next.seed, sounds = collectSounds arena next model.sounds }
@@ -451,138 +520,39 @@ carrySurvivors old fresh =
     fresh |> carry Bottom |> carry Top
 
 
-ai : Side -> Arena -> BattleInput
-ai side arena =
+{-| One C battle frame. Cyborg thinks here so RNG matches SC2 (once per
+24 Hz frame, not once per 60 Hz display tick).
+-}
+battleFrame : Keys.Held -> Model -> Arena -> Arena
+battleFrame held model arena =
     let
-        ship =
-            get side arena.combatants
+        human =
+            Keys.inputs held
 
-        other =
-            get
-                (if side == Bottom then
-                    Top
+        computerBottom =
+            model.mode == Demo || model.mode == ReverseSolo
 
-                 else
-                    Bottom
-                )
-                arena.combatants
+        computerTop =
+            not (model.mode == Versus || model.mode == ReverseSolo)
 
-        c =
-            State.core ship
-
-        (Facing facing) =
-            c.facing
-
-        (FrameCount frame) =
-            arena.frame
-    in
-    case ( Dict.get (toInt c.element) arena.elements, Dict.get (toInt (State.core other).element) arena.elements ) of
-        ( Just el, Just target ) ->
-            if (State.core other).cloaked then
-                { idle
-                    | thrust = True
-                    , turn =
-                        if modBy 48 frame < 6 then
-                            TurnRight
-
-                        else
-                            NoTurn
-                }
+        ( bottomIn, seed1 ) =
+            if computerBottom then
+                Cyborg.think model.difficulty Bottom arena arena.seed
 
             else
-                let
-                    ( vx, vy ) =
-                        Velocity.getCurrent target.velocity
+                ( human.bottom, arena.seed )
 
-                    dx =
-                        Trig.wrapDelta (target.current.location.x - el.current.location.x + vx // 8) arena.space.width
+        arena1 =
+            { arena | seed = seed1 }
 
-                    dy =
-                        Trig.wrapDelta (target.current.location.y - el.current.location.y + vy // 8) arena.space.height
+        ( topIn, seed2 ) =
+            if computerTop then
+                Cyborg.think model.difficulty Top arena1 seed1
 
-                    distance =
-                        Trig.squareRoot (dx * dx + dy * dy)
-
-                    wanted =
-                        modBy 16 ((Trig.arctan dx dy + 2) // 4)
-
-                    delta =
-                        modBy 16 (wanted - facing)
-
-                    aligned =
-                        delta <= 1 || delta >= 15
-
-                    k =
-                        State.kind ship
-
-                    range =
-                        max 250 (intelRange k)
-
-                    special =
-                        case k of
-                            Shofixti ->
-                                distance < 450 && el.points <= 2 && modBy 4 frame < 2
-
-                            Mycon ->
-                                el.points <= c.maxCrew - 4 && c.energy == c.maxEnergy
-
-                            Druuge ->
-                                c.energy < 10 && el.points > 4
-
-                            Pkunk ->
-                                c.energy < c.maxEnergy
-
-                            Yehat ->
-                                distance < 900
-
-                            Utwig ->
-                                distance < 900 && modBy 16 frame < 10
-
-                            Arilou ->
-                                distance < 230
-
-                            Spathi ->
-                                distance < 1400
-
-                            Supox ->
-                                distance < 600
-
-                            Mmrnmhrm ->
-                                modBy 180 frame == 0
-
-                            Ilwrath ->
-                                not c.cloaked && distance > 500
-
-                            _ ->
-                                modBy 24 frame < 4
-
-                    weapon =
-                        aligned && distance < max 700 range && (k /= Melnorme || modBy 150 frame < 110) && (k /= Chenjesu || modBy 24 frame < 18)
-                in
-                { turn =
-                    if delta == 0 then
-                        NoTurn
-
-                    else if delta <= 8 then
-                        TurnRight
-
-                    else
-                        TurnLeft
-                , thrust =
-                    distance
-                        > (if List.member k [ Earthling, Mycon, Druuge ] then
-                            1000
-
-                           else
-                            300
-                          )
-                        && (delta < 5 || delta > 11)
-                , weapon = weapon || List.member k [ Arilou, Slylandro ] && distance < 450
-                , special = special
-                }
-
-        _ ->
-            idle
+            else
+                ( human.top, seed1 )
+    in
+    Step.tick { bottom = bottomIn, top = topIn } { arena1 | seed = seed2 }
 
 
 advance : Float -> Keys.Held -> Model -> Model
@@ -657,26 +627,7 @@ collectSounds old next sounds =
 
 computer : CyborgRating -> Side -> Arena -> BattleInput
 computer rating side arena =
-    let
-        input =
-            ai side arena
-
-        (FrameCount frame) =
-            arena.frame
-    in
-    case rating of
-        StandardCyborg ->
-            { input | weapon = input.weapon && modBy 36 frame < 18, special = input.special && modBy 48 frame < 12 }
-
-        GoodCyborg ->
-            input
-
-        AwesomeCyborg ->
-            let
-                c =
-                    State.core (get side arena.combatants)
-            in
-            { input | special = input.special || (List.member (State.kind (get side arena.combatants)) [ Yehat, Utwig ] && c.energy > 0 && List.any (\el -> el.owner /= Owned side && el.mass > 0 && el.flags.finiteLife) (Dict.values arena.elements)) }
+    Cyborg.think rating side arena arena.seed |> Tuple.first
 
 
 encode : Model -> String
