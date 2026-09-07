@@ -510,7 +510,7 @@ carrySurvivors old fresh =
             in
             if health > 0 && State.kind previous == State.kind current then
                 { arena
-                    | combatants = set side (State.setCore { pc | element = c.element, input = idle, oldInput = idle, facing = c.facing, shieldTicks = 0 } previous) arena.combatants
+                    | combatants = set side (State.setCore { pc | element = c.element, input = idle, oldInput = idle, facing = c.facing, shieldTicks = 0, flags = c.flags } previous) arena.combatants
                     , elements = Dict.update (toInt c.element) (Maybe.map (\el -> { el | points = health })) arena.elements
                 }
 

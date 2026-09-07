@@ -1200,7 +1200,7 @@ enticeTarget work eval other toward away canTurn canThrust =
             plotIntercept work.space work.ship other 40 (closeRange * 2) > 0
 
         atSpeed =
-            work.core.flags.atMaxSpeed || work.core.flags.beyondMaxSpeed
+            not (isVelocityZero work.velocity) && (work.core.flags.atMaxSpeed || work.core.flags.beyondMaxSpeed)
 
         turnAngle =
             if tooClose then
@@ -1276,7 +1276,7 @@ thrustShip work angle =
             Trig.normalizeFacing (angleToFacing angle - velFacing) == 0
 
         coasting =
-            aligned && (work.core.flags.atMaxSpeed || work.core.flags.beyondMaxSpeed) && not work.core.flags.inGravityWell
+            aligned && not (isVelocityZero work.velocity) && (work.core.flags.atMaxSpeed || work.core.flags.beyondMaxSpeed) && not work.core.flags.inGravityWell
 
         cone =
             Trig.normalizeFacing (angleToFacing angle - work.facing + angleToFacing quadrant)
