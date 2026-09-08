@@ -49,6 +49,7 @@ INITIAL = None
 MAX_GENERATIONS = None
 NO_DASHBOARD = False
 RESUME_FROM = None
+ACTIVE_RUN_FILE = ROOT / "artifacts/neat/active-run.json"
 
 ART.mkdir(parents=True, exist_ok=True)
 HALL.mkdir(parents=True, exist_ok=True)
@@ -485,7 +486,7 @@ def run_loop():
                   "pool": hints["pool"], "search": hints["search"], "experiment": str(ART),
                   "phase": "baseline", "paused": hints["pause"], "evaluator": EVALUATOR, "scoring_version": SCORING_VERSION})
     if not NO_DASHBOARD:
-        atomic_json(ROOT / "artifacts/neat/active-run.json", {"run": str(ART), "evaluator": EVALUATOR})
+        atomic_json(ACTIVE_RUN_FILE, {"run": str(ART), "evaluator": EVALUATOR, "scoring_version": SCORING_VERSION})
     save_status()
 
     def wait_if_paused():
@@ -625,7 +626,7 @@ def run_loop():
 
 def main():
     global ART, HALL, HINTS, STATUS, METRICS, BEST, CONTROL, INITIAL, MAX_GENERATIONS, NO_DASHBOARD
-    global EVALUATOR, RUST_WORKER, RESUME_FROM, SCORING_VERSION
+    global EVALUATOR, RUST_WORKER, RESUME_FROM, SCORING_VERSION, ACTIVE_RUN_FILE
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifacts", type=Path, default=ART)
     parser.add_argument("--hints", type=Path, default=HINTS)
@@ -633,6 +634,7 @@ def main():
     parser.add_argument("--initial", type=Path)
     parser.add_argument("--generations", type=int)
     parser.add_argument("--no-dashboard", action="store_true")
+    parser.add_argument("--active-run-file", type=Path, default=ACTIVE_RUN_FILE)
     parser.add_argument("--evaluator", choices=("elm", "rust"), default="elm")
     parser.add_argument("--scoring-version", choices=("legacy", "combat-v1"), default="legacy")
     parser.add_argument("--rust-worker", type=Path, default=RUST_WORKER)
@@ -650,6 +652,7 @@ def main():
     INITIAL = args.initial.resolve() if args.initial else None
     MAX_GENERATIONS = args.generations
     NO_DASHBOARD = args.no_dashboard
+    ACTIVE_RUN_FILE = args.active_run_file.resolve()
     EVALUATOR = args.evaluator
     RUST_WORKER = args.rust_worker.resolve()
     RESUME_FROM = args.resume_from.resolve() if args.resume_from else None

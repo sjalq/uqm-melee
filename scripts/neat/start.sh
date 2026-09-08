@@ -9,14 +9,15 @@ LOG_FILE="$ROOT/artifacts/neat/campaign.log"
 cd "$ROOT"
 mkdir -p artifacts/neat/campaigns
 
-# Keep the previous campaign intact. The first Rust start forks its exact
-# checkpoint; subsequent starts restore the new run's own checkpoint.
-RUST_WORKER="$ROOT/artifacts/neat/runs/rust-v2/source/melee-worker"
-PARENT_RUN=artifacts/neat/runs/rust-v1
-RUST_RUN=artifacts/neat/runs/rust-v2
-HINTS_FILE=artifacts/neat/campaigns/takeover-v1/runs/block-mutations/hints.json
-if [[ ! -x "$RUST_WORKER" || ! -f "$PARENT_RUN/checkpoint.json" ]]; then
-  echo "Rust evaluator or parent checkpoint missing; leaving the running service alone" >&2
+# Scoring changes start a separately scored run from a frozen champion.
+# Subsequent starts restore that run's checkpoint; old scores never carry over.
+RELEASE="$ROOT/artifacts/neat/releases/scoring-v1"
+RUST_WORKER="$RELEASE/rust/target/release/melee-worker"
+RUST_RUN="$ROOT/artifacts/neat/runs/scoring-v1"
+HINTS_FILE="$RELEASE/comparison-current/hints.json"
+INITIAL="$RELEASE/comparison-current/initial.json"
+if [[ ! -x "$RUST_WORKER" || ! -f "$INITIAL" || ! -f "$HINTS_FILE" || ! -f "$RELEASE/scripts/neat/train.py" ]]; then
+  echo "Scoring release or frozen initial policy missing; leaving the running service alone" >&2
   exit 1
 fi
 
@@ -166,11 +167,13 @@ systemd-run --user \
   --property="StandardError=append:$LOG_FILE" \
   -- \
   /usr/bin/taskset -c 6,7 \
-  /usr/bin/python3 -u scripts/neat/train.py \
+  /usr/bin/python3 -u "$RELEASE/scripts/neat/train.py" \
     --artifacts "$RUST_RUN" \
     --hints "$HINTS_FILE" \
     --control scripts/neat/hints.json \
-    --resume-from "$PARENT_RUN" \
+    --initial "$INITIAL" \
+    --scoring-version combat-v1 \
+    --active-run-file "$ROOT/artifacts/neat/active-run.json" \
     --evaluator rust \
     --rust-worker "$RUST_WORKER"
 
