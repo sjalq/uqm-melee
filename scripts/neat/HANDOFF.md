@@ -136,6 +136,34 @@ Also note `Melee.Step.circlesHit` is f64, not integer. That is exact in Rust,
 but it is the one thing that blocks a naive f32 WGSL kernel; the GPU stage has
 to keep that path in f64 or restructure it.
 
+### Measured speed so far
+
+There is no end-to-end speedup yet, because the loop itself is not ported. What
+is measured is like-for-like throughput on the two hottest inner components,
+identical workload, checksums verified equal on both sides:
+
+```
+python3 scripts/oracle/bench.py
+
+process floor: node 43.4 ms, rust 2.1 ms (subtracted)
+component     elm ms   rust ms   speedup  checksums
+velocity       333.2      2.48      134x  match     500 launches x 40 frames
+mask            61.6      0.79       78x  match     4 hull pairs x 19x19 offsets
+both           361.1      3.48      104x  match
+```
+
+Single core, no parallelism. The trainer's measured Elm baseline on snowball is
+`bench 11619 scenario-ticks/s` over 18 scenarios on 2 cores, which is the ~40s
+generation.
+
+Treat 104x as an indication, not a promise. The real loop adds branchy per-ship
+logic where the gap is narrower, and removes Elm Dict/record allocation where
+the gap is wider. Two further multipliers are orthogonal to it: rayon across the
+18 scenarios (only 2x on snowball's core cap) and dropping the per-fight JSON
+round trip through node's stdin/stdout. The GPU matters mostly because the 2
+core / 4 GB cap does not apply to VRAM.
+
+
 ### Layout
 
 ```
