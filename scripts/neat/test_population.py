@@ -30,6 +30,19 @@ class PopulationTests(unittest.TestCase):
         restored = PopulationSearch(restored_rng, [0.0] * N_WEIGHTS, saved=saved)
         self.assertEqual(original.propose(17, 1), restored.propose(17, 1))
 
+    def test_islands_keep_lineages_and_resume(self):
+        rng = random.Random(123)
+        search = PopulationSearch(rng, [0.0] * N_WEIGHTS, revision=4)
+        proposals = search.propose(17, 0)
+        records = [{"weights": w, "seat_wins": i, "fitness": i} for i, w in enumerate(proposals)]
+        search.observe(records)
+        self.assertEqual(search.parents, [proposals[i] for i in [4, 8, 12, 16]])
+        restored_rng = random.Random()
+        restored_rng.setstate(tuples(json.loads(json.dumps(rng.getstate()))))
+        restored = PopulationSearch(restored_rng, [0.0] * N_WEIGHTS, revision=4,
+                                    saved=json.loads(json.dumps(search.snapshot())))
+        self.assertEqual(search.propose(17, 1), restored.propose(17, 1))
+
 
 if __name__ == "__main__":
     unittest.main()

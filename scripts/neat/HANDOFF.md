@@ -1,3 +1,20 @@
+## Population search experiment outcome (2026-09-08)
+
+Four bounded attempts completed on Snowball using the production Python trainer and the frozen scoring-v1 Rust evaluator. No candidate passed the deployment gates. The scoring-v1 live release remains unchanged and running. Experimental integration is isolated on branch codex/population-search, not merged into main.
+
+Every arm used the same frozen starting weights and 160 generations, with 17 candidates per generation. Total evaluations were 3,686 per single-matchup arm and 33,174 per full-pool arm. Each revision used fresh audit seeds. Revisions 3 and 4 reused the unchanged, budget-checked baseline training and re-audited it on their new seeds; cached elapsed_seconds measures audit time only, not training speed.
+
+Revision 1: broad mutations, diverse parents and restarts. Single matchup tied baseline 0/40 fresh wins, failed.
+Revision 2: hidden-unit mutations, output-head mutations, crossover and sparse restarts. Single matchup beat baseline 2/40 vs 0/40; full pool lost 86/360 vs 93/360, with validation 21/54 vs 22/54, failed.
+Revision 3: retain specialists on weak matchups. Single-matchup behavior is identical to revision 2. Full pool lost 94/360 vs 99/360, with validation 21/54 vs 22/54, failed.
+Revision 4: four persistent lineages with separate mutation scales. Single matchup tied 2/40 vs 2/40, failed.
+
+The predeclared full-pool gate required at least eight extra wins on 360 fresh fights, no validation regression, then an independent confirmation against both baseline and initial weights. No revision reached confirmation. Do not describe these changes as an improvement or deploy this branch based on these results. These are bounded trials, not evidence that population methods cannot work.
+
+Snowball evidence: artifacts/neat/search-trials/plan.json, population-results.json, and revision-{1,2,3,4}/ directories. Each directory preserves frozen source, hints, checkpoints, metrics and audit scenarios. Local evidence: artifacts/neat/population-results.json in the population worktree.
+
+Validation: 25 Python tests and compileall passed. The local legacy Elm/Rust migration test could not run because this worktree lacks its compiled Rust binary. Actual training trials used Snowball's existing Rust worker. Revision 2 also passed an actual uninterrupted-versus-resumed training comparison; revision 4 passed the lineage persistence and RNG snapshot test. No game physics, scoring or live resource limits were changed by these trials.
+
 # NEAT melee trainer handoff
 
 Paused for handoff. Unpause only by setting `scripts/neat/hints.json` `"pause": false` on snowball. Do not expand the ship pool. Do not treat leftover v5 12/12 or v7 3/18 as this run.

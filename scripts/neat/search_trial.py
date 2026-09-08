@@ -35,6 +35,7 @@ def main():
     p.add_argument("--initial", type=Path, required=True)
     p.add_argument("--hints", type=Path, required=True)
     p.add_argument("--worker", type=Path, required=True)
+    p.add_argument("--baseline-from", type=Path)
     p.add_argument("--stage", choices=["single", "full"], required=True)
     p.add_argument("--generations", type=int, default=160)
     p.add_argument("--seed", type=int, default=20260909)
@@ -66,17 +67,29 @@ def main():
                    "--rust-worker", str(args.worker), "--scoring-version", "combat-v1",
                    "--no-dashboard", "--generations", str(args.generations)]
         started = time.monotonic()
-        with (arm / "run.log").open("a") as log:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True,
-                           env={**os.environ, "NEAT_WORKERS": "2", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"})
-        champion = json.loads((arm / "best.json").read_text())
+        training_arm = args.baseline_from if mode == "block_es" and args.baseline_from else arm
+        if training_arm == arm:
+            with (arm / "run.log").open("a") as log:
+                subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True,
+                               env={**os.environ, "NEAT_WORKERS": "2", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"})
+        else:
+            original = json.loads((training_arm / "manifest.json").read_text())
+            if original["initial_sha256"] != __import__("experiment").digest(weights):
+                raise ValueError("cached baseline used different starting weights")
+            actual = json.loads((training_arm / "checkpoint.json").read_text())
+            if actual["generation"] != args.generations:
+                raise ValueError("cached baseline used a different generation budget")
+            expected_config = original["provenance"]["config"]
+            if any(expected_config.get(k) != hints[k] for k in ["pool", "seed", "pop", "search", "sigma", "lr", "train_seeds", "hold_seeds", "episode_ticks"]):
+                raise ValueError("cached baseline configuration differs")
+        champion = json.loads((training_arm / "best.json").read_text())
         evaluation = audit(args.worker, champion["weights"], base["pool"], seeds)
         atomic_json(arm / "audit.json", evaluation)
-        rows = [json.loads(line) for line in (arm / "metrics.jsonl").read_text().splitlines()]
-        fights = len(json.loads((arm / "baseline.json").read_text())["scenarios"]) + sum((16 + 1) * row["n_train"] + row["n_hold"] for row in rows)
+        rows = [json.loads(line) for line in (training_arm / "metrics.jsonl").read_text().splitlines()]
+        fights = len(json.loads((training_arm / "baseline.json").read_text())["scenarios"]) + sum((16 + 1) * row["n_train"] + row["n_hold"] for row in rows)
         results[mode] = {"audit_wins": evaluation["wins"], "audit_fights": evaluation["fights"],
                          "validation_wins": champion["seat_wins"], "training_fights": fights,
-                         "elapsed_seconds": time.monotonic() - started, "champion_generation": champion["generation"]}
+                         "elapsed_seconds": time.monotonic() - started, "champion_generation": champion["generation"], "training_source": str(training_arm)}
         print(f"DONE {mode}: {json.dumps(results[mode])}", flush=True)
     before = json.loads((args.root / "block_es/audit.json").read_text())
     after = json.loads((args.root / "population/audit.json").read_text())
