@@ -19,7 +19,7 @@ WorkingDirectory={root}
 ExecStart=/usr/bin/python3 {release}/review_loop.py serve
 Restart=on-failure
 RestartSec=5
-AllowedCPUs=6,7
+AllowedCPUs=4,5
 MemoryMax=256M
 MemorySwapMax=0
 [Install]
@@ -31,10 +31,10 @@ Description=Equal-budget research, creative and radical Melee trials
 Type=oneshot
 WorkingDirectory={root}
 ExecStart=/usr/bin/python3 {release}/review_loop.py review
-AllowedCPUs=6,7
+AllowedCPUs=4,5
 CPUQuota=200%
-CPUWeight=10
-MemoryMax=2G
+CPUWeight=100
+MemoryMax=4G
 MemorySwapMax=0
 TimeoutStartSec=10800
 KillMode=control-group
@@ -56,8 +56,8 @@ Description=Check Melee training progress and failures
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 {release}/review_loop.py health
-AllowedCPUs=6,7
-CPUWeight=10
+AllowedCPUs=4,5
+CPUWeight=100
 MemoryMax=256M
 MemorySwapMax=0
 """)

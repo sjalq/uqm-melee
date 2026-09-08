@@ -1,3 +1,9 @@
+## Extra experiment capacity (2026-09-09)
+
+The user authorized more resources locally and on Snowball. Experiment, monitor and health services now use CPUs 4,5, separate physical cores from live training on 6,7. Experiments retain two evaluator workers, now at CPUWeight 100 and a 4 GiB memory ceiling. Live training stays on CPUs 6,7 with 4 GiB. Both running processes were moved/configured without restart. Snowball reported about 16 GiB available memory and lightly used CPUs 4,5 before the change. No extra local compute was necessary.
+
+Runtime properties are effective immediately, and persistent unit files plus install_monitor.py match. Do not rerun the older CPU-sharing setup. The 20-minute check-ins, hourly trials, early screening and independent promotion gates remain unchanged. Timing evidence is artifacts/neat/reviews/resource-change.json.
+
 ## Check-ins and CPU priority (2026-09-09)
 
 Check-ins now run every 20 minutes via uqm-health.timer. Hourly experiments remain enabled. Every check appends to artifacts/neat/reviews/checkins.jsonl; direct research, bottleneck and design findings are journaled in scripts/neat/review-findings.jsonl on codex/training-monitor and in the monitor-v1 release. This side conversation cannot launch sub-agents; these findings were reviewed directly. There is still no automatic LLM research or debate process.
