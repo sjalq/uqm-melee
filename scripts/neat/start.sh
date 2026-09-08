@@ -16,6 +16,28 @@ RUST_WORKER="$RELEASE/rust/target/release/melee-worker"
 RUST_RUN="$ROOT/artifacts/neat/runs/scoring-v1"
 HINTS_FILE="$RELEASE/comparison-current/hints.json"
 INITIAL="$RELEASE/comparison-current/initial.json"
+# A validated review can select an immutable experiment for continuation.
+DEPLOYMENT="$ROOT/artifacts/neat/deployment.json"
+if [[ -f "$DEPLOYMENT" ]]; then
+  mapfile -t selected < <(python3 - "$DEPLOYMENT" <<'PYCONFIG'
+import json, sys
+from pathlib import Path
+r=Path('/home/schalk/git/uqm-melee/artifacts/neat').resolve()
+d=json.loads(Path(sys.argv[1]).read_text())
+for key in ['release','worker','run','hints','initial']:
+    p=Path(d[key]).resolve()
+    if not p.is_relative_to(r) or not p.exists():
+        raise ValueError('invalid deployment path: ' + key)
+    print(p)
+PYCONFIG
+  )
+  [[ ${#selected[@]} == 5 ]] || { echo "Invalid deployment selection" >&2; exit 1; }
+  RELEASE=${selected[0]}
+  RUST_WORKER=${selected[1]}
+  RUST_RUN=${selected[2]}
+  HINTS_FILE=${selected[3]}
+  INITIAL=${selected[4]}
+fi
 if [[ ! -x "$RUST_WORKER" || ! -f "$INITIAL" || ! -f "$HINTS_FILE" || ! -f "$RELEASE/scripts/neat/train.py" ]]; then
   echo "Scoring release or frozen initial policy missing; leaving the running service alone" >&2
   exit 1
@@ -150,7 +172,7 @@ systemd-run --user \
   --service-type=exec \
   --working-directory="$ROOT" \
   --setenv=NEAT_WORKERS=2 \
-  --setenv=NEAT_PORT=8788 \
+  --setenv=NEAT_PORT=8789 \
   --setenv=OPENBLAS_NUM_THREADS=1 \
   --setenv=OMP_NUM_THREADS=1 \
   --property=AllowedCPUs=6,7 \

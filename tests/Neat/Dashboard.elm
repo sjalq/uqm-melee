@@ -20,7 +20,7 @@ import Time
 main : Program () Model Msg
 main =
     Browser.element
-        { init = \_ -> ( init, Cmd.batch [ fetch, fetchNet ] )
+        { init = \_ -> ( init, Cmd.batch [ fetch, fetchNet, fetchReview ] )
         , update = update
         , view = view
         , subscriptions = \_ -> Time.every 2000 Tick
@@ -35,7 +35,118 @@ type alias Model =
     , explainer : Maybe Explainer
     , pinned : Bool
     , net : Maybe NetPic
+    , review : Maybe Review
+    , reviewError : String
     }
+
+
+type alias Review =
+    { phase : String
+    , lane : String
+    , hypothesis : String
+    , error : String
+    , age : Float
+    , active : Bool
+    , next : Float
+    , now : Float
+    , history : List ReviewResult
+    , trialGeneration : Int
+    }
+
+
+type alias ReviewResult =
+    { cycle : Int
+    , lane : String
+    , decision : String
+    , baseline : Int
+    , challenger : Int
+    , fights : Int
+    , hypothesis : String
+    }
+
+
+fetchReview : Cmd Msg
+fetchReview =
+    Http.get { url = "/api/review", expect = Http.expectJson GotReview reviewDecoder }
+
+
+reviewDecoder : D.Decoder Review
+reviewDecoder =
+    D.succeed Review
+        |> P.optional "phase" D.string "waiting"
+        |> P.optional "lane" D.string "research"
+        |> P.optional "hypothesis" D.string "First review pending"
+        |> P.optional "error" D.string ""
+        |> P.required "status_age_s" D.float
+        |> P.required "trainer_active" D.bool
+        |> P.optional "next_review_at" D.float 0
+        |> P.required "server_time" D.float
+        |> P.optional "history" (D.list reviewResultDecoder) []
+        |> P.optional "trial_generation" D.int 0
+
+
+reviewResultDecoder : D.Decoder ReviewResult
+reviewResultDecoder =
+    D.succeed ReviewResult
+        |> P.required "cycle" D.int
+        |> P.required "lane" D.string
+        |> P.required "decision" D.string
+        |> P.optional "baseline_wins" D.int -1
+        |> P.optional "challenger_wins" D.int -1
+        |> P.optional "audit_fights" D.int 0
+        |> P.optional "hypothesis" D.string "Interrupted before completion"
+
+
+reviewCard : Model -> Html Msg
+reviewCard model =
+    div [ A.style "background" card, A.style "padding" "18px", A.style "border-radius" "12px", A.style "margin-bottom" "20px" ]
+        [ h2 [ A.style "font-size" "17px", A.style "margin-top" "0" ] [ text "Is the policy actually improving?" ]
+        , if model.reviewError /= "" then
+            p [ A.style "color" coral ] [ text ("Review monitor unavailable: " ++ model.reviewError) ]
+          else
+            text ""
+        , case model.review of
+            Nothing ->
+                text "Waiting for the independent review monitor."
+
+            Just r ->
+                div []
+                    [ div [ A.style "display" "grid", A.style "grid-template-columns" "repeat(auto-fit,minmax(180px,1fr))", A.style "gap" "12px" ]
+                        [ metric "Training health"
+                            (if not r.active then "STOPPED" else if r.age > 30 then "STALE" else "LIVE")
+                            (r.active && r.age <= 30)
+                            { title = "Training health", body = [ "Checks the actual service and status file age. Last status write was " ++ fmt1 r.age ++ " seconds ago. A stale file is not live progress." ] }
+                        , metric "Review cycle" (r.lane ++ " / " ++ r.phase) False
+                            { title = "Equal experiment lanes", body = [ "Research, creative, radical, one turn each. These are programmed recipes with changing seeds and parameters, not an autonomous LLM reading new papers." ] }
+                        , metric "Next scheduled review"
+                            (if r.next <= 0 then "pending" else if r.next <= r.now then "due / running" else uptime (r.next - r.now)) False
+                            { title = "15-minute cadence", body = [ "One review at a time. Each trains a baseline and challenger under equal fight budgets. A long review delays the next one; trials never overlap." ] }
+                        ]
+                    , p [ A.style "line-height" "1.5" ] [ text r.hypothesis ]
+                    , if r.phase == "baseline" || r.phase == "challenger" then p [ A.style "color" mute ] [ text (r.phase ++ ": generation " ++ String.fromInt r.trialGeneration ++ " / 160. Both arms get the same fight budget.") ] else text ""
+                    , p [ A.style "color" mute, A.style "font-size" "13px" ] [ text "Keep rule: at least 8 extra wins on 360 fresh fights, then beat the baseline and live champion on another 360. Failed ideas stay in the ledger; the live champion stays protected." ]
+                    , if r.error /= "" then p [ A.style "color" coral ] [ text r.error ] else text ""
+                    , if List.isEmpty r.history then
+                        p [ A.style "color" mute ] [ text "No completed reviews yet. Fresh-seed improvement has not been demonstrated." ]
+                      else
+                        div [] (List.map reviewRow (List.take 12 (List.reverse r.history)))
+                    ]
+        ]
+
+
+reviewRow : ReviewResult -> Html Msg
+reviewRow r =
+    div
+        [ A.style "padding" "12px 0", A.style "border-top" ("1px solid " ++ line)
+        , A.style "cursor" "help", HE.onMouseEnter (ShowExplainer { title = "Experiment " ++ String.fromInt (r.cycle + 1), body = [ r.hypothesis, "Fresh audit seeds are never used for training. The comparison uses the same fight budget. A rejected result is retained as evidence." ] })
+        , HE.onMouseLeave HideExplainer
+        , HE.onClick (PinExplainer { title = r.lane ++ " experiment", body = [ r.hypothesis ] })
+        ]
+        [ span [ A.style "color" (if r.decision == "deployed" then mint else mute) ]
+            [ text ("#" ++ String.fromInt (r.cycle + 1) ++ " · " ++ r.lane ++ " · " ++ r.decision) ]
+        , div [ A.style "margin-top" "5px" ]
+            [ text (if r.fights == 0 then "No completed audit" else "Baseline " ++ String.fromInt r.baseline ++ " → challenger " ++ String.fromInt r.challenger ++ " wins / " ++ String.fromInt r.fights ++ " fresh fights") ]
+        ]
 
 
 type alias NetPic =
@@ -77,6 +188,11 @@ type alias Status =
     , nHold : Int
     , pool : List String
     , champion : Champion
+    , experiment : String
+    , phase : String
+    , evaluator : String
+    , generationS : Float
+    , scoringVersion : String
     }
 
 
@@ -135,6 +251,7 @@ type Msg
     = Tick Time.Posix
     | Got (Result Http.Error Status)
     | GotNet (Result Http.Error NetPic)
+    | GotReview (Result Http.Error Review)
     | HoverFit (Maybe Int)
     | HoverCrew (Maybe Int)
     | ShowExplainer Explainer
@@ -152,6 +269,8 @@ init =
     , explainer = Nothing
     , pinned = False
     , net = Nothing
+    , review = Nothing
+    , reviewError = ""
     }
 
 
@@ -159,7 +278,7 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         Tick _ ->
-            ( model, fetch )
+            ( model, Cmd.batch [ fetch, fetchReview ] )
 
         Got (Ok s) ->
             let
@@ -170,6 +289,7 @@ update msg model =
 
                         Just n ->
                             n.generation /= s.champion.generation
+                                || (Maybe.map .experiment model.status /= Just s.experiment)
             in
             ( { model | status = Just s, err = if s.error == "" then Nothing else Just s.error }
             , if needNet then
@@ -181,6 +301,12 @@ update msg model =
 
         Got (Err e) ->
             ( { model | err = Just (httpErr e) }, Cmd.none )
+
+        GotReview (Ok r) ->
+            ( { model | review = Just r, reviewError = "" }, Cmd.none )
+
+        GotReview (Err e) ->
+            ( { model | reviewError = httpErr e }, Cmd.none )
 
         GotNet (Ok n) ->
             ( { model | net = Just n }, Cmd.none )
@@ -319,6 +445,11 @@ statusDecoder =
         |> P.optional "n_hold" D.int 0
         |> P.optional "pool" (D.list D.string) []
         |> P.optional "champion" championDecoder emptyChampion
+        |> P.optional "experiment" D.string ""
+        |> P.optional "phase" D.string ""
+        |> P.optional "evaluator" D.string "elm"
+        |> P.optional "generation_s" floatish 0
+        |> P.optional "scoring_version" D.string "unknown"
 
 
 emptyChampion : Champion
@@ -439,9 +570,11 @@ view model =
             Just s ->
                 div []
                     [ metrics s
-                    , holdTable s
-                    , netCard model s
+                    , reviewCard model
+                    , matchupGrid s
                     , charts model s
+                    , Html.details [ A.style "margin" "20px 0" ] [ Html.summary [ A.style "cursor" "pointer", A.style "padding" "14px" ] [ text (String.fromInt (List.length s.champion.fights) ++ " validation fights: seeds, seats, crew and outcomes") ], holdTable s ]
+                    , netCard model s
                     ]
         , case model.err of
             Just e ->
@@ -471,7 +604,13 @@ header model =
             Just s ->
                 p [ A.style "color" mute, A.style "margin" "8px 0 0", A.style "font-size" "13px" ]
                     [ text
-                        (uptime s.uptimeS
+                        ((s.experiment |> String.split "/" |> List.reverse |> List.head |> Maybe.withDefault "training")
+                            ++ "  ·  "
+                            ++ s.phase
+                            ++ " | "
+                            ++ s.evaluator
+                            ++ "  ·  "
+                            ++ uptime s.uptimeS
                             ++ "  ·  gen "
                             ++ String.fromInt s.generation
                             ++ "  ·  "
@@ -519,7 +658,7 @@ hintBar model =
                 "Explainer pinned. Click the dimmed area or Close to dismiss."
 
              else
-                "The number to watch is Hold record (kills on the exam set). Everything else is supporting context."
+                "Watch fresh-seed improvement and time since the last better champion. Generations and evaluations measure activity, not learning."
             )
         ]
 
@@ -546,20 +685,17 @@ metrics s =
         , A.style "gap" "12px"
         , A.style "margin-bottom" "22px"
         ]
-        [ metric "Generation" (String.fromInt s.generation) False (generationExplainer s)
-        , metric "Hold record"
-            (String.fromInt holdWins ++ " / " ++ String.fromInt (max holdN s.nHold))
-            (holdN > 0 && holdWins == holdN)
-            (holdRecordExplainer holdWins (max holdN s.nHold) s)
-        , metric "Pool"
-            (String.fromInt (List.length s.pool) ++ " ships")
-            False
-            (poolExplainer poolLabel s)
-        , metric "Hold score" (fmtScore s.bestFitness) False (holdScoreExplainer s)
-        , metric "This gen mean" (fmtScore s.meanFitness) False (meanExplainer s)
-        , metric "Crew this gen" (fmt1 s.own ++ " / " ++ fmt1 s.enemy) False (crewMetricExplainer s)
-        , metric "Last eval" (fmt2 s.evalS ++ " s") False (evalExplainer s)
-        , metric "Sigma" (fmt2 s.sigma) False sigmaExplainer
+        [ metric "Saved validation wins" (String.fromInt holdWins ++ " / " ++ String.fromInt (max holdN s.nHold)) False (holdRecordExplainer holdWins (max holdN s.nHold) s)
+        , metric "Generations since promotion" (String.fromInt (max 0 (s.generation - s.champion.generation))) False
+            { title = "Plateau age", body = [ "Completed generations since the saved champion was promoted. A large number means the search is active without finding a better validation policy. A promotion can improve only the fitness tiebreaker, not wins." ] }
+        , metric "Generation" (String.fromInt s.generation) False (generationExplainer s)
+        , metric "Generation duration" (fmt2 s.generationS ++ " s") False
+            { title = "Full generation duration", body = [ "Measured time for a completed generation, including candidate evaluations and validation. This is different from a single candidate's evaluation time." ] }
+        , metric "Evaluations / second"
+            (if s.generationS > 0 then fmt1 (toFloat ((s.pop + 1) * s.nTrain + s.nHold) / s.generationS) else "waiting") False
+            { title = "Approximate fight throughput", body = [ "Candidate count times training fights, plus validation fights, divided by generation duration. Useful for capacity, not evidence of learning." ] }
+        , metric "Game scoring" s.scoringVersion False
+            { title = "Comparable game outcomes", body = [ "combat-v1 budgets combat ticks and resolves natural death transitions. Compare policies only under the same scoring version and fight budget." ] }
         ]
 
 
@@ -593,6 +729,29 @@ metric label value win e =
             , A.style "font-variant-numeric" "tabular-nums"
             ]
             [ text value ]
+        ]
+
+
+matchupGrid : Status -> Html Msg
+matchupGrid s =
+    div [ A.style "margin-bottom" "20px" ]
+        [ h2 [ A.style "font-size" "17px" ] [ text "Where the champion wins and gets stuck" ]
+        , div [ A.style "display" "grid", A.style "grid-template-columns" "repeat(auto-fit,minmax(220px,1fr))", A.style "gap" "10px" ]
+            (List.concatMap
+                (\us -> List.map
+                    (\them ->
+                        let
+                            fights = List.filter (\f -> f.us == us && f.them == them) s.champion.fights
+                            wins = List.filter fightWon fights |> List.length
+                            bottom = List.filter (\f -> not f.swap && fightWon f) fights |> List.length
+                            top = List.filter (\f -> f.swap && fightWon f) fights |> List.length
+                            timeouts = List.filter (\f -> f.outcome == "invalidated") fights |> List.length
+                        in
+                        metric (us ++ " vs " ++ them) (String.fromInt wins ++ " / " ++ String.fromInt (List.length fights)) (wins == List.length fights && wins > 0)
+                            { title = us ++ " vs " ++ them
+                            , body = [ "Saved validation wins. Bottom seat: " ++ String.fromInt bottom ++ ". Top seat: " ++ String.fromInt top ++ ". Timeouts: " ++ String.fromInt timeouts ++ ".", "A zero or seat imbalance identifies a weakness. These fixed validation results are not fresh-seed evidence. Expand the fight list for crew and individual seeds." ] }
+                    ) s.pool
+                ) s.pool)
         ]
 
 
@@ -638,7 +797,7 @@ holdTable s =
             , infoBtn (holdTableExplainer s)
             ]
         , p [ A.style "color" mute, A.style "font-size" "13px", A.style "margin" "8px 0 12px", A.style "line-height" "1.45" ]
-            [ text "These 18 fights never change. A candidate is only kept if it does well here. Hover a row." ]
+            [ text ("These " ++ String.fromInt (List.length fights) ++ " validation fights use fixed seeds within this run. Repeated selection can overfit them; independent audits test generalization. Hover a row.") ]
         , if List.isEmpty fights then
             p [ A.style "color" mute ] [ text "No champion fights on status yet. Wait one generation after a trainer restart." ]
 
@@ -758,18 +917,17 @@ charts : Model -> Status -> Html Msg
 charts model s =
     let
         hist =
-            List.filter (\p -> p.best < 1000000 && p.mean < 2000000) s.history
+            s.history
     in
     div
         [ A.style "display" "grid"
         , A.style "gap" "16px"
         ]
         [ chartCard
-            "Practice score vs exam score"
-            "Gold wiggles: this generation's practice average (noisy). Mint steps: the saved champion's exam score (only moves when we keep a new genome). Neither line is a win count."
+            "Saved champion score"
+            "Validation score only. A flat line means no better champion was saved. This is a fitness tiebreaker, not a win count. History belongs to this run."
             (scoreChartExplainer s)
-            [ { label = "practice average this gen", color = gold, values = List.map .mean hist }
-            , { label = "saved exam score", color = mint, values = List.map .best hist }
+            [ { label = "saved validation score", color = mint, values = List.map .best hist }
             ]
             hist
             model.hoverFit
@@ -802,7 +960,7 @@ chartCard title blurb e series history hover hoverMsg =
         , p [ A.style "color" mute, A.style "font-size" "13px", A.style "margin" "8px 0 12px", A.style "line-height" "1.45" ] [ text blurb ]
         , legend series
         , if List.length history < 2 then
-            p [ A.style "color" mute, A.style "font-size" "13px" ] [ text "Not enough generations to chart yet." ]
+            p [ A.style "color" mute, A.style "font-size" "13px" ] [ text ("Waiting for two completed generations in this experiment. Completed: " ++ String.fromInt (List.length history) ++ ". The evaluation counter advances while the next generation runs.") ]
 
           else
             viewChart series history hover hoverMsg
@@ -1191,8 +1349,8 @@ pageExplainer =
     { title = "What this page is"
     , body =
         [ "We are training one neural net to play Super Melee against the original Awesome cyborg. The net picks a ship, the cyborg picks a ship, they fight in the real engine."
-        , "Hull identity is 5 bits for us and 5 bits for them. A hidden layer of 16 tanh units sits between the sensors and the buttons. Pool is Pkunk, Umgah, Yehat: 9 matchups times 2 seats = 18 exam fights."
-        , "A fourth ship is added only when the saved net wins 80% of those exam fights (15 of 18). We are not there yet."
+        , "Hull identity is 5 bits for us and 5 bits for them. A hidden layer of 16 tanh units sits between the sensors and the buttons. The current experiment uses Pkunk, Umgah and Yehat in both seats across several starting seeds."
+        , "The ship pool stays fixed during this comparison so both experiments face the same challenge."
         , "Ignore leftover v5 numbers and any old 'WIN 509t' jackpot card. The number that matters is Hold record."
         ]
     }
@@ -1202,7 +1360,7 @@ generationExplainer : Status -> Explainer
 generationExplainer s =
     { title = "Generation"
     , body =
-        [ "How many times the trainer has updated the net since this process started. This run is at generation " ++ String.fromInt s.generation ++ "."
+        [ "How many times this experiment has updated the net, including work restored from a checkpoint. This run is at generation " ++ String.fromInt s.generation ++ "."
         , "It is a loop counter, not a win count. Generation 200 with 3 kills is worse than generation 50 with 15 kills."
         ]
     }
@@ -1212,9 +1370,9 @@ holdRecordExplainer : Int -> Int -> Status -> Explainer
 holdRecordExplainer wins n _ =
     { title = "Hold record  (the number to watch)"
     , body =
-        [ "The saved net is tested on a fixed exam of " ++ String.fromInt n ++ " fights. Same ships, same seats, same seed, every time. Right now it has " ++ String.fromInt wins ++ " kills."
+        [ "The saved net is tested on a fixed validation set of " ++ String.fromInt n ++ " fights. Same ships, seats and set of seeds every time. Right now it has " ++ String.fromInt wins ++ " kills."
         , "A kill means: the fight actually finished, our ship won, and the enemy has 0 crew. Timeouts and dying both count as not a kill."
-        , "This is the gate for adding a fourth ship: 80%, which is 15 of 18. Do not treat a rising Hold score as that gate."
+        , "These fights select the champion. A separate set of fresh seeds checks the selected policy after the experiment comparison."
         ]
     }
 
@@ -1225,7 +1383,7 @@ poolExplainer ships s =
     , body =
         [ "Hulls the net must play as and against: " ++ ships ++ "."
         , "Every pair is tested, including mirror matches (Pkunk vs Pkunk) and both seats (our ship on the bottom or the top)."
-        , String.fromInt s.nTrain ++ " practice fights and " ++ String.fromInt s.nHold ++ " exam fights per scoring. Next catalog ship is added only at 80% exam kills."
+        , String.fromInt s.nTrain ++ " practice fights and " ++ String.fromInt s.nHold ++ " validation fights per scoring. The pool stays fixed during the comparison."
         ]
     }
 
@@ -1234,7 +1392,7 @@ holdScoreExplainer : Status -> Explainer
 holdScoreExplainer s =
     { title = "Hold score  (not a win count)"
     , body =
-        [ "A blended number for the 18 exam fights, currently " ++ fmtScore s.bestFitness ++ ". It mixes the average of all 18 with the average of the worst quarter, so one lucky kill cannot hide 17 disasters."
+        [ "A blended number for the validation fights, currently " ++ fmtScore s.bestFitness ++ ". It mixes the average across all fights with the average of the worst quarter."
         , "A real kill is worth about a million minus how long it took. A timeout is a small damage number. A fight we lose outright is that small number minus 3000, so dying is still worse than timing out, but not by 100000. A new champion is kept only if it has more exam kills, or the same kills and a higher score."
         , "Use this to see whether the exam is getting less bad. Use Hold record for whether we are actually winning fights."
         ]
@@ -1268,7 +1426,7 @@ evalExplainer s =
     { title = "Last eval"
     , body =
         [ "Wall time of the last batch of simulated fights: " ++ fmt2 s.evalS ++ " seconds. Each candidate net plays the full practice set on two CPU cores."
-        , "About 45 seconds per generation is normal on this box. Faster usually means more fights ended early (kills or deaths) instead of running to the 30 second cap."
+        , "Use full generation duration for throughput comparisons. Runtime changes with fight length and other work sharing the CPU."
         ]
     }
 
@@ -1278,7 +1436,7 @@ sigmaExplainer =
     { title = "Sigma"
     , body =
         [ "How hard we mutate the net each generation. Larger means bigger random jabs at the weights. Smaller means finer tweaks."
-        , "It is read from scripts/neat/hints.json every generation. 0.12 is the current starting value. We may lower it later so we do not smash working kill behaviour."
+        , "Mutation size belongs to the frozen experiment configuration. Changes are tested in a new run rather than silently changing an existing experiment."
         ]
     }
 
@@ -1291,7 +1449,7 @@ holdTableExplainer s =
         , "Our ship vs theirs: which hull we flew, which hull the frozen Awesome cyborg flew."
         , "Our seat: Super Melee has a bottom player and a top player. We test both, because a net that only wins from one side is not done."
         , "KILL means the fight finished, we won, enemy crew 0. TIMEOUT means we hit the 30 second cap with someone still alive. LOSS means the fight finished and we died."
-        , "Crew left is ours then theirs. Duration is real time at 60 ticks per second (1800 ticks = 30s cap)."
+        , "Crew left is ours then theirs. Duration counts combat time at 60 ticks per simulated second. Countdown and post-death resolution are excluded from this budget."
         ]
     }
 
@@ -1335,10 +1493,9 @@ fightExplainer f =
 
 scoreChartExplainer : Status -> Explainer
 scoreChartExplainer s =
-    { title = "Practice score vs exam score"
+    { title = "Saved champion score"
     , body =
         [ "Left axis is the blended fight score, abbreviated with k for thousands. It is not kills and not crew."
-        , "Gold is the average practice score of the nets we tested that generation. It is supposed to wiggle. Use it as 'is search alive'."
         , "Mint is the saved champion's exam score. It is a step: it only jumps when we keep a new genome. Long flat mint means no new champion."
         , "Current exam score is " ++ fmtScore s.bestFitness ++ " at generation " ++ String.fromInt s.champion.generation ++ ". Current practice average is " ++ fmtScore s.meanFitness ++ "."
         , "A mint jump with Hold record unchanged usually means the same number of kills, but timeouts did more damage (or kills were faster). Watch Hold record for actual new kills."

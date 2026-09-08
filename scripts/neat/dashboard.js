@@ -6391,8 +6391,8 @@ var $elm$http$Http$get = function (r) {
 	return $elm$http$Http$request(
 		{body: $elm$http$Http$emptyBody, expect: r.expect, headers: _List_Nil, method: 'GET', timeout: $elm$core$Maybe$Nothing, tracker: $elm$core$Maybe$Nothing, url: r.url});
 };
-var $author$project$Neat$Dashboard$Status$ = function (generation, bestFitness, meanFitness, wins, own, enemy, evalS, lives, sigma, pop, episodeTicks, notes, history, hall, error, paused, gpu, uptimeS, fitnessVersion, nTrain, nHold, pool, champion) {
-	return {bestFitness: bestFitness, champion: champion, enemy: enemy, episodeTicks: episodeTicks, error: error, evalS: evalS, fitnessVersion: fitnessVersion, generation: generation, gpu: gpu, hall: hall, history: history, lives: lives, meanFitness: meanFitness, nHold: nHold, nTrain: nTrain, notes: notes, own: own, paused: paused, pool: pool, pop: pop, sigma: sigma, uptimeS: uptimeS, wins: wins};
+var $author$project$Neat$Dashboard$Status$ = function (generation, bestFitness, meanFitness, wins, own, enemy, evalS, lives, sigma, pop, episodeTicks, notes, history, hall, error, paused, gpu, uptimeS, fitnessVersion, nTrain, nHold, pool, champion, experiment, phase, evaluator, generationS, scoringVersion) {
+	return {bestFitness: bestFitness, champion: champion, enemy: enemy, episodeTicks: episodeTicks, error: error, evalS: evalS, evaluator: evaluator, experiment: experiment, fitnessVersion: fitnessVersion, generation: generation, generationS: generationS, gpu: gpu, hall: hall, history: history, lives: lives, meanFitness: meanFitness, nHold: nHold, nTrain: nTrain, notes: notes, own: own, paused: paused, phase: phase, pool: pool, pop: pop, scoringVersion: scoringVersion, sigma: sigma, uptimeS: uptimeS, wins: wins};
 };
 var $author$project$Neat$Dashboard$Status = function (generation) {
 	return function (bestFitness) {
@@ -6417,7 +6417,17 @@ var $author$project$Neat$Dashboard$Status = function (generation) {
 																				return function (nHold) {
 																					return function (pool) {
 																						return function (champion) {
-																							return $author$project$Neat$Dashboard$Status$(generation, bestFitness, meanFitness, wins, own, enemy, evalS, lives, sigma, pop, episodeTicks, notes, history, hall, error, paused, gpu, uptimeS, fitnessVersion, nTrain, nHold, pool, champion);
+																							return function (experiment) {
+																								return function (phase) {
+																									return function (evaluator) {
+																										return function (generationS) {
+																											return function (scoringVersion) {
+																												return $author$project$Neat$Dashboard$Status$(generation, bestFitness, meanFitness, wins, own, enemy, evalS, lives, sigma, pop, episodeTicks, notes, history, hall, error, paused, gpu, uptimeS, fitnessVersion, nTrain, nHold, pool, champion, experiment, phase, evaluator, generationS, scoringVersion);
+																											};
+																										};
+																									};
+																								};
+																							};
 																						};
 																					};
 																				};
@@ -6680,93 +6690,113 @@ var $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$ = function
 };
 var $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required = F3($NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$);
 var $author$project$Neat$Dashboard$statusDecoder = $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-	'champion',
-	$author$project$Neat$Dashboard$championDecoder,
-	$author$project$Neat$Dashboard$emptyChampion,
+	'scoring_version',
+	$elm$json$Json$Decode$string,
+	'unknown',
 	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-		'pool',
-		$elm$json$Json$Decode$list($elm$json$Json$Decode$string),
-		_List_Nil,
+		'generation_s',
+		$author$project$Neat$Dashboard$floatish,
+		0,
 		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-			'n_hold',
-			$elm$json$Json$Decode$int,
-			0,
+			'evaluator',
+			$elm$json$Json$Decode$string,
+			'elm',
 			$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-				'n_train',
-				$elm$json$Json$Decode$int,
-				0,
+				'phase',
+				$elm$json$Json$Decode$string,
+				'',
 				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-					'fitness_version',
+					'experiment',
 					$elm$json$Json$Decode$string,
 					'',
 					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-						'uptime_s',
-						$author$project$Neat$Dashboard$floatish,
-						0,
+						'champion',
+						$author$project$Neat$Dashboard$championDecoder,
+						$author$project$Neat$Dashboard$emptyChampion,
 						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-							'gpu',
-							$elm$json$Json$Decode$bool,
-							false,
+							'pool',
+							$elm$json$Json$Decode$list($elm$json$Json$Decode$string),
+							_List_Nil,
 							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-								'paused',
-								$elm$json$Json$Decode$bool,
-								false,
+								'n_hold',
+								$elm$json$Json$Decode$int,
+								0,
 								$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-									'error',
-									$elm$json$Json$Decode$string,
-									'',
+									'n_train',
+									$elm$json$Json$Decode$int,
+									0,
 									$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-										'hall',
-										$elm$json$Json$Decode$list($author$project$Neat$Dashboard$hallDecoder),
-										_List_Nil,
+										'fitness_version',
+										$elm$json$Json$Decode$string,
+										'',
 										$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-											'history',
-											$elm$json$Json$Decode$list($author$project$Neat$Dashboard$pointDecoder),
-											_List_Nil,
+											'uptime_s',
+											$author$project$Neat$Dashboard$floatish,
+											0,
 											$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-												'notes',
-												$elm$json$Json$Decode$string,
-												'',
+												'gpu',
+												$elm$json$Json$Decode$bool,
+												false,
 												$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-													'episode_ticks',
-													$elm$json$Json$Decode$int,
-													0,
+													'paused',
+													$elm$json$Json$Decode$bool,
+													false,
 													$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-														'pop',
-														$elm$json$Json$Decode$int,
-														0,
+														'error',
+														$elm$json$Json$Decode$string,
+														'',
 														$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-															'sigma',
-															$author$project$Neat$Dashboard$floatish,
-															0,
+															'hall',
+															$elm$json$Json$Decode$list($author$project$Neat$Dashboard$hallDecoder),
+															_List_Nil,
 															$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																'lives',
-																$elm$json$Json$Decode$int,
-																0,
+																'history',
+																$elm$json$Json$Decode$list($author$project$Neat$Dashboard$pointDecoder),
+																_List_Nil,
 																$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																	'eval_s',
-																	$author$project$Neat$Dashboard$floatish,
-																	0,
-																	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																		'enemy',
-																		$author$project$Neat$Dashboard$floatish,
-																		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																			'own',
-																			$author$project$Neat$Dashboard$floatish,
+																	'notes',
+																	$elm$json$Json$Decode$string,
+																	'',
+																	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+																		'episode_ticks',
+																		$elm$json$Json$Decode$int,
+																		0,
+																		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+																			'pop',
+																			$elm$json$Json$Decode$int,
+																			0,
 																			$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																				'wins',
-																				$elm$json$Json$Decode$int,
+																				'sigma',
+																				$author$project$Neat$Dashboard$floatish,
 																				0,
-																				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																					'mean_fitness',
-																					$author$project$Neat$Dashboard$floatish,
-																					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																						'best_fitness',
+																				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+																					'lives',
+																					$elm$json$Json$Decode$int,
+																					0,
+																					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+																						'eval_s',
 																						$author$project$Neat$Dashboard$floatish,
+																						0,
 																						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																							'generation',
-																							$elm$json$Json$Decode$int,
-																							$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$Status))))))))))))))))))))))));
+																							'enemy',
+																							$author$project$Neat$Dashboard$floatish,
+																							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+																								'own',
+																								$author$project$Neat$Dashboard$floatish,
+																								$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+																									'wins',
+																									$elm$json$Json$Decode$int,
+																									0,
+																									$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+																										'mean_fitness',
+																										$author$project$Neat$Dashboard$floatish,
+																										$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+																											'best_fitness',
+																											$author$project$Neat$Dashboard$floatish,
+																											$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+																												'generation',
+																												$elm$json$Json$Decode$int,
+																												$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$Status)))))))))))))))))))))))))))));
 var $author$project$Neat$Dashboard$fetch = $elm$http$Http$get(
 	{
 		expect: $elm$http$Http$expectJson$($author$project$Neat$Dashboard$Got, $author$project$Neat$Dashboard$statusDecoder),
@@ -6855,7 +6885,110 @@ var $author$project$Neat$Dashboard$fetchNet = $elm$http$Http$get(
 		expect: $elm$http$Http$expectJson$($author$project$Neat$Dashboard$GotNet, $author$project$Neat$Dashboard$netDecoder),
 		url: '/api/net'
 	});
-var $author$project$Neat$Dashboard$init = {err: $elm$core$Maybe$Nothing, explainer: $elm$core$Maybe$Nothing, hoverCrew: $elm$core$Maybe$Nothing, hoverFit: $elm$core$Maybe$Nothing, net: $elm$core$Maybe$Nothing, pinned: false, status: $elm$core$Maybe$Nothing};
+var $author$project$Neat$Dashboard$GotReview = function (a) {
+	return {$: 'GotReview', a: a};
+};
+var $author$project$Neat$Dashboard$Review$ = function (phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration) {
+	return {active: active, age: age, error: error, history: history, hypothesis: hypothesis, lane: lane, next: next, now: now, phase: phase, trialGeneration: trialGeneration};
+};
+var $author$project$Neat$Dashboard$Review = function (phase) {
+	return function (lane) {
+		return function (hypothesis) {
+			return function (error) {
+				return function (age) {
+					return function (active) {
+						return function (next) {
+							return function (now) {
+								return function (history) {
+									return function (trialGeneration) {
+										return $author$project$Neat$Dashboard$Review$(phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration);
+									};
+								};
+							};
+						};
+					};
+				};
+			};
+		};
+	};
+};
+var $author$project$Neat$Dashboard$ReviewResult$ = function (cycle, lane, decision, baseline, challenger, fights, hypothesis) {
+	return {baseline: baseline, challenger: challenger, cycle: cycle, decision: decision, fights: fights, hypothesis: hypothesis, lane: lane};
+};
+var $author$project$Neat$Dashboard$ReviewResult = F7($author$project$Neat$Dashboard$ReviewResult$);
+var $elm$core$Basics$negate = function (n) {
+	return -n;
+};
+var $author$project$Neat$Dashboard$reviewResultDecoder = $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+	'hypothesis',
+	$elm$json$Json$Decode$string,
+	'Interrupted before completion',
+	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+		'audit_fights',
+		$elm$json$Json$Decode$int,
+		0,
+		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+			'challenger_wins',
+			$elm$json$Json$Decode$int,
+			-1,
+			$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+				'baseline_wins',
+				$elm$json$Json$Decode$int,
+				-1,
+				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+					'decision',
+					$elm$json$Json$Decode$string,
+					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+						'lane',
+						$elm$json$Json$Decode$string,
+						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+							'cycle',
+							$elm$json$Json$Decode$int,
+							$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$ReviewResult))))))));
+var $author$project$Neat$Dashboard$reviewDecoder = $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+	'trial_generation',
+	$elm$json$Json$Decode$int,
+	0,
+	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+		'history',
+		$elm$json$Json$Decode$list($author$project$Neat$Dashboard$reviewResultDecoder),
+		_List_Nil,
+		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+			'server_time',
+			$elm$json$Json$Decode$float,
+			$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+				'next_review_at',
+				$elm$json$Json$Decode$float,
+				0,
+				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+					'trainer_active',
+					$elm$json$Json$Decode$bool,
+					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+						'status_age_s',
+						$elm$json$Json$Decode$float,
+						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+							'error',
+							$elm$json$Json$Decode$string,
+							'',
+							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+								'hypothesis',
+								$elm$json$Json$Decode$string,
+								'First review pending',
+								$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+									'lane',
+									$elm$json$Json$Decode$string,
+									'research',
+									$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+										'phase',
+										$elm$json$Json$Decode$string,
+										'waiting',
+										$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$Review)))))))))));
+var $author$project$Neat$Dashboard$fetchReview = $elm$http$Http$get(
+	{
+		expect: $elm$http$Http$expectJson$($author$project$Neat$Dashboard$GotReview, $author$project$Neat$Dashboard$reviewDecoder),
+		url: '/api/review'
+	});
+var $author$project$Neat$Dashboard$init = {err: $elm$core$Maybe$Nothing, explainer: $elm$core$Maybe$Nothing, hoverCrew: $elm$core$Maybe$Nothing, hoverFit: $elm$core$Maybe$Nothing, net: $elm$core$Maybe$Nothing, pinned: false, review: $elm$core$Maybe$Nothing, reviewError: '', status: $elm$core$Maybe$Nothing};
 var $author$project$Neat$Dashboard$httpErr = function (e) {
 	switch (e.$) {
 		case 'BadUrl':
@@ -6873,12 +7006,26 @@ var $author$project$Neat$Dashboard$httpErr = function (e) {
 			return 'bad json: ' + b;
 	}
 };
+var $elm$core$Maybe$map$ = function (f, maybe) {
+	if (maybe.$ === 'Just') {
+		var value = maybe.a;
+		return $elm$core$Maybe$Just(
+			f(value));
+	} else {
+		return $elm$core$Maybe$Nothing;
+	}
+};
+var $elm$core$Maybe$map = F2($elm$core$Maybe$map$);
 var $elm$core$Basics$neq = _Utils_notEqual;
 var $elm$core$Platform$Cmd$none = $elm$core$Platform$Cmd$batch(_List_Nil);
 var $author$project$Neat$Dashboard$update$ = function (msg, model) {
 	switch (msg.$) {
 		case 'Tick':
-			return _Utils_Tuple2(model, $author$project$Neat$Dashboard$fetch);
+			return _Utils_Tuple2(
+				model,
+				$elm$core$Platform$Cmd$batch(
+					_List_fromArray(
+						[$author$project$Neat$Dashboard$fetch, $author$project$Neat$Dashboard$fetchReview])));
 		case 'Got':
 			if (msg.a.$ === 'Ok') {
 				var s = msg.a.a;
@@ -6888,7 +7035,13 @@ var $author$project$Neat$Dashboard$update$ = function (msg, model) {
 						return true;
 					} else {
 						var n = _v1.a;
-						return !_Utils_eq(n.generation, s.champion.generation);
+						return (!_Utils_eq(n.generation, s.champion.generation)) || (!_Utils_eq(
+							$elm$core$Maybe$map$(
+								function ($) {
+									return $.experiment;
+								},
+								model.status),
+							$elm$core$Maybe$Just(s.experiment)));
 					}
 				}();
 				return _Utils_Tuple2(
@@ -6907,6 +7060,27 @@ var $author$project$Neat$Dashboard$update$ = function (msg, model) {
 						{
 							err: $elm$core$Maybe$Just(
 								$author$project$Neat$Dashboard$httpErr(e))
+						}),
+					$elm$core$Platform$Cmd$none);
+			}
+		case 'GotReview':
+			if (msg.a.$ === 'Ok') {
+				var r = msg.a.a;
+				return _Utils_Tuple2(
+					_Utils_update(
+						model,
+						{
+							review: $elm$core$Maybe$Just(r),
+							reviewError: ''
+						}),
+					$elm$core$Platform$Cmd$none);
+			} else {
+				var e = msg.a.a;
+				return _Utils_Tuple2(
+					_Utils_update(
+						model,
+						{
+							reviewError: $author$project$Neat$Dashboard$httpErr(e)
 						}),
 					$elm$core$Platform$Cmd$none);
 			}
@@ -7114,9 +7288,6 @@ var $elm$core$List$concatMap$ = function (f, list) {
 };
 var $elm$core$List$concatMap = F2($elm$core$List$concatMap$);
 var $elm$svg$Svg$Attributes$fill = _VirtualDom_attribute('fill');
-var $elm$core$Basics$negate = function (n) {
-	return -n;
-};
 var $elm$core$Basics$abs = function (n) {
 	return (n < 0) ? (-n) : n;
 };
@@ -7171,16 +7342,6 @@ var $elm$core$List$head = function (list) {
 };
 var $author$project$Neat$Dashboard$ink = '#e8eef4';
 var $elm$svg$Svg$line = $elm$svg$Svg$trustedNode('line');
-var $elm$core$Maybe$map$ = function (f, maybe) {
-	if (maybe.$ === 'Just') {
-		var value = maybe.a;
-		return $elm$core$Maybe$Just(
-			f(value));
-	} else {
-		return $elm$core$Maybe$Nothing;
-	}
-};
-var $elm$core$Maybe$map = F2($elm$core$Maybe$map$);
 var $elm$svg$Svg$Attributes$r = _VirtualDom_attribute('r');
 var $elm$svg$Svg$rect = $elm$svg$Svg$trustedNode('rect');
 var $elm$svg$Svg$Attributes$rx = _VirtualDom_attribute('rx');
@@ -7724,7 +7885,9 @@ var $author$project$Neat$Dashboard$chartCard$ = function (title, blurb, e, serie
 					]),
 				_List_fromArray(
 					[
-						$elm$html$Html$text('Not enough generations to chart yet.')
+						$elm$html$Html$text(
+						'Waiting for two completed generations in this experiment. Completed: ' + ($elm$core$String$fromInt(
+							$elm$core$List$length(history)) + '. The evaluation counter advances while the next generation runs.'))
 					])) : $author$project$Neat$Dashboard$viewChart$(series, history, hover, hoverMsg)
 			]));
 };
@@ -7743,36 +7906,21 @@ var $author$project$Neat$Dashboard$crewChartExplainer = function (s) {
 		title: 'Why the crew chart looks weird'
 	};
 };
-var $elm$core$List$filter$ = function (isGood, list) {
-	return $elm$core$List$foldr$(
-		F2(
-			function (x, xs) {
-				return isGood(x) ? A2($elm$core$List$cons, x, xs) : xs;
-			}),
-		_List_Nil,
-		list);
-};
-var $elm$core$List$filter = F2($elm$core$List$filter$);
 var $author$project$Neat$Dashboard$mint = '#5dcea8';
 var $author$project$Neat$Dashboard$scoreChartExplainer = function (s) {
 	return {
 		body: _List_fromArray(
 			[
 				'Left axis is the blended fight score, abbreviated with k for thousands. It is not kills and not crew.',
-				'Gold is the average practice score of the nets we tested that generation. It is supposed to wiggle. Use it as \'is search alive\'.',
 				'Mint is the saved champion\'s exam score. It is a step: it only jumps when we keep a new genome. Long flat mint means no new champion.',
 				'Current exam score is ' + ($author$project$Neat$Dashboard$fmtScore(s.bestFitness) + (' at generation ' + ($elm$core$String$fromInt(s.champion.generation) + ('. Current practice average is ' + ($author$project$Neat$Dashboard$fmtScore(s.meanFitness) + '.'))))),
 				'A mint jump with Hold record unchanged usually means the same number of kills, but timeouts did more damage (or kills were faster). Watch Hold record for actual new kills.'
 			]),
-		title: 'Practice score vs exam score'
+		title: 'Saved champion score'
 	};
 };
 var $author$project$Neat$Dashboard$charts$ = function (model, s) {
-	var hist = $elm$core$List$filter$(
-		function (p) {
-			return (p.best < 1000000) && (p.mean < 2000000);
-		},
-		s.history);
+	var hist = s.history;
 	return A2(
 		$elm$html$Html$div,
 		_List_fromArray(
@@ -7783,23 +7931,14 @@ var $author$project$Neat$Dashboard$charts$ = function (model, s) {
 		_List_fromArray(
 			[
 				$author$project$Neat$Dashboard$chartCard$(
-				'Practice score vs exam score',
-				'Gold wiggles: this generation\'s practice average (noisy). Mint steps: the saved champion\'s exam score (only moves when we keep a new genome). Neither line is a win count.',
+				'Saved champion score',
+				'Validation score only. A flat line means no better champion was saved. This is a fitness tiebreaker, not a win count. History belongs to this run.',
 				$author$project$Neat$Dashboard$scoreChartExplainer(s),
 				_List_fromArray(
 					[
 						{
-						color: $author$project$Neat$Dashboard$gold,
-						label: 'practice average this gen',
-						values: $elm$core$List$map$(
-							function ($) {
-								return $.mean;
-							},
-							hist)
-					},
-						{
 						color: $author$project$Neat$Dashboard$mint,
-						label: 'saved exam score',
+						label: 'saved validation score',
 						values: $elm$core$List$map$(
 							function ($) {
 								return $.best;
@@ -7841,6 +7980,7 @@ var $author$project$Neat$Dashboard$charts$ = function (model, s) {
 			]));
 };
 var $author$project$Neat$Dashboard$charts = F2($author$project$Neat$Dashboard$charts$);
+var $elm$html$Html$details = _VirtualDom_node('details');
 var $author$project$Neat$Dashboard$Unpin = {$: 'Unpin'};
 var $elm$html$Html$button = _VirtualDom_node('button');
 var $author$project$Neat$Dashboard$explainerPara = function (s) {
@@ -7977,7 +8117,7 @@ var $elm$core$List$isEmpty = function (xs) {
 };
 var $author$project$Neat$Dashboard$pageExplainer = {
 	body: _List_fromArray(
-		['We are training one neural net to play Super Melee against the original Awesome cyborg. The net picks a ship, the cyborg picks a ship, they fight in the real engine.', 'Hull identity is 5 bits for us and 5 bits for them. A hidden layer of 16 tanh units sits between the sensors and the buttons. Pool is Pkunk, Umgah, Yehat: 9 matchups times 2 seats = 18 exam fights.', 'A fourth ship is added only when the saved net wins 80% of those exam fights (15 of 18). We are not there yet.', 'Ignore leftover v5 numbers and any old \'WIN 509t\' jackpot card. The number that matters is Hold record.']),
+		['We are training one neural net to play Super Melee against the original Awesome cyborg. The net picks a ship, the cyborg picks a ship, they fight in the real engine.', 'Hull identity is 5 bits for us and 5 bits for them. A hidden layer of 16 tanh units sits between the sensors and the buttons. The current experiment uses Pkunk, Umgah and Yehat in both seats across several starting seeds.', 'The ship pool stays fixed during this comparison so both experiments face the same challenge.', 'Ignore leftover v5 numbers and any old \'WIN 509t\' jackpot card. The number that matters is Hold record.']),
 	title: 'What this page is'
 };
 var $elm$core$String$trim = _String_trim;
@@ -8050,7 +8190,11 @@ var $author$project$Neat$Dashboard$header = function (model) {
 						_List_fromArray(
 							[
 								$elm$html$Html$text(
-								$author$project$Neat$Dashboard$uptime(s.uptimeS) + ('  ·  gen ' + ($elm$core$String$fromInt(s.generation) + ('  ·  ' + ((($elm$core$String$trim(s.fitnessVersion) === '') ? 'no version' : s.fitnessVersion) + ('  ·  pool ' + (($elm$core$List$isEmpty(s.pool) ? '?' : $elm$core$String$join$(', ', s.pool)) + ('  ·  ' + ($elm$core$String$fromInt(s.nTrain) + (' train / ' + ($elm$core$String$fromInt(s.nHold) + (' hold' + (s.paused ? '  ·  PAUSED' : '')))))))))))))
+								$elm$core$Maybe$withDefault$(
+									'training',
+									$elm$core$List$head(
+										$elm$core$List$reverse(
+											$elm$core$String$split$('/', s.experiment)))) + ('  ·  ' + (s.phase + (' | ' + (s.evaluator + ('  ·  ' + ($author$project$Neat$Dashboard$uptime(s.uptimeS) + ('  ·  gen ' + ($elm$core$String$fromInt(s.generation) + ('  ·  ' + ((($elm$core$String$trim(s.fitnessVersion) === '') ? 'no version' : s.fitnessVersion) + ('  ·  pool ' + (($elm$core$List$isEmpty(s.pool) ? '?' : $elm$core$String$join$(', ', s.pool)) + ('  ·  ' + ($elm$core$String$fromInt(s.nTrain) + (' train / ' + ($elm$core$String$fromInt(s.nHold) + (' hold' + (s.paused ? '  ·  PAUSED' : '')))))))))))))))))))
 							]));
 				} else {
 					return $elm$html$Html$text('');
@@ -8070,9 +8214,19 @@ var $author$project$Neat$Dashboard$hintBar = function (model) {
 		_List_fromArray(
 			[
 				$elm$html$Html$text(
-				model.pinned ? 'Explainer pinned. Click the dimmed area or Close to dismiss.' : 'The number to watch is Hold record (kills on the exam set). Everything else is supporting context.')
+				model.pinned ? 'Explainer pinned. Click the dimmed area or Close to dismiss.' : 'Watch fresh-seed improvement and time since the last better champion. Generations and evaluations measure activity, not learning.')
 			]));
 };
+var $elm$core$List$filter$ = function (isGood, list) {
+	return $elm$core$List$foldr$(
+		F2(
+			function (x, xs) {
+				return isGood(x) ? A2($elm$core$List$cons, x, xs) : xs;
+			}),
+		_List_Nil,
+		list);
+};
+var $elm$core$List$filter = F2($elm$core$List$filter$);
 var $elm$json$Json$Encode$string = _Json_wrap;
 var $elm$html$Html$Attributes$stringProperty$ = function (key, string) {
 	return A2(
@@ -8219,7 +8373,7 @@ var $author$project$Neat$Dashboard$holdTableExplainer = function (s) {
 				'Our ship vs theirs: which hull we flew, which hull the frozen Awesome cyborg flew.',
 				'Our seat: Super Melee has a bottom player and a top player. We test both, because a net that only wins from one side is not done.',
 				'KILL means the fight finished, we won, enemy crew 0. TIMEOUT means we hit the 30 second cap with someone still alive. LOSS means the fight finished and we died.',
-				'Crew left is ours then theirs. Duration is real time at 60 ticks per second (1800 ticks = 30s cap).'
+				'Crew left is ours then theirs. Duration counts combat time at 60 ticks per simulated second. Countdown and post-death resolution are excluded from this budget.'
 			]),
 		title: 'Exam fight list'
 	};
@@ -8315,7 +8469,9 @@ var $author$project$Neat$Dashboard$holdTable = function (s) {
 					]),
 				_List_fromArray(
 					[
-						$elm$html$Html$text('These 18 fights never change. A candidate is only kept if it does well here. Hover a row.')
+						$elm$html$Html$text(
+						'These ' + ($elm$core$String$fromInt(
+							$elm$core$List$length(fights)) + ' validation fights use fixed seeds within this run. Repeated selection can overfit them; independent audits test generalization. Hover a row.'))
 					])),
 				$elm$core$List$isEmpty(fights) ? A2(
 				$elm$html$Html$p,
@@ -8394,75 +8550,6 @@ var $author$project$Neat$Dashboard$holdTable = function (s) {
 						},
 						groups)))
 			]));
-};
-var $author$project$Neat$Dashboard$crewMetricExplainer = function (s) {
-	return {
-		body: _List_fromArray(
-			[
-				'Average leftover crew on this generation\'s practice fights: us ' + ($author$project$Neat$Dashboard$fmt1(s.own) + (', them ' + ($author$project$Neat$Dashboard$fmt1(s.enemy) + '.'))),
-				'Pkunk starts with 8, Umgah 10, Yehat 20. The practice mix includes all three, so this is not \'Pkunk 8 vs Umgah 10\'.',
-				'Them going down over time means we are dealing more damage. Us going down means we are dying more. Absolute 8 / 11 does not mean we are winning.'
-			]),
-		title: 'Crew this generation'
-	};
-};
-var $author$project$Neat$Dashboard$fmt2 = function (x) {
-	return $elm$core$String$fromFloat(
-		$elm$core$Basics$round(x * 100) / 100);
-};
-var $author$project$Neat$Dashboard$evalExplainer = function (s) {
-	return {
-		body: _List_fromArray(
-			[
-				'Wall time of the last batch of simulated fights: ' + ($author$project$Neat$Dashboard$fmt2(s.evalS) + ' seconds. Each candidate net plays the full practice set on two CPU cores.'),
-				'About 45 seconds per generation is normal on this box. Faster usually means more fights ended early (kills or deaths) instead of running to the 30 second cap.'
-			]),
-		title: 'Last eval'
-	};
-};
-var $author$project$Neat$Dashboard$generationExplainer = function (s) {
-	return {
-		body: _List_fromArray(
-			[
-				'How many times the trainer has updated the net since this process started. This run is at generation ' + ($elm$core$String$fromInt(s.generation) + '.'),
-				'It is a loop counter, not a win count. Generation 200 with 3 kills is worse than generation 50 with 15 kills.'
-			]),
-		title: 'Generation'
-	};
-};
-var $author$project$Neat$Dashboard$holdRecordExplainer$ = function (wins, n, _v0) {
-	return {
-		body: _List_fromArray(
-			[
-				'The saved net is tested on a fixed exam of ' + ($elm$core$String$fromInt(n) + (' fights. Same ships, same seats, same seed, every time. Right now it has ' + ($elm$core$String$fromInt(wins) + ' kills.'))),
-				'A kill means: the fight actually finished, our ship won, and the enemy has 0 crew. Timeouts and dying both count as not a kill.',
-				'This is the gate for adding a fourth ship: 80%, which is 15 of 18. Do not treat a rising Hold score as that gate.'
-			]),
-		title: 'Hold record  (the number to watch)'
-	};
-};
-var $author$project$Neat$Dashboard$holdRecordExplainer = F3($author$project$Neat$Dashboard$holdRecordExplainer$);
-var $author$project$Neat$Dashboard$holdScoreExplainer = function (s) {
-	return {
-		body: _List_fromArray(
-			[
-				'A blended number for the 18 exam fights, currently ' + ($author$project$Neat$Dashboard$fmtScore(s.bestFitness) + '. It mixes the average of all 18 with the average of the worst quarter, so one lucky kill cannot hide 17 disasters.'),
-				'A real kill is worth about a million minus how long it took. A timeout is a small damage number. A fight we lose outright is that small number minus 3000, so dying is still worse than timing out, but not by 100000. A new champion is kept only if it has more exam kills, or the same kills and a higher score.',
-				'Use this to see whether the exam is getting less bad. Use Hold record for whether we are actually winning fights.'
-			]),
-		title: 'Hold score  (not a win count)'
-	};
-};
-var $author$project$Neat$Dashboard$meanExplainer = function (s) {
-	return {
-		body: _List_fromArray(
-			[
-				'Each generation we try a batch of mutated nets on the practice fights. This is their average score, currently ' + ($author$project$Neat$Dashboard$fmtScore(s.meanFitness) + '.'),
-				'It wiggles a lot. A spike toward zero (less negative) means this batch fought less badly. It is not the exam, and it is not a kill count.',
-				'If this number is moving over tens of generations, the search is alive. If Hold record is not moving, the search is not yet converting that into exam kills.'
-			]),
-		title: 'This generation\'s practice average'
-	};
 };
 var $author$project$Neat$Dashboard$infoDot = A2(
 	$elm$html$Html$span,
@@ -8548,23 +8635,110 @@ var $author$project$Neat$Dashboard$metric$ = function (label, value, win, e) {
 			]));
 };
 var $author$project$Neat$Dashboard$metric = F4($author$project$Neat$Dashboard$metric$);
-var $author$project$Neat$Dashboard$poolExplainer$ = function (ships, s) {
+var $elm$core$Basics$not = _Basics_not;
+var $author$project$Neat$Dashboard$matchupGrid = function (s) {
+	return A2(
+		$elm$html$Html$div,
+		_List_fromArray(
+			[
+				A2($elm$html$Html$Attributes$style, 'margin-bottom', '20px')
+			]),
+		_List_fromArray(
+			[
+				A2(
+				$elm$html$Html$h2,
+				_List_fromArray(
+					[
+						A2($elm$html$Html$Attributes$style, 'font-size', '17px')
+					]),
+				_List_fromArray(
+					[
+						$elm$html$Html$text('Where the champion wins and gets stuck')
+					])),
+				A2(
+				$elm$html$Html$div,
+				_List_fromArray(
+					[
+						A2($elm$html$Html$Attributes$style, 'display', 'grid'),
+						A2($elm$html$Html$Attributes$style, 'grid-template-columns', 'repeat(auto-fit,minmax(220px,1fr))'),
+						A2($elm$html$Html$Attributes$style, 'gap', '10px')
+					]),
+				$elm$core$List$concatMap$(
+					function (us) {
+						return $elm$core$List$map$(
+							function (them) {
+								var fights = $elm$core$List$filter$(
+									function (f) {
+										return _Utils_eq(f.us, us) && _Utils_eq(f.them, them);
+									},
+									s.champion.fights);
+								var timeouts = $elm$core$List$length(
+									$elm$core$List$filter$(
+										function (f) {
+											return f.outcome === 'invalidated';
+										},
+										fights));
+								var top = $elm$core$List$length(
+									$elm$core$List$filter$(
+										function (f) {
+											return f.swap && $author$project$Neat$Dashboard$fightWon(f);
+										},
+										fights));
+								var wins = $elm$core$List$length(
+									$elm$core$List$filter$($author$project$Neat$Dashboard$fightWon, fights));
+								var bottom = $elm$core$List$length(
+									$elm$core$List$filter$(
+										function (f) {
+											return (!f.swap) && $author$project$Neat$Dashboard$fightWon(f);
+										},
+										fights));
+								return $author$project$Neat$Dashboard$metric$(
+									us + (' vs ' + them),
+									$elm$core$String$fromInt(wins) + (' / ' + $elm$core$String$fromInt(
+										$elm$core$List$length(fights))),
+									_Utils_eq(
+										wins,
+										$elm$core$List$length(fights)) && (wins > 0),
+									{
+										body: _List_fromArray(
+											[
+												'Saved validation wins. Bottom seat: ' + ($elm$core$String$fromInt(bottom) + ('. Top seat: ' + ($elm$core$String$fromInt(top) + ('. Timeouts: ' + ($elm$core$String$fromInt(timeouts) + '.'))))),
+												'A zero or seat imbalance identifies a weakness. These fixed validation results are not fresh-seed evidence. Expand the fight list for crew and individual seeds.'
+											]),
+										title: us + (' vs ' + them)
+									});
+							},
+							s.pool);
+					},
+					s.pool))
+			]));
+};
+var $author$project$Neat$Dashboard$fmt2 = function (x) {
+	return $elm$core$String$fromFloat(
+		$elm$core$Basics$round(x * 100) / 100);
+};
+var $author$project$Neat$Dashboard$generationExplainer = function (s) {
 	return {
 		body: _List_fromArray(
 			[
-				'Hulls the net must play as and against: ' + (ships + '.'),
-				'Every pair is tested, including mirror matches (Pkunk vs Pkunk) and both seats (our ship on the bottom or the top).',
-				$elm$core$String$fromInt(s.nTrain) + (' practice fights and ' + ($elm$core$String$fromInt(s.nHold) + ' exam fights per scoring. Next catalog ship is added only at 80% exam kills.'))
+				'How many times this experiment has updated the net, including work restored from a checkpoint. This run is at generation ' + ($elm$core$String$fromInt(s.generation) + '.'),
+				'It is a loop counter, not a win count. Generation 200 with 3 kills is worse than generation 50 with 15 kills.'
 			]),
-		title: 'Ship pool'
+		title: 'Generation'
 	};
 };
-var $author$project$Neat$Dashboard$poolExplainer = F2($author$project$Neat$Dashboard$poolExplainer$);
-var $author$project$Neat$Dashboard$sigmaExplainer = {
-	body: _List_fromArray(
-		['How hard we mutate the net each generation. Larger means bigger random jabs at the weights. Smaller means finer tweaks.', 'It is read from scripts/neat/hints.json every generation. 0.12 is the current starting value. We may lower it later so we do not smash working kill behaviour.']),
-	title: 'Sigma'
+var $author$project$Neat$Dashboard$holdRecordExplainer$ = function (wins, n, _v0) {
+	return {
+		body: _List_fromArray(
+			[
+				'The saved net is tested on a fixed validation set of ' + ($elm$core$String$fromInt(n) + (' fights. Same ships, seats and set of seeds every time. Right now it has ' + ($elm$core$String$fromInt(wins) + ' kills.'))),
+				'A kill means: the fight actually finished, our ship won, and the enemy has 0 crew. Timeouts and dying both count as not a kill.',
+				'These fights select the champion. A separate set of fresh seeds checks the selected policy after the experiment comparison.'
+			]),
+		title: 'Hold record  (the number to watch)'
+	};
 };
+var $author$project$Neat$Dashboard$holdRecordExplainer = F3($author$project$Neat$Dashboard$holdRecordExplainer$);
 var $author$project$Neat$Dashboard$metrics = function (s) {
 	var poolLabel = $elm$core$List$isEmpty(s.pool) ? '?' : $elm$core$String$join$(', ', s.pool);
 	var holdWins = $elm$core$List$length(
@@ -8582,50 +8756,56 @@ var $author$project$Neat$Dashboard$metrics = function (s) {
 		_List_fromArray(
 			[
 				$author$project$Neat$Dashboard$metric$(
-				'Generation',
-				$elm$core$String$fromInt(s.generation),
-				false,
-				$author$project$Neat$Dashboard$generationExplainer(s)),
-				$author$project$Neat$Dashboard$metric$(
-				'Hold record',
+				'Saved validation wins',
 				$elm$core$String$fromInt(holdWins) + (' / ' + $elm$core$String$fromInt(
 					$elm$core$Basics$max$(holdN, s.nHold))),
-				(holdN > 0) && _Utils_eq(holdWins, holdN),
+				false,
 				$author$project$Neat$Dashboard$holdRecordExplainer$(
 					holdWins,
 					$elm$core$Basics$max$(holdN, s.nHold),
 					s)),
 				$author$project$Neat$Dashboard$metric$(
-				'Pool',
+				'Generations since promotion',
 				$elm$core$String$fromInt(
-					$elm$core$List$length(s.pool)) + ' ships',
+					$elm$core$Basics$max$(0, s.generation - s.champion.generation)),
 				false,
-				$author$project$Neat$Dashboard$poolExplainer$(poolLabel, s)),
+				{
+					body: _List_fromArray(
+						['Completed generations since the saved champion was promoted. A large number means the search is active without finding a better validation policy. A promotion can improve only the fitness tiebreaker, not wins.']),
+					title: 'Plateau age'
+				}),
 				$author$project$Neat$Dashboard$metric$(
-				'Hold score',
-				$author$project$Neat$Dashboard$fmtScore(s.bestFitness),
+				'Generation',
+				$elm$core$String$fromInt(s.generation),
 				false,
-				$author$project$Neat$Dashboard$holdScoreExplainer(s)),
+				$author$project$Neat$Dashboard$generationExplainer(s)),
 				$author$project$Neat$Dashboard$metric$(
-				'This gen mean',
-				$author$project$Neat$Dashboard$fmtScore(s.meanFitness),
+				'Generation duration',
+				$author$project$Neat$Dashboard$fmt2(s.generationS) + ' s',
 				false,
-				$author$project$Neat$Dashboard$meanExplainer(s)),
+				{
+					body: _List_fromArray(
+						['Measured time for a completed generation, including candidate evaluations and validation. This is different from a single candidate\'s evaluation time.']),
+					title: 'Full generation duration'
+				}),
 				$author$project$Neat$Dashboard$metric$(
-				'Crew this gen',
-				$author$project$Neat$Dashboard$fmt1(s.own) + (' / ' + $author$project$Neat$Dashboard$fmt1(s.enemy)),
+				'Evaluations / second',
+				(s.generationS > 0) ? $author$project$Neat$Dashboard$fmt1((((s.pop + 1) * s.nTrain) + s.nHold) / s.generationS) : 'waiting',
 				false,
-				$author$project$Neat$Dashboard$crewMetricExplainer(s)),
+				{
+					body: _List_fromArray(
+						['Candidate count times training fights, plus validation fights, divided by generation duration. Useful for capacity, not evidence of learning.']),
+					title: 'Approximate fight throughput'
+				}),
 				$author$project$Neat$Dashboard$metric$(
-				'Last eval',
-				$author$project$Neat$Dashboard$fmt2(s.evalS) + ' s',
+				'Game scoring',
+				s.scoringVersion,
 				false,
-				$author$project$Neat$Dashboard$evalExplainer(s)),
-				$author$project$Neat$Dashboard$metric$(
-				'Sigma',
-				$author$project$Neat$Dashboard$fmt2(s.sigma),
-				false,
-				$author$project$Neat$Dashboard$sigmaExplainer)
+				{
+					body: _List_fromArray(
+						['combat-v1 budgets combat ticks and resolves natural death transitions. Compare policies only under the same scoring version and fight budget.']),
+					title: 'Comparable game outcomes'
+				})
 			]));
 };
 var $author$project$Neat$Dashboard$netExplainer = {
@@ -9365,6 +9545,208 @@ var $author$project$Neat$Dashboard$netCard$ = function (model, s) {
 			]));
 };
 var $author$project$Neat$Dashboard$netCard = F2($author$project$Neat$Dashboard$netCard$);
+var $author$project$Neat$Dashboard$reviewRow = function (r) {
+	return A2(
+		$elm$html$Html$div,
+		_List_fromArray(
+			[
+				A2($elm$html$Html$Attributes$style, 'padding', '12px 0'),
+				A2($elm$html$Html$Attributes$style, 'border-top', '1px solid ' + $author$project$Neat$Dashboard$line),
+				A2($elm$html$Html$Attributes$style, 'cursor', 'help'),
+				$elm$html$Html$Events$onMouseEnter(
+				$author$project$Neat$Dashboard$ShowExplainer(
+					{
+						body: _List_fromArray(
+							[r.hypothesis, 'Fresh audit seeds are never used for training. The comparison uses the same fight budget. A rejected result is retained as evidence.']),
+						title: 'Experiment ' + $elm$core$String$fromInt(r.cycle + 1)
+					})),
+				$elm$html$Html$Events$onMouseLeave($author$project$Neat$Dashboard$HideExplainer),
+				$elm$html$Html$Events$onClick(
+				$author$project$Neat$Dashboard$PinExplainer(
+					{
+						body: _List_fromArray(
+							[r.hypothesis]),
+						title: r.lane + ' experiment'
+					}))
+			]),
+		_List_fromArray(
+			[
+				A2(
+				$elm$html$Html$span,
+				_List_fromArray(
+					[
+						A2(
+						$elm$html$Html$Attributes$style,
+						'color',
+						(r.decision === 'deployed') ? $author$project$Neat$Dashboard$mint : $author$project$Neat$Dashboard$mute)
+					]),
+				_List_fromArray(
+					[
+						$elm$html$Html$text(
+						'#' + ($elm$core$String$fromInt(r.cycle + 1) + (' · ' + (r.lane + (' · ' + r.decision)))))
+					])),
+				A2(
+				$elm$html$Html$div,
+				_List_fromArray(
+					[
+						A2($elm$html$Html$Attributes$style, 'margin-top', '5px')
+					]),
+				_List_fromArray(
+					[
+						$elm$html$Html$text(
+						(!r.fights) ? 'No completed audit' : ('Baseline ' + ($elm$core$String$fromInt(r.baseline) + (' → challenger ' + ($elm$core$String$fromInt(r.challenger) + (' wins / ' + ($elm$core$String$fromInt(r.fights) + ' fresh fights')))))))
+					]))
+			]));
+};
+var $author$project$Neat$Dashboard$reviewCard = function (model) {
+	return A2(
+		$elm$html$Html$div,
+		_List_fromArray(
+			[
+				A2($elm$html$Html$Attributes$style, 'background', $author$project$Neat$Dashboard$card),
+				A2($elm$html$Html$Attributes$style, 'padding', '18px'),
+				A2($elm$html$Html$Attributes$style, 'border-radius', '12px'),
+				A2($elm$html$Html$Attributes$style, 'margin-bottom', '20px')
+			]),
+		_List_fromArray(
+			[
+				A2(
+				$elm$html$Html$h2,
+				_List_fromArray(
+					[
+						A2($elm$html$Html$Attributes$style, 'font-size', '17px'),
+						A2($elm$html$Html$Attributes$style, 'margin-top', '0')
+					]),
+				_List_fromArray(
+					[
+						$elm$html$Html$text('Is the policy actually improving?')
+					])),
+				(model.reviewError !== '') ? A2(
+				$elm$html$Html$p,
+				_List_fromArray(
+					[
+						A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$coral)
+					]),
+				_List_fromArray(
+					[
+						$elm$html$Html$text('Review monitor unavailable: ' + model.reviewError)
+					])) : $elm$html$Html$text(''),
+				function () {
+				var _v0 = model.review;
+				if (_v0.$ === 'Nothing') {
+					return $elm$html$Html$text('Waiting for the independent review monitor.');
+				} else {
+					var r = _v0.a;
+					return A2(
+						$elm$html$Html$div,
+						_List_Nil,
+						_List_fromArray(
+							[
+								A2(
+								$elm$html$Html$div,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'display', 'grid'),
+										A2($elm$html$Html$Attributes$style, 'grid-template-columns', 'repeat(auto-fit,minmax(180px,1fr))'),
+										A2($elm$html$Html$Attributes$style, 'gap', '12px')
+									]),
+								_List_fromArray(
+									[
+										$author$project$Neat$Dashboard$metric$(
+										'Training health',
+										(!r.active) ? 'STOPPED' : ((r.age > 30) ? 'STALE' : 'LIVE'),
+										r.active && (r.age <= 30),
+										{
+											body: _List_fromArray(
+												[
+													'Checks the actual service and status file age. Last status write was ' + ($author$project$Neat$Dashboard$fmt1(r.age) + ' seconds ago. A stale file is not live progress.')
+												]),
+											title: 'Training health'
+										}),
+										$author$project$Neat$Dashboard$metric$(
+										'Review cycle',
+										r.lane + (' / ' + r.phase),
+										false,
+										{
+											body: _List_fromArray(
+												['Research, creative, radical, one turn each. These are programmed recipes with changing seeds and parameters, not an autonomous LLM reading new papers.']),
+											title: 'Equal experiment lanes'
+										}),
+										$author$project$Neat$Dashboard$metric$(
+										'Next scheduled review',
+										(r.next <= 0) ? 'pending' : ((_Utils_cmp(r.next, r.now) < 1) ? 'due / running' : $author$project$Neat$Dashboard$uptime(r.next - r.now)),
+										false,
+										{
+											body: _List_fromArray(
+												['One review at a time. Each trains a baseline and challenger under equal fight budgets. A long review delays the next one; trials never overlap.']),
+											title: '15-minute cadence'
+										})
+									])),
+								A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'line-height', '1.5')
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text(r.hypothesis)
+									])),
+								((r.phase === 'baseline') || (r.phase === 'challenger')) ? A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$mute)
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text(
+										r.phase + (': generation ' + ($elm$core$String$fromInt(r.trialGeneration) + ' / 160. Both arms get the same fight budget.')))
+									])) : $elm$html$Html$text(''),
+								A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$mute),
+										A2($elm$html$Html$Attributes$style, 'font-size', '13px')
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text('Keep rule: at least 8 extra wins on 360 fresh fights, then beat the baseline and live champion on another 360. Failed ideas stay in the ledger; the live champion stays protected.')
+									])),
+								(r.error !== '') ? A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$coral)
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text(r.error)
+									])) : $elm$html$Html$text(''),
+								$elm$core$List$isEmpty(r.history) ? A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$mute)
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text('No completed reviews yet. Fresh-seed improvement has not been demonstrated.')
+									])) : A2(
+								$elm$html$Html$div,
+								_List_Nil,
+								$elm$core$List$map$(
+									$author$project$Neat$Dashboard$reviewRow,
+									$elm$core$List$take$(
+										12,
+										$elm$core$List$reverse(r.history))))
+							]));
+				}
+			}()
+			]));
+};
+var $elm$html$Html$summary = _VirtualDom_node('summary');
 var $author$project$Neat$Dashboard$view = function (model) {
 	return A2(
 		$elm$html$Html$div,
@@ -9404,9 +9786,33 @@ var $author$project$Neat$Dashboard$view = function (model) {
 						_List_fromArray(
 							[
 								$author$project$Neat$Dashboard$metrics(s),
-								$author$project$Neat$Dashboard$holdTable(s),
-								$author$project$Neat$Dashboard$netCard$(model, s),
-								$author$project$Neat$Dashboard$charts$(model, s)
+								$author$project$Neat$Dashboard$reviewCard(model),
+								$author$project$Neat$Dashboard$matchupGrid(s),
+								$author$project$Neat$Dashboard$charts$(model, s),
+								A2(
+								$elm$html$Html$details,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'margin', '20px 0')
+									]),
+								_List_fromArray(
+									[
+										A2(
+										$elm$html$Html$summary,
+										_List_fromArray(
+											[
+												A2($elm$html$Html$Attributes$style, 'cursor', 'pointer'),
+												A2($elm$html$Html$Attributes$style, 'padding', '14px')
+											]),
+										_List_fromArray(
+											[
+												$elm$html$Html$text(
+												$elm$core$String$fromInt(
+													$elm$core$List$length(s.champion.fights)) + ' validation fights: seeds, seats, crew and outcomes')
+											])),
+										$author$project$Neat$Dashboard$holdTable(s)
+									])),
+								$author$project$Neat$Dashboard$netCard$(model, s)
 							]));
 				}
 			}(),
@@ -9439,7 +9845,7 @@ var $author$project$Neat$Dashboard$main = $elm$browser$Browser$element(
 				$author$project$Neat$Dashboard$init,
 				$elm$core$Platform$Cmd$batch(
 					_List_fromArray(
-						[$author$project$Neat$Dashboard$fetch, $author$project$Neat$Dashboard$fetchNet])));
+						[$author$project$Neat$Dashboard$fetch, $author$project$Neat$Dashboard$fetchNet, $author$project$Neat$Dashboard$fetchReview])));
 		},
 		subscriptions: function (_v1) {
 			return $elm$time$Time$every$(2000, $author$project$Neat$Dashboard$Tick);
