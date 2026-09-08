@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from layout import ALL_SHIPS, FITNESS_VERSION, N_HIDDEN, N_IN, N_OUT, N_WEIGHTS, START_POOL  # noqa: E402
-from score import cvar_mean, centered_ranks, scenario_win  # noqa: E402
+from score import cvar_mean, centered_ranks, scenario_win
+from population import PopulationSearch  # noqa: E402
 from experiment import atomic_json, checked_weights, digest, fork_checkpoint, noise_vector, result_key, source_hashes, tuples
 
 ART = ROOT / "artifacts" / "neat"
@@ -131,8 +132,8 @@ def load_hints() -> dict:
     if not isinstance(defaults.get("pool"), list) or not defaults["pool"]:
         defaults["pool"] = list(START_POOL)
     defaults["expand_at"] = float(defaults.get("expand_at") or 0.8)
-    if defaults["search"] not in ("es", "block_es"):
-        raise ValueError("search must be es or block_es")
+    if defaults["search"] not in ("es", "block_es", "population"):
+        raise ValueError("search must be es, block_es or population")
     if set(defaults["train_seeds"]) & set(defaults["hold_seeds"]):
         raise ValueError("training and validation seeds must be disjoint")
     if len(set(defaults["pool"])) != len(defaults["pool"]) or any(s not in ALL_SHIPS for s in defaults["pool"]):
@@ -467,6 +468,7 @@ def run_loop():
     weights, _ = load_best()
     theta = np.array(weights, dtype=np.float64)
     champion = None
+    population_state = None
     if checkpoint_path.exists():
         checkpoint = json.loads(checkpoint_path.read_text())
         if checkpoint["fingerprint"] != fingerprint:
@@ -475,6 +477,7 @@ def run_loop():
         rng.setstate(tuples(checkpoint["rng"]))
         gen = checkpoint["generation"]
         champion = checkpoint["champion"]
+        population_state = checkpoint.get("population_search")
         checked_weights(champion)
         state.update(checkpoint["status"])
         state["started"] = time.time()
@@ -501,6 +504,7 @@ def run_loop():
             save_status()
             stop.wait(1)
 
+    population_search = PopulationSearch(rng, weights, hints.get("population_revision", 1), population_state) if hints["search"] == "population" else None
     kernels = KernelPool(WORKERS)
 
     def eval_weights(w, scenarios):
@@ -523,6 +527,7 @@ def run_loop():
             "fitness_version": FITNESS_VERSION, "fingerprint": fingerprint,
             "generation": gen, "weights": theta.tolist(), "rng": rng.getstate(),
             "champion": champion, "status": state,
+            **({"population_search": population_search.snapshot()} if population_search else {}),
         })
 
     def slim(rec):
@@ -550,23 +555,32 @@ def run_loop():
             train_scen = make_train_scenarios(hints, gen)
             state.update({"phase": "training", "n_train": len(train_scen), "generation": gen})
             save_status()
-            recs, dirs = [], []
-            half = hints["pop"] // 2
-            for _ in range(half):
-                eps = np.array(noise_vector(rng, hints["search"], gen), dtype=np.float64)
-                plus = eval_weights(theta + hints["sigma"] * eps, train_scen)
-                minus = eval_weights(theta - hints["sigma"] * eps, train_scen)
-                recs.extend([plus, minus])
-                dirs.extend([eps, -eps])
-            fits = [r["fitness"] for r in recs]
-            update = np.zeros_like(theta)
-            for utility, eps in zip(centered_ranks(fits), dirs):
-                update += utility * eps
-            theta = theta + (hints["lr"] / len(recs)) * update
-            if not np.isfinite(theta).all():
-                raise ValueError("search centre contains non-finite weights")
-            center = eval_weights(theta, train_scen)
-            candidate = max(recs + [center], key=result_key)
+            if population_search:
+                evaluated = [eval_weights(w, train_scen) for w in population_search.propose(hints["pop"] + 1, gen)]
+                center = population_search.observe(evaluated)
+                center_index = next(i for i, record in enumerate(evaluated) if record is center)
+                recs = evaluated[:center_index] + evaluated[center_index + 1:]
+                fits = [record["fitness"] for record in recs]
+                theta = np.array(center["weights"], dtype=np.float64)
+                candidate = center
+            else:
+                recs, dirs = [], []
+                half = hints["pop"] // 2
+                for _ in range(half):
+                    eps = np.array(noise_vector(rng, hints["search"], gen), dtype=np.float64)
+                    plus = eval_weights(theta + hints["sigma"] * eps, train_scen)
+                    minus = eval_weights(theta - hints["sigma"] * eps, train_scen)
+                    recs.extend([plus, minus])
+                    dirs.extend([eps, -eps])
+                fits = [r["fitness"] for r in recs]
+                update = np.zeros_like(theta)
+                for utility, eps in zip(centered_ranks(fits), dirs):
+                    update += utility * eps
+                theta = theta + (hints["lr"] / len(recs)) * update
+                if not np.isfinite(theta).all():
+                    raise ValueError("search centre contains non-finite weights")
+                center = eval_weights(theta, train_scen)
+                candidate = max(recs + [center], key=result_key)
             state["phase"] = "validation"
             save_status()
             hold = eval_weights(candidate["weights"], hold_scen)
@@ -575,6 +589,8 @@ def run_loop():
                 champion = {**hold, "generation": gen + 1, "fitness_version": FITNESS_VERSION}
                 save_best(champion["weights"], champion, gen + 1)
                 log(f"champion validation {champion['seat_wins']}/{len(hold_scen)} score {champion['fitness']:.2f}")
+            if population_search:
+                population_search.feedback(promoted, champion["weights"])
             gen += 1
             wins = sum(r["seat_wins"] for r in recs)
             mean = sum(fits) / len(fits)

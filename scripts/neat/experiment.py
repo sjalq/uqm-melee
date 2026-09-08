@@ -26,7 +26,7 @@ def digest(data):
 
 
 def source_hashes(root, evaluator="elm", rust_worker=None):
-    files = ["train.py", "score.py", "layout.py", "experiment.py"]
+    files = ["train.py", "score.py", "layout.py", "experiment.py", "population.py"]
     if evaluator == "elm":
         files += ["worker.js", "kernel.js"]
     elif evaluator != "rust":
