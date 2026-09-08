@@ -51,6 +51,9 @@ type alias Review =
     , now : Float
     , history : List ReviewResult
     , trialGeneration : Int
+    , targetGenerations : Int
+    , screen : String
+    , freshCheck : String
     }
 
 
@@ -62,6 +65,7 @@ type alias ReviewResult =
     , challenger : Int
     , fights : Int
     , hypothesis : String
+    , arguments : List String
     }
 
 
@@ -83,6 +87,9 @@ reviewDecoder =
         |> P.required "server_time" D.float
         |> P.optional "history" (D.list reviewResultDecoder) []
         |> P.optional "trial_generation" D.int 0
+        |> P.optional "target_generations" D.int 160
+        |> P.optional "screen" (D.oneOf [ D.map2 (\b c -> "40-generation screening: baseline " ++ String.fromInt b ++ ", challenger " ++ String.fromInt c ++ " wins / 90 fights. These seeds cannot qualify a deployment.") (D.field "baseline" D.int) (D.field "challenger" D.int), D.null "" ]) ""
+        |> P.optional "health_check" (D.oneOf [ D.at [ "fresh_check" ] (D.map3 (\before after count -> "Last fresh-seed check: " ++ String.fromInt before ++ " → " ++ String.fromInt after ++ " wins / " ++ String.fromInt count ++ " fresh fights versus its reference policy. This is diagnostic, not a deployment decision.") (D.field "before_wins" D.int) (D.field "after_wins" D.int) (D.field "fights" D.int)), D.succeed "" ]) ""
 
 
 reviewResultDecoder : D.Decoder ReviewResult
@@ -95,6 +102,7 @@ reviewResultDecoder =
         |> P.optional "challenger_wins" D.int -1
         |> P.optional "audit_fights" D.int 0
         |> P.optional "hypothesis" D.string "Interrupted before completion"
+        |> P.optional "arguments" (D.map2 (\a b -> [ "Case for: " ++ a, "Case against: " ++ b ]) (D.field "case_for" D.string) (D.field "case_against" D.string)) []
 
 
 reviewCard : Model -> Html Msg
@@ -120,11 +128,13 @@ reviewCard model =
                             { title = "Equal experiment lanes", body = [ "Research, creative, radical, one turn each. These are programmed recipes with changing seeds and parameters, not an autonomous LLM reading new papers." ] }
                         , metric "Next scheduled review"
                             (if r.next <= 0 then "pending" else if r.next <= r.now then "due / running" else uptime (r.next - r.now)) False
-                            { title = "15-minute cadence", body = [ "One review at a time. Each trains a baseline and challenger under equal fight budgets. A long review delays the next one; trials never overlap." ] }
+                            { title = "Hourly experiments, frequent checks", body = [ "New experiments run hourly, with automated health checks every 15 minutes. Trials get a 40-generation screening checkpoint before the full 160-generation comparison. Only independently confirmed gains deploy." ] }
                         ]
                     , p [ A.style "line-height" "1.5" ] [ text r.hypothesis ]
-                    , if r.phase == "baseline" || r.phase == "challenger" then p [ A.style "color" mute ] [ text (r.phase ++ ": generation " ++ String.fromInt r.trialGeneration ++ " / 160. Both arms get the same fight budget.") ] else text ""
+                    , if r.phase == "baseline" || r.phase == "challenger" then p [ A.style "color" mute ] [ text (r.phase ++ ": generation " ++ String.fromInt r.trialGeneration ++ " / " ++ String.fromInt r.targetGenerations ++ ". Both arms get the same fight budget.") ] else text ""
+                    , if r.screen /= "" && r.phase /= "waiting" then p [ A.style "color" gold ] [ text r.screen ] else text ""
                     , p [ A.style "color" mute, A.style "font-size" "13px" ] [ text "Keep rule: at least 8 extra wins on 360 fresh fights, then beat the baseline and live champion on another 360. Failed ideas stay in the ledger; the live champion stays protected." ]
+                    , if r.freshCheck /= "" then p [ A.style "color" ink ] [ text r.freshCheck ] else text ""
                     , if r.error /= "" then p [ A.style "color" coral ] [ text r.error ] else text ""
                     , if List.isEmpty r.history then
                         p [ A.style "color" mute ] [ text "No completed reviews yet. Fresh-seed improvement has not been demonstrated." ]
@@ -138,9 +148,9 @@ reviewRow : ReviewResult -> Html Msg
 reviewRow r =
     div
         [ A.style "padding" "12px 0", A.style "border-top" ("1px solid " ++ line)
-        , A.style "cursor" "help", HE.onMouseEnter (ShowExplainer { title = "Experiment " ++ String.fromInt (r.cycle + 1), body = [ r.hypothesis, "Fresh audit seeds are never used for training. The comparison uses the same fight budget. A rejected result is retained as evidence." ] })
+        , A.style "cursor" "help", HE.onMouseEnter (ShowExplainer { title = "Experiment " ++ String.fromInt (r.cycle + 1), body = r.hypothesis :: r.arguments ++ [ "Fresh audit seeds are never used for training. The comparison uses the same fight budget. A rejected result is retained as evidence." ] })
         , HE.onMouseLeave HideExplainer
-        , HE.onClick (PinExplainer { title = r.lane ++ " experiment", body = [ r.hypothesis ] })
+        , HE.onClick (PinExplainer { title = r.lane ++ " experiment", body = r.hypothesis :: r.arguments })
         ]
         [ span [ A.style "color" (if r.decision == "deployed" then mint else mute) ]
             [ text ("#" ++ String.fromInt (r.cycle + 1) ++ " · " ++ r.lane ++ " · " ++ r.decision) ]
@@ -574,7 +584,7 @@ view model =
                     , matchupGrid s
                     , charts model s
                     , Html.details [ A.style "margin" "20px 0" ] [ Html.summary [ A.style "cursor" "pointer", A.style "padding" "14px" ] [ text (String.fromInt (List.length s.champion.fights) ++ " validation fights: seeds, seats, crew and outcomes") ], holdTable s ]
-                    , netCard model s
+                    , Html.details [] [ Html.summary [ A.style "cursor" "pointer", A.style "padding" "14px" ] [ text "Explore the saved neural network" ], netCard model s ]
                     ]
         , case model.err of
             Just e ->
@@ -608,7 +618,7 @@ header model =
                             ++ "  ·  "
                             ++ s.phase
                             ++ " | "
-                            ++ s.evaluator
+                            ++ s.evaluator ++ " / " ++ s.scoringVersion
                             ++ "  ·  "
                             ++ uptime s.uptimeS
                             ++ "  ·  gen "
@@ -688,14 +698,12 @@ metrics s =
         [ metric "Saved validation wins" (String.fromInt holdWins ++ " / " ++ String.fromInt (max holdN s.nHold)) False (holdRecordExplainer holdWins (max holdN s.nHold) s)
         , metric "Generations since promotion" (String.fromInt (max 0 (s.generation - s.champion.generation))) False
             { title = "Plateau age", body = [ "Completed generations since the saved champion was promoted. A large number means the search is active without finding a better validation policy. A promotion can improve only the fitness tiebreaker, not wins." ] }
-        , metric "Generation" (String.fromInt s.generation) False (generationExplainer s)
         , metric "Generation duration" (fmt2 s.generationS ++ " s") False
             { title = "Full generation duration", body = [ "Measured time for a completed generation, including candidate evaluations and validation. This is different from a single candidate's evaluation time." ] }
         , metric "Evaluations / second"
             (if s.generationS > 0 then fmt1 (toFloat ((s.pop + 1) * s.nTrain + s.nHold) / s.generationS) else "waiting") False
             { title = "Approximate fight throughput", body = [ "Candidate count times training fights, plus validation fights, divided by generation duration. Useful for capacity, not evidence of learning." ] }
-        , metric "Game scoring" s.scoringVersion False
-            { title = "Comparable game outcomes", body = [ "combat-v1 budgets combat ticks and resolves natural death transitions. Compare policies only under the same scoring version and fight budget." ] }
+
         ]
 
 
@@ -932,16 +940,7 @@ charts model s =
             hist
             model.hoverFit
             HoverFit
-        , chartCard
-            "Leftover crew on practice fights"
-            "Not a win chart. Mint is how much crew we still had. Coral is how much they still had. Averaged across Pkunk (starts 8), Umgah (10), and Yehat (20), so 8 / 11 is not 'we are full and they are hurt'."
-            (crewChartExplainer s)
-            [ { label = "our leftover crew", color = mint, values = List.map .own hist }
-            , { label = "their leftover crew", color = coral, values = List.map .enemy hist }
-            ]
-            hist
-            model.hoverCrew
-            HoverCrew
+
         ]
 
 

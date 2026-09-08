@@ -1,5 +1,5 @@
 import unittest
-from review_loop import recipe, audit_passes, confirmation_passes
+from review_loop import recipe, audit_passes, confirmation_passes, screen_rejects
 from layout import N_WEIGHTS
 
 class ReviewTests(unittest.TestCase):
@@ -28,3 +28,10 @@ class ReviewTests(unittest.TestCase):
         confirmation['challenger']['wins'] = 101
         self.assertTrue(confirmation_passes(confirmation, current, current))
         self.assertFalse(confirmation_passes(confirmation, {'seat_wins': 21}, current))
+
+    def test_screening_needs_large_deficit_and_no_validation_advantage(self):
+        results = {'baseline': {'wins': 20}, 'challenger': {'wins': 13}}
+        self.assertFalse(screen_rejects(results, {'seat_wins': 21}, {'seat_wins': 21}))
+        results['challenger']['wins'] = 12
+        self.assertTrue(screen_rejects(results, {'seat_wins': 21}, {'seat_wins': 21}))
+        self.assertFalse(screen_rejects(results, {'seat_wins': 22}, {'seat_wins': 21}))

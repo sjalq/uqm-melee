@@ -36,7 +36,7 @@ def summary():
     run = active_run()
     status = read(run / 'status.json')
     state = {**state, 'server_time': time.time(), 'status_age_s': max(0, time.time() - (run / 'status.json').stat().st_mtime),
-             'mode': 'recipe-based experiments; no autonomous LLM research', 'interval_s': 900,
+             'mode': 'recipe-based experiments; no autonomous LLM research', 'interval_s': 3600,
              'live_run': str(run), 'scoring_version': status.get('scoring_version'),
              'trainer_active': subprocess.run(['systemctl', '--user', 'is-active', '--quiet', 'uqm-neat.service']).returncode == 0}
     if state.get('phase') == 'waiting':
@@ -50,7 +50,61 @@ def summary():
     if trial.is_file():
         progress = read(trial)
         state['trial_generation'] = progress.get('generation', 0)
+    health = REVIEWS / 'health.json'
+    state['health_check'] = read(health) if health.exists() else None
     return state
+
+
+def health_check():
+    REVIEWS.mkdir(parents=True, exist_ok=True)
+    run = active_run()
+    status = read(run / 'status.json')
+    previous_path = REVIEWS / 'health.json'
+    previous = read(previous_path) if previous_path.exists() else {}
+    same_run = previous.get('run') == str(run)
+    check = {'checked_at': time.time(), 'run': str(run), 'generation': status['generation'],
+             'champion_wins': status.get('champion_wins'),
+             'generations_since_check': status['generation'] - previous.get('generation', status['generation']) if same_run else None,
+             'status_age_s': time.time() - (run / 'status.json').stat().st_mtime,
+             'paused': read(ROOT / 'scripts/neat/hints.json').get('pause', True), 'error': status.get('error', '')}
+    failed = subprocess.run(['systemctl', '--user', 'is-failed', '--quiet', 'uqm-neat.service']).returncode == 0
+    check['action'] = 'observe'
+    if failed and not check['paused']:
+        subprocess.run(['bash', str(HERE / 'start.sh')], check=True, timeout=100, stdout=subprocess.DEVNULL)
+        check['action'] = 'restarted failed trainer from checkpoint'
+    champion = read(run / 'best.json')
+    saved_policy = REVIEWS / 'health-champion.json'
+    prior = read(saved_policy) if saved_policy.exists() else read(read(run / 'manifest.json')['initial'])
+    config = read(run / 'manifest.json')['provenance']['config']
+    if config['pool'] == ['Pkunk', 'Umgah', 'Yehat'] and digest(champion['weights']) != digest(prior['weights']):
+        seeds = random.Random(int(check['checked_at'])).sample(range(400000001, 500000000), 20)
+        before = audit(WORKER, prior['weights'], config['pool'], seeds)
+        after = audit(WORKER, champion['weights'], config['pool'], seeds)
+        evidence = {'checked_at': check['checked_at'], 'seeds': seeds, 'before': before, 'after': after}
+        atomic_json(REVIEWS / f"health-audit-{int(check['checked_at'])}.json", evidence)
+        check['fresh_check'] = {'before_wins': before['wins'], 'after_wins': after['wins'], 'fights': after['fights'],
+                                'checked_at': check['checked_at'], 'champion_hash': digest(champion['weights'])}
+    elif same_run and previous.get('fresh_check'):
+        check['fresh_check'] = previous['fresh_check']
+    atomic_json(saved_policy, champion)
+    atomic_json(previous_path, check)
+
+
+def trial_arguments(lane, history):
+    cases = {
+        'research': ('Broader coordinated weight changes could escape the current local optimum.', 'Whole-network noise may destroy useful behavior; the first trial tied the baseline.'),
+        'creative': ('Replacing one feature may open a new behavior while retaining most of the policy.', 'That feature may be essential; resetting it can lose existing wins.'),
+        'radical': ('Erasing weights or memory may remove dependence on unhelpful behavior and permit regrowth.', 'Ablation can destroy useful behavior; fewer nonzero weights alone do not speed up this dense evaluator.')}
+    pro, con = cases[lane]
+    previous = next((r for r in reversed(history) if r.get('lane') == lane), None)
+    return {'case_for': pro, 'case_against': con,
+            'previous_result': {k: previous.get(k) for k in ['cycle','decision','baseline_wins','challenger_wins']} if previous else None,
+            'early_stop': 'After 40 generations, stop only if the challenger trails by at least 8 wins on 90 screening fights and has no validation advantage.',
+            'keep': 'Full independent audit and confirmation gates must still pass.'}
+
+
+def screen_rejects(results, candidate, baseline):
+    return results['challenger']['wins'] + 8 <= results['baseline']['wins'] and candidate['seat_wins'] <= baseline['seat_wins']
 
 
 def recipe(cycle, weights, config):
@@ -122,7 +176,7 @@ def review(generations=160, deploy=True):
             return
         state = read(REVIEWS / 'state.json') if (REVIEWS / 'state.json').exists() else {'cycle': 0, 'history': []}
         cycle = state['cycle']
-        if state.get('phase') in ['baseline', 'challenger', 'audit', 'confirmation', 'deploying']:
+        if state.get('phase') in ['baseline', 'challenger', 'screen', 'audit', 'confirmation', 'deploying']:
             state.setdefault('history', []).append({'cycle': cycle, 'lane': LANES[cycle % 3], 'decision': 'interrupted', 'finished': time.time()})
             cycle += 1
         while (REVIEWS / f'cycle-{cycle:06d}').exists():
@@ -139,8 +193,9 @@ def review(generations=160, deploy=True):
         config.update(pop=16, seed=600000000 + cycle, train_seeds=rng.sample(range(1000000, 100000000), 3), pause=False, auto_expand=False)
         lane, idea, source, weights, hints = recipe(cycle, checked_weights(original), config)
         changed = {**original, 'weights': weights}
-        state.update(cycle=cycle, lane=lane, hypothesis=idea, source=source, started=time.time(), phase='baseline', next_review_at=time.time()+900, error='')
-        evidence = {'cycle': cycle, 'lane': lane, 'hypothesis': idea, 'source': source, 'starting_run': str(run), 'started': state['started'], 'generations': generations}
+        arguments = trial_arguments(lane, state.get('history', []))
+        state.update(cycle=cycle, lane=lane, hypothesis=idea, source=source, started=time.time(), phase='baseline', screen=None, next_review_at=time.time()+3600, error='')
+        evidence = {'cycle': cycle, 'lane': lane, 'hypothesis': idea, 'source': source, 'starting_run': str(run), 'started': state['started'], 'generations': generations, 'arguments': arguments}
         atomic_json(path / 'plan.json', {**evidence, 'baseline_config': config, 'challenger_config': hints,
                                       'starting_weight_hash': digest(original['weights']), 'minimum_extra_wins': 8,
                                       'confirmation_rule': 'Beat baseline, starting champion and current live champion on independent 360 fights; no fixed-validation regression.'})
@@ -148,10 +203,35 @@ def review(generations=160, deploy=True):
             state['phase'] = name
             atomic_json(REVIEWS / 'state.json', state)
         try:
+            state['target_generations'] = min(40, generations)
             phase('baseline')
-            baseline, base_budget = train_arm(path / 'baseline', original, config, generations)
+            baseline, base_budget = train_arm(path / 'baseline', original, config, min(40, generations))
             phase('challenger')
-            candidate, budget = train_arm(path / 'challenger', changed, hints, generations)
+            candidate, budget = train_arm(path / 'challenger', changed, hints, min(40, generations))
+            if budget != base_budget:
+                raise ValueError('Unequal screening fight budgets')
+            phase('screen')
+            screening_seeds = rng.sample(range(300000001, 400000000), 5)
+            screening = {name: audit(WORKER, policy['weights'], config['pool'], screening_seeds)
+                         for name, policy in [('baseline', baseline), ('challenger', candidate)]}
+            atomic_json(path / 'screen.json', {'seeds': screening_seeds, **screening})
+            state['screen'] = {name: result['wins'] for name, result in screening.items()}
+            evidence['screen'] = state['screen']
+            if screen_rejects(screening, candidate, baseline):
+                evidence.update(decision='screen rejected', baseline_wins=screening['baseline']['wins'],
+                                challenger_wins=screening['challenger']['wins'], audit_fights=screening['baseline']['fights'],
+                                fights_per_arm=budget, finished=time.time())
+                atomic_json(path / 'result.json', evidence)
+                state['history'] = (state.get('history', []) + [evidence])[-60:]
+                state.update(cycle=cycle+1, phase='waiting', next_review_at=state['started']+3600)
+                atomic_json(REVIEWS / 'state.json', state)
+                return
+            if generations > 40:
+                state['target_generations'] = generations
+                phase('baseline')
+                baseline, base_budget = train_arm(path / 'baseline', original, config, generations)
+                phase('challenger')
+                candidate, budget = train_arm(path / 'challenger', changed, hints, generations)
             if budget != base_budget:
                 raise ValueError('Unequal fight budgets')
             evidence['fights_per_arm'] = budget
@@ -201,7 +281,7 @@ def review(generations=160, deploy=True):
             state['error'] = str(error)
         atomic_json(path / 'result.json', evidence)
         state['history'] = (state.get('history', []) + [evidence])[-60:]
-        state.update(cycle=cycle+1, phase='waiting', next_review_at=max(state['started']+900, time.time()))
+        state.update(cycle=cycle+1, phase='waiting', next_review_at=max(state['started']+3600, time.time()))
         atomic_json(REVIEWS / 'state.json', state)
 
 
@@ -241,7 +321,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('action', choices=['serve', 'review'])
+    p.add_argument('action', choices=['serve', 'review', 'health'])
     p.add_argument('--generations', type=int, default=160)
     p.add_argument('--no-deploy', action='store_true')
     p.add_argument('--port', type=int, default=8788)
@@ -250,5 +330,7 @@ if __name__ == '__main__':
     REVIEWS = args.review_root.resolve()
     if args.action == 'serve':
         ThreadingHTTPServer(('0.0.0.0', args.port), Handler).serve_forever()
+    elif args.action == 'health':
+        health_check()
     else:
         review(args.generations, not args.no_deploy)

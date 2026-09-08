@@ -41,12 +41,30 @@ Environment=OPENBLAS_NUM_THREADS=1
 Environment=OMP_NUM_THREADS=1
 """)
 (units / 'uqm-review.timer').write_text("""[Unit]
-Description=Review Melee training every 15 minutes
+Description=Try a new Melee experiment every hour
+[Timer]
+OnActiveSec=5
+OnUnitActiveSec=1h
+AccuracySec=1s
+Unit=uqm-review.service
+[Install]
+WantedBy=timers.target
+""")
+(units / 'uqm-health.service').write_text(f"""[Unit]
+Description=Check Melee training progress and failures
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {release}/review_loop.py health
+AllowedCPUs=6,7
+MemoryMax=256M
+MemorySwapMax=0
+""")
+(units / 'uqm-health.timer').write_text("""[Unit]
+Description=Check Melee training every 15 minutes
 [Timer]
 OnActiveSec=5
 OnUnitActiveSec=15min
 AccuracySec=1s
-Unit=uqm-review.service
 [Install]
 WantedBy=timers.target
 """)
@@ -55,9 +73,9 @@ try:
     subprocess.run(['bash', str(root / 'scripts/neat/start.sh')], check=True, timeout=100)
     subprocess.run(['systemctl','--user','restart','uqm-monitor.service'], check=True)
     subprocess.run(['systemctl','--user','is-active','--quiet','uqm-neat.service'], check=True)
-    subprocess.run(['systemctl','--user','enable','--now','uqm-monitor.service','uqm-review.timer'], check=True)
+    subprocess.run(['systemctl','--user','enable','--now','uqm-monitor.service','uqm-review.timer','uqm-health.timer'], check=True)
 except Exception:
-    subprocess.run(['systemctl','--user','stop','uqm-monitor.service','uqm-review.timer'])
+    subprocess.run(['systemctl','--user','stop','uqm-monitor.service','uqm-review.timer','uqm-health.timer'])
     shutil.copy2(backup, root / 'scripts/neat/start.sh')
     subprocess.run(['bash', str(backup)], check=True, timeout=100)
     raise

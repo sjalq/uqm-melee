@@ -6888,8 +6888,8 @@ var $author$project$Neat$Dashboard$fetchNet = $elm$http$Http$get(
 var $author$project$Neat$Dashboard$GotReview = function (a) {
 	return {$: 'GotReview', a: a};
 };
-var $author$project$Neat$Dashboard$Review$ = function (phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration) {
-	return {active: active, age: age, error: error, history: history, hypothesis: hypothesis, lane: lane, next: next, now: now, phase: phase, trialGeneration: trialGeneration};
+var $author$project$Neat$Dashboard$Review$ = function (phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration, targetGenerations, screen, freshCheck) {
+	return {active: active, age: age, error: error, freshCheck: freshCheck, history: history, hypothesis: hypothesis, lane: lane, next: next, now: now, phase: phase, screen: screen, targetGenerations: targetGenerations, trialGeneration: trialGeneration};
 };
 var $author$project$Neat$Dashboard$Review = function (phase) {
 	return function (lane) {
@@ -6901,7 +6901,13 @@ var $author$project$Neat$Dashboard$Review = function (phase) {
 							return function (now) {
 								return function (history) {
 									return function (trialGeneration) {
-										return $author$project$Neat$Dashboard$Review$(phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration);
+										return function (targetGenerations) {
+											return function (screen) {
+												return function (freshCheck) {
+													return $author$project$Neat$Dashboard$Review$(phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration, targetGenerations, screen, freshCheck);
+												};
+											};
+										};
 									};
 								};
 							};
@@ -6912,77 +6918,130 @@ var $author$project$Neat$Dashboard$Review = function (phase) {
 		};
 	};
 };
-var $author$project$Neat$Dashboard$ReviewResult$ = function (cycle, lane, decision, baseline, challenger, fights, hypothesis) {
-	return {baseline: baseline, challenger: challenger, cycle: cycle, decision: decision, fights: fights, hypothesis: hypothesis, lane: lane};
+var $elm$json$Json$Decode$map3 = _Json_map3;
+var $author$project$Neat$Dashboard$ReviewResult$ = function (cycle, lane, decision, baseline, challenger, fights, hypothesis, _arguments) {
+	return {_arguments: _arguments, baseline: baseline, challenger: challenger, cycle: cycle, decision: decision, fights: fights, hypothesis: hypothesis, lane: lane};
 };
-var $author$project$Neat$Dashboard$ReviewResult = F7($author$project$Neat$Dashboard$ReviewResult$);
+var $author$project$Neat$Dashboard$ReviewResult = F8($author$project$Neat$Dashboard$ReviewResult$);
 var $elm$core$Basics$negate = function (n) {
 	return -n;
 };
 var $author$project$Neat$Dashboard$reviewResultDecoder = $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-	'hypothesis',
-	$elm$json$Json$Decode$string,
-	'Interrupted before completion',
+	'arguments',
+	A3(
+		$elm$json$Json$Decode$map2,
+		F2(
+			function (a, b) {
+				return _List_fromArray(
+					['Case for: ' + a, 'Case against: ' + b]);
+			}),
+		A2($elm$json$Json$Decode$field, 'case_for', $elm$json$Json$Decode$string),
+		A2($elm$json$Json$Decode$field, 'case_against', $elm$json$Json$Decode$string)),
+	_List_Nil,
 	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-		'audit_fights',
-		$elm$json$Json$Decode$int,
-		0,
+		'hypothesis',
+		$elm$json$Json$Decode$string,
+		'Interrupted before completion',
 		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-			'challenger_wins',
+			'audit_fights',
 			$elm$json$Json$Decode$int,
-			-1,
+			0,
 			$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-				'baseline_wins',
+				'challenger_wins',
 				$elm$json$Json$Decode$int,
 				-1,
-				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-					'decision',
-					$elm$json$Json$Decode$string,
+				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+					'baseline_wins',
+					$elm$json$Json$Decode$int,
+					-1,
 					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-						'lane',
+						'decision',
 						$elm$json$Json$Decode$string,
 						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-							'cycle',
-							$elm$json$Json$Decode$int,
-							$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$ReviewResult))))))));
+							'lane',
+							$elm$json$Json$Decode$string,
+							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+								'cycle',
+								$elm$json$Json$Decode$int,
+								$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$ReviewResult)))))))));
 var $author$project$Neat$Dashboard$reviewDecoder = $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-	'trial_generation',
-	$elm$json$Json$Decode$int,
-	0,
+	'health_check',
+	$elm$json$Json$Decode$oneOf(
+		_List_fromArray(
+			[
+				$elm$json$Json$Decode$at$(
+				_List_fromArray(
+					['fresh_check']),
+				A4(
+					$elm$json$Json$Decode$map3,
+					F3(
+						function (before, after, count) {
+							return 'Last fresh-seed check: ' + ($elm$core$String$fromInt(before) + (' → ' + ($elm$core$String$fromInt(after) + (' wins / ' + ($elm$core$String$fromInt(count) + ' fresh fights versus its reference policy. This is diagnostic, not a deployment decision.')))));
+						}),
+					A2($elm$json$Json$Decode$field, 'before_wins', $elm$json$Json$Decode$int),
+					A2($elm$json$Json$Decode$field, 'after_wins', $elm$json$Json$Decode$int),
+					A2($elm$json$Json$Decode$field, 'fights', $elm$json$Json$Decode$int))),
+				$elm$json$Json$Decode$succeed('')
+			])),
+	'',
 	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-		'history',
-		$elm$json$Json$Decode$list($author$project$Neat$Dashboard$reviewResultDecoder),
-		_List_Nil,
-		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-			'server_time',
-			$elm$json$Json$Decode$float,
+		'screen',
+		$elm$json$Json$Decode$oneOf(
+			_List_fromArray(
+				[
+					A3(
+					$elm$json$Json$Decode$map2,
+					F2(
+						function (b, c) {
+							return '40-generation screening: baseline ' + ($elm$core$String$fromInt(b) + (', challenger ' + ($elm$core$String$fromInt(c) + ' wins / 90 fights. These seeds cannot qualify a deployment.')));
+						}),
+					A2($elm$json$Json$Decode$field, 'baseline', $elm$json$Json$Decode$int),
+					A2($elm$json$Json$Decode$field, 'challenger', $elm$json$Json$Decode$int)),
+					$elm$json$Json$Decode$null('')
+				])),
+		'',
+		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+			'target_generations',
+			$elm$json$Json$Decode$int,
+			160,
 			$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-				'next_review_at',
-				$elm$json$Json$Decode$float,
+				'trial_generation',
+				$elm$json$Json$Decode$int,
 				0,
-				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-					'trainer_active',
-					$elm$json$Json$Decode$bool,
+				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+					'history',
+					$elm$json$Json$Decode$list($author$project$Neat$Dashboard$reviewResultDecoder),
+					_List_Nil,
 					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-						'status_age_s',
+						'server_time',
 						$elm$json$Json$Decode$float,
 						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-							'error',
-							$elm$json$Json$Decode$string,
-							'',
-							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-								'hypothesis',
-								$elm$json$Json$Decode$string,
-								'First review pending',
-								$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-									'lane',
-									$elm$json$Json$Decode$string,
-									'research',
+							'next_review_at',
+							$elm$json$Json$Decode$float,
+							0,
+							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+								'trainer_active',
+								$elm$json$Json$Decode$bool,
+								$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+									'status_age_s',
+									$elm$json$Json$Decode$float,
 									$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-										'phase',
+										'error',
 										$elm$json$Json$Decode$string,
-										'waiting',
-										$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$Review)))))))))));
+										'',
+										$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+											'hypothesis',
+											$elm$json$Json$Decode$string,
+											'First review pending',
+											$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+												'lane',
+												$elm$json$Json$Decode$string,
+												'research',
+												$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+													'phase',
+													$elm$json$Json$Decode$string,
+													'waiting',
+													$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$Review))))))))))))));
 var $author$project$Neat$Dashboard$fetchReview = $elm$http$Http$get(
 	{
 		expect: $elm$http$Http$expectJson$($author$project$Neat$Dashboard$GotReview, $author$project$Neat$Dashboard$reviewDecoder),
@@ -7146,9 +7205,6 @@ var $author$project$Neat$Dashboard$update$ = function (msg, model) {
 };
 var $author$project$Neat$Dashboard$update = F2($author$project$Neat$Dashboard$update$);
 var $author$project$Neat$Dashboard$bg = '#0f1419';
-var $author$project$Neat$Dashboard$HoverCrew = function (a) {
-	return {$: 'HoverCrew', a: a};
-};
 var $author$project$Neat$Dashboard$HoverFit = function (a) {
 	return {$: 'HoverFit', a: a};
 };
@@ -7892,20 +7948,6 @@ var $author$project$Neat$Dashboard$chartCard$ = function (title, blurb, e, serie
 			]));
 };
 var $author$project$Neat$Dashboard$chartCard = F7($author$project$Neat$Dashboard$chartCard$);
-var $author$project$Neat$Dashboard$coral = '#ff6b6b';
-var $author$project$Neat$Dashboard$crewChartExplainer = function (s) {
-	return {
-		body: _List_fromArray(
-			[
-				'This is leftover crew on practice fights, averaged. It is not the exam, not a win/loss chart, and not \'health bars\' for one ship.',
-				'Every generation we fight as Pkunk, Umgah, and Yehat, against those same three. Starting crew is 8, 10, and 20. Average leftover of 8 / 11 is a mix of those, so it can sit near 8 even when Pkunk fights are going fine.',
-				'Mint = our leftover crew. Higher mint means we are dying less. Coral = their leftover crew. Lower coral means we are dealing more damage.',
-				'What you want over time: coral drifting down, mint holding or rising. Both bouncing in a band means the search is noisy, which it is.',
-				'This generation: us ' + ($author$project$Neat$Dashboard$fmt1(s.own) + (', them ' + ($author$project$Neat$Dashboard$fmt1(s.enemy) + '. Compare the two lines across generations, not a single point against 8 and 10.')))
-			]),
-		title: 'Why the crew chart looks weird'
-	};
-};
 var $author$project$Neat$Dashboard$mint = '#5dcea8';
 var $author$project$Neat$Dashboard$scoreChartExplainer = function (s) {
 	return {
@@ -7948,38 +7990,11 @@ var $author$project$Neat$Dashboard$charts$ = function (model, s) {
 					]),
 				hist,
 				model.hoverFit,
-				$author$project$Neat$Dashboard$HoverFit),
-				$author$project$Neat$Dashboard$chartCard$(
-				'Leftover crew on practice fights',
-				'Not a win chart. Mint is how much crew we still had. Coral is how much they still had. Averaged across Pkunk (starts 8), Umgah (10), and Yehat (20), so 8 / 11 is not \'we are full and they are hurt\'.',
-				$author$project$Neat$Dashboard$crewChartExplainer(s),
-				_List_fromArray(
-					[
-						{
-						color: $author$project$Neat$Dashboard$mint,
-						label: 'our leftover crew',
-						values: $elm$core$List$map$(
-							function ($) {
-								return $.own;
-							},
-							hist)
-					},
-						{
-						color: $author$project$Neat$Dashboard$coral,
-						label: 'their leftover crew',
-						values: $elm$core$List$map$(
-							function ($) {
-								return $.enemy;
-							},
-							hist)
-					}
-					]),
-				hist,
-				model.hoverCrew,
-				$author$project$Neat$Dashboard$HoverCrew)
+				$author$project$Neat$Dashboard$HoverFit)
 			]));
 };
 var $author$project$Neat$Dashboard$charts = F2($author$project$Neat$Dashboard$charts$);
+var $author$project$Neat$Dashboard$coral = '#ff6b6b';
 var $elm$html$Html$details = _VirtualDom_node('details');
 var $author$project$Neat$Dashboard$Unpin = {$: 'Unpin'};
 var $elm$html$Html$button = _VirtualDom_node('button');
@@ -8194,7 +8209,7 @@ var $author$project$Neat$Dashboard$header = function (model) {
 									'training',
 									$elm$core$List$head(
 										$elm$core$List$reverse(
-											$elm$core$String$split$('/', s.experiment)))) + ('  ·  ' + (s.phase + (' | ' + (s.evaluator + ('  ·  ' + ($author$project$Neat$Dashboard$uptime(s.uptimeS) + ('  ·  gen ' + ($elm$core$String$fromInt(s.generation) + ('  ·  ' + ((($elm$core$String$trim(s.fitnessVersion) === '') ? 'no version' : s.fitnessVersion) + ('  ·  pool ' + (($elm$core$List$isEmpty(s.pool) ? '?' : $elm$core$String$join$(', ', s.pool)) + ('  ·  ' + ($elm$core$String$fromInt(s.nTrain) + (' train / ' + ($elm$core$String$fromInt(s.nHold) + (' hold' + (s.paused ? '  ·  PAUSED' : '')))))))))))))))))))
+											$elm$core$String$split$('/', s.experiment)))) + ('  ·  ' + (s.phase + (' | ' + (s.evaluator + (' / ' + (s.scoringVersion + ('  ·  ' + ($author$project$Neat$Dashboard$uptime(s.uptimeS) + ('  ·  gen ' + ($elm$core$String$fromInt(s.generation) + ('  ·  ' + ((($elm$core$String$trim(s.fitnessVersion) === '') ? 'no version' : s.fitnessVersion) + ('  ·  pool ' + (($elm$core$List$isEmpty(s.pool) ? '?' : $elm$core$String$join$(', ', s.pool)) + ('  ·  ' + ($elm$core$String$fromInt(s.nTrain) + (' train / ' + ($elm$core$String$fromInt(s.nHold) + (' hold' + (s.paused ? '  ·  PAUSED' : '')))))))))))))))))))))
 							]));
 				} else {
 					return $elm$html$Html$text('');
@@ -8717,16 +8732,6 @@ var $author$project$Neat$Dashboard$fmt2 = function (x) {
 	return $elm$core$String$fromFloat(
 		$elm$core$Basics$round(x * 100) / 100);
 };
-var $author$project$Neat$Dashboard$generationExplainer = function (s) {
-	return {
-		body: _List_fromArray(
-			[
-				'How many times this experiment has updated the net, including work restored from a checkpoint. This run is at generation ' + ($elm$core$String$fromInt(s.generation) + '.'),
-				'It is a loop counter, not a win count. Generation 200 with 3 kills is worse than generation 50 with 15 kills.'
-			]),
-		title: 'Generation'
-	};
-};
 var $author$project$Neat$Dashboard$holdRecordExplainer$ = function (wins, n, _v0) {
 	return {
 		body: _List_fromArray(
@@ -8775,11 +8780,6 @@ var $author$project$Neat$Dashboard$metrics = function (s) {
 					title: 'Plateau age'
 				}),
 				$author$project$Neat$Dashboard$metric$(
-				'Generation',
-				$elm$core$String$fromInt(s.generation),
-				false,
-				$author$project$Neat$Dashboard$generationExplainer(s)),
-				$author$project$Neat$Dashboard$metric$(
 				'Generation duration',
 				$author$project$Neat$Dashboard$fmt2(s.generationS) + ' s',
 				false,
@@ -8796,15 +8796,6 @@ var $author$project$Neat$Dashboard$metrics = function (s) {
 					body: _List_fromArray(
 						['Candidate count times training fights, plus validation fights, divided by generation duration. Useful for capacity, not evidence of learning.']),
 					title: 'Approximate fight throughput'
-				}),
-				$author$project$Neat$Dashboard$metric$(
-				'Game scoring',
-				s.scoringVersion,
-				false,
-				{
-					body: _List_fromArray(
-						['combat-v1 budgets combat ticks and resolves natural death transitions. Compare policies only under the same scoring version and fight budget.']),
-					title: 'Comparable game outcomes'
 				})
 			]));
 };
@@ -9556,16 +9547,20 @@ var $author$project$Neat$Dashboard$reviewRow = function (r) {
 				$elm$html$Html$Events$onMouseEnter(
 				$author$project$Neat$Dashboard$ShowExplainer(
 					{
-						body: _List_fromArray(
-							[r.hypothesis, 'Fresh audit seeds are never used for training. The comparison uses the same fight budget. A rejected result is retained as evidence.']),
+						body: A2(
+							$elm$core$List$cons,
+							r.hypothesis,
+							_Utils_ap(
+								r._arguments,
+								_List_fromArray(
+									['Fresh audit seeds are never used for training. The comparison uses the same fight budget. A rejected result is retained as evidence.']))),
 						title: 'Experiment ' + $elm$core$String$fromInt(r.cycle + 1)
 					})),
 				$elm$html$Html$Events$onMouseLeave($author$project$Neat$Dashboard$HideExplainer),
 				$elm$html$Html$Events$onClick(
 				$author$project$Neat$Dashboard$PinExplainer(
 					{
-						body: _List_fromArray(
-							[r.hypothesis]),
+						body: A2($elm$core$List$cons, r.hypothesis, r._arguments),
 						title: r.lane + ' experiment'
 					}))
 			]),
@@ -9678,8 +9673,8 @@ var $author$project$Neat$Dashboard$reviewCard = function (model) {
 										false,
 										{
 											body: _List_fromArray(
-												['One review at a time. Each trains a baseline and challenger under equal fight budgets. A long review delays the next one; trials never overlap.']),
-											title: '15-minute cadence'
+												['New experiments run hourly, with automated health checks every 15 minutes. Trials get a 40-generation screening checkpoint before the full 160-generation comparison. Only independently confirmed gains deploy.']),
+											title: 'Hourly experiments, frequent checks'
 										})
 									])),
 								A2(
@@ -9701,7 +9696,17 @@ var $author$project$Neat$Dashboard$reviewCard = function (model) {
 								_List_fromArray(
 									[
 										$elm$html$Html$text(
-										r.phase + (': generation ' + ($elm$core$String$fromInt(r.trialGeneration) + ' / 160. Both arms get the same fight budget.')))
+										r.phase + (': generation ' + ($elm$core$String$fromInt(r.trialGeneration) + (' / ' + ($elm$core$String$fromInt(r.targetGenerations) + '. Both arms get the same fight budget.')))))
+									])) : $elm$html$Html$text(''),
+								((r.screen !== '') && (r.phase !== 'waiting')) ? A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$gold)
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text(r.screen)
 									])) : $elm$html$Html$text(''),
 								A2(
 								$elm$html$Html$p,
@@ -9714,6 +9719,16 @@ var $author$project$Neat$Dashboard$reviewCard = function (model) {
 									[
 										$elm$html$Html$text('Keep rule: at least 8 extra wins on 360 fresh fights, then beat the baseline and live champion on another 360. Failed ideas stay in the ledger; the live champion stays protected.')
 									])),
+								(r.freshCheck !== '') ? A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$ink)
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text(r.freshCheck)
+									])) : $elm$html$Html$text(''),
 								(r.error !== '') ? A2(
 								$elm$html$Html$p,
 								_List_fromArray(
@@ -9812,7 +9827,24 @@ var $author$project$Neat$Dashboard$view = function (model) {
 											])),
 										$author$project$Neat$Dashboard$holdTable(s)
 									])),
-								$author$project$Neat$Dashboard$netCard$(model, s)
+								A2(
+								$elm$html$Html$details,
+								_List_Nil,
+								_List_fromArray(
+									[
+										A2(
+										$elm$html$Html$summary,
+										_List_fromArray(
+											[
+												A2($elm$html$Html$Attributes$style, 'cursor', 'pointer'),
+												A2($elm$html$Html$Attributes$style, 'padding', '14px')
+											]),
+										_List_fromArray(
+											[
+												$elm$html$Html$text('Explore the saved neural network')
+											])),
+										$author$project$Neat$Dashboard$netCard$(model, s)
+									]))
 							]));
 				}
 			}(),
