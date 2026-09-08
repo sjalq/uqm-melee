@@ -89,7 +89,7 @@ reviewDecoder =
         |> P.optional "trial_generation" D.int 0
         |> P.optional "target_generations" D.int 160
         |> P.optional "screen" (D.oneOf [ D.map2 (\b c -> "40-generation screening: baseline " ++ String.fromInt b ++ ", challenger " ++ String.fromInt c ++ " wins / 90 fights. These seeds cannot qualify a deployment.") (D.field "baseline" D.int) (D.field "challenger" D.int), D.null "" ]) ""
-        |> P.optional "health_check" (D.oneOf [ D.at [ "fresh_check" ] (D.map3 (\before after count -> "Last fresh-seed check: " ++ String.fromInt before ++ " → " ++ String.fromInt after ++ " wins / " ++ String.fromInt count ++ " fresh fights versus its reference policy. This is diagnostic, not a deployment decision.") (D.field "before_wins" D.int) (D.field "after_wins" D.int) (D.field "fights" D.int)), D.succeed "" ]) ""
+        |> P.optional "health_check" (D.oneOf [ D.at [ "fresh_check" ] (D.map3 (\before after count -> "Fresh fights: " ++ String.fromInt before ++ " → " ++ String.fromInt after ++ " wins / " ++ String.fromInt count ++ " against the reference policy.") (D.field "before_wins" D.int) (D.field "after_wins" D.int) (D.field "fights" D.int)), D.succeed "" ]) ""
 
 
 reviewResultDecoder : D.Decoder ReviewResult
@@ -107,6 +107,26 @@ reviewResultDecoder =
 
 reviewCard : Model -> Html Msg
 reviewCard model =
+    div [ A.style "margin-top" "18px", A.style "background" card, A.style "padding" "14px", A.style "border-radius" "10px" ]
+        [ h2 [ A.style "font-size" "15px", A.style "margin" "0 0 8px" ] [ text "Latest evidence" ]
+        , if model.reviewError /= "" then p [ A.style "color" coral ] [ text model.reviewError ] else text ""
+        , case model.review of
+            Nothing -> text "Waiting for results"
+            Just r ->
+                div []
+                    [ if r.freshCheck == "" then text "No fresh-seed check yet." else p [ A.style "margin" "6px 0" ] [ text r.freshCheck ]
+                    , case List.reverse r.history |> List.head of
+                        Nothing -> text ""
+                        Just result -> reviewRow result
+                    , p [ A.style "color" mute, A.style "margin" "8px 0 0", A.style "font-size" "13px" ]
+                        [ text (if r.phase == "waiting" then "Next: " ++ r.lane ++ " experiment" else r.lane ++ " experiment · " ++ r.phase ++ (if r.phase == "baseline" || r.phase == "challenger" then " " ++ String.fromInt r.trialGeneration ++ "/" ++ String.fromInt r.targetGenerations else "")) ]
+                    , if r.error /= "" then p [ A.style "color" coral ] [ text r.error ] else text ""
+                    ]
+        ]
+
+
+reviewDetails : Model -> Html Msg
+reviewDetails model =
     div [ A.style "background" card, A.style "padding" "18px", A.style "border-radius" "12px", A.style "margin-bottom" "20px" ]
         [ h2 [ A.style "font-size" "17px", A.style "margin-top" "0" ] [ text "Is the policy actually improving?" ]
         , if model.reviewError /= "" then
@@ -572,7 +592,6 @@ view model =
         , A.style "margin" "0 auto"
         ]
         [ header model
-        , hintBar model
         , case model.status of
             Nothing ->
                 p [ A.style "color" mute ] [ text (Maybe.withDefault "Waiting for the trainer." model.err) ]
@@ -580,9 +599,9 @@ view model =
             Just s ->
                 div []
                     [ metrics s
-                    , reviewCard model
-                    , matchupGrid s
                     , charts model s
+                    , reviewCard model
+                    , Html.details [ A.style "margin-top" "18px" ] [ Html.summary [ A.style "cursor" "pointer", A.style "padding" "14px" ] [ text "Matchups and experiment details" ], matchupGrid s, reviewDetails model ]
                     , Html.details [ A.style "margin" "20px 0" ] [ Html.summary [ A.style "cursor" "pointer", A.style "padding" "14px" ] [ text (String.fromInt (List.length s.champion.fights) ++ " validation fights: seeds, seats, crew and outcomes") ], holdTable s ]
                     , Html.details [] [ Html.summary [ A.style "cursor" "pointer", A.style "padding" "14px" ] [ text "Explore the saved neural network" ], netCard model s ]
                     ]
@@ -598,61 +617,18 @@ view model =
 
 header : Model -> Html Msg
 header model =
-    div [ A.style "margin-bottom" "12px" ]
-        [ div [ A.style "display" "flex", A.style "align-items" "center", A.style "gap" "10px" ]
-            [ h1
-                [ A.style "font-size" "22px"
-                , A.style "font-weight" "650"
-                , A.style "margin" "0"
-                ]
-                [ text "Melee policy training" ]
-            , infoBtn pageExplainer
+    div [ A.style "margin-bottom" "18px" ]
+        [ h1 [ A.style "font-size" "22px", A.style "margin" "0 0 8px" ] [ text "Training progress" ]
+        , p [ A.style "margin" "0", A.style "color" mute ]
+            [ text
+                ((case model.review of
+                    Nothing -> "Connecting"
+                    Just r -> if not r.active then "STOPPED" else if r.age > 30 then "STALE" else "LIVE")
+                    ++ (case model.status of
+                        Nothing -> ""
+                        Just s -> (if s.paused then " · PAUSED" else "") ++ " · generation " ++ String.fromInt s.generation)
+                    ++ " · hover for details")
             ]
-        , p [ A.style "color" mute, A.style "margin" "8px 0 0", A.style "max-width" "72ch", A.style "line-height" "1.5", A.style "font-size" "14px" ]
-            [ text "One net learning to fly Super Melee ships against the original Awesome cyborg. Hover any (i) for a plain-language explainer. Click (i) to pin it." ]
-        , case model.status of
-            Just s ->
-                p [ A.style "color" mute, A.style "margin" "8px 0 0", A.style "font-size" "13px" ]
-                    [ text
-                        ((s.experiment |> String.split "/" |> List.reverse |> List.head |> Maybe.withDefault "training")
-                            ++ "  ·  "
-                            ++ s.phase
-                            ++ " | "
-                            ++ s.evaluator ++ " / " ++ s.scoringVersion
-                            ++ "  ·  "
-                            ++ uptime s.uptimeS
-                            ++ "  ·  gen "
-                            ++ String.fromInt s.generation
-                            ++ "  ·  "
-                            ++ (if String.trim s.fitnessVersion == "" then
-                                    "no version"
-
-                                else
-                                    s.fitnessVersion
-                               )
-                            ++ "  ·  pool "
-                            ++ (if List.isEmpty s.pool then
-                                    "?"
-
-                                else
-                                    String.join ", " s.pool
-                               )
-                            ++ "  ·  "
-                            ++ String.fromInt s.nTrain
-                            ++ " train / "
-                            ++ String.fromInt s.nHold
-                            ++ " hold"
-                            ++ (if s.paused then
-                                    "  ·  PAUSED"
-
-                                else
-                                    ""
-                               )
-                        )
-                    ]
-
-            Nothing ->
-                text ""
         ]
 
 
@@ -696,11 +672,9 @@ metrics s =
         , A.style "margin-bottom" "22px"
         ]
         [ metric "Saved validation wins" (String.fromInt holdWins ++ " / " ++ String.fromInt (max holdN s.nHold)) False (holdRecordExplainer holdWins (max holdN s.nHold) s)
-        , metric "Generations since promotion" (String.fromInt (max 0 (s.generation - s.champion.generation))) False
+        , metric "Generations without improvement" (String.fromInt (max 0 (s.generation - s.champion.generation))) False
             { title = "Plateau age", body = [ "Completed generations since the saved champion was promoted. A large number means the search is active without finding a better validation policy. A promotion can improve only the fitness tiebreaker, not wins." ] }
-        , metric "Generation duration" (fmt2 s.generationS ++ " s") False
-            { title = "Full generation duration", body = [ "Measured time for a completed generation, including candidate evaluations and validation. This is different from a single candidate's evaluation time." ] }
-        , metric "Evaluations / second"
+        , metric "Fights / second"
             (if s.generationS > 0 then fmt1 (toFloat ((s.pop + 1) * s.nTrain + s.nHold) / s.generationS) else "waiting") False
             { title = "Approximate fight throughput", body = [ "Candidate count times training fights, plus validation fights, divided by generation duration. Useful for capacity, not evidence of learning." ] }
 
@@ -932,15 +906,22 @@ charts model s =
         , A.style "gap" "16px"
         ]
         [ chartCard
-            "Saved champion score"
-            "Validation score only. A flat line means no better champion was saved. This is a fitness tiebreaker, not a win count. History belongs to this run."
+            "Saved champion progress"
+            "Fixed validation score. Flat means no score improvement."
             (scoreChartExplainer s)
             [ { label = "saved validation score", color = mint, values = List.map .best hist }
             ]
             hist
             model.hoverFit
             HoverFit
-
+        , chartCard
+            "Search progress"
+            "Average practice score per generation. Different fights from validation."
+            { title = "Generation-by-generation search", body = [ "The average fitness of candidates on the rotating practice fights. Movement shows search activity; it does not prove better validation performance. Compare its trend within this chart, not its absolute height against the saved champion chart." ] }
+            [ { label = "practice average", color = gold, values = List.map .mean hist } ]
+            hist
+            model.hoverCrew
+            HoverCrew
         ]
 
 

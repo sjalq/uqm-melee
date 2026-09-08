@@ -6976,7 +6976,7 @@ var $author$project$Neat$Dashboard$reviewDecoder = $NoRedInk$elm_json_decode_pip
 					$elm$json$Json$Decode$map3,
 					F3(
 						function (before, after, count) {
-							return 'Last fresh-seed check: ' + ($elm$core$String$fromInt(before) + (' → ' + ($elm$core$String$fromInt(after) + (' wins / ' + ($elm$core$String$fromInt(count) + ' fresh fights versus its reference policy. This is diagnostic, not a deployment decision.')))));
+							return 'Fresh fights: ' + ($elm$core$String$fromInt(before) + (' → ' + ($elm$core$String$fromInt(after) + (' wins / ' + ($elm$core$String$fromInt(count) + ' against the reference policy.')))));
 						}),
 					A2($elm$json$Json$Decode$field, 'before_wins', $elm$json$Json$Decode$int),
 					A2($elm$json$Json$Decode$field, 'after_wins', $elm$json$Json$Decode$int),
@@ -7205,6 +7205,9 @@ var $author$project$Neat$Dashboard$update$ = function (msg, model) {
 };
 var $author$project$Neat$Dashboard$update = F2($author$project$Neat$Dashboard$update$);
 var $author$project$Neat$Dashboard$bg = '#0f1419';
+var $author$project$Neat$Dashboard$HoverCrew = function (a) {
+	return {$: 'HoverCrew', a: a};
+};
 var $author$project$Neat$Dashboard$HoverFit = function (a) {
 	return {$: 'HoverFit', a: a};
 };
@@ -7973,8 +7976,8 @@ var $author$project$Neat$Dashboard$charts$ = function (model, s) {
 		_List_fromArray(
 			[
 				$author$project$Neat$Dashboard$chartCard$(
-				'Saved champion score',
-				'Validation score only. A flat line means no better champion was saved. This is a fitness tiebreaker, not a win count. History belongs to this run.',
+				'Saved champion progress',
+				'Fixed validation score. Flat means no score improvement.',
 				$author$project$Neat$Dashboard$scoreChartExplainer(s),
 				_List_fromArray(
 					[
@@ -7990,7 +7993,30 @@ var $author$project$Neat$Dashboard$charts$ = function (model, s) {
 					]),
 				hist,
 				model.hoverFit,
-				$author$project$Neat$Dashboard$HoverFit)
+				$author$project$Neat$Dashboard$HoverFit),
+				$author$project$Neat$Dashboard$chartCard$(
+				'Search progress',
+				'Average practice score per generation. Different fights from validation.',
+				{
+					body: _List_fromArray(
+						['The average fitness of candidates on the rotating practice fights. Movement shows search activity; it does not prove better validation performance. Compare its trend within this chart, not its absolute height against the saved champion chart.']),
+					title: 'Generation-by-generation search'
+				},
+				_List_fromArray(
+					[
+						{
+						color: $author$project$Neat$Dashboard$gold,
+						label: 'practice average',
+						values: $elm$core$List$map$(
+							function ($) {
+								return $.mean;
+							},
+							hist)
+					}
+					]),
+				hist,
+				model.hoverCrew,
+				$author$project$Neat$Dashboard$HoverCrew)
 			]));
 };
 var $author$project$Neat$Dashboard$charts = F2($author$project$Neat$Dashboard$charts$);
@@ -8123,113 +8149,55 @@ var $author$project$Neat$Dashboard$explainerModal = function (model) {
 	}
 };
 var $elm$html$Html$h1 = _VirtualDom_node('h1');
-var $elm$core$List$isEmpty = function (xs) {
-	if (!xs.b) {
-		return true;
-	} else {
-		return false;
-	}
-};
-var $author$project$Neat$Dashboard$pageExplainer = {
-	body: _List_fromArray(
-		['We are training one neural net to play Super Melee against the original Awesome cyborg. The net picks a ship, the cyborg picks a ship, they fight in the real engine.', 'Hull identity is 5 bits for us and 5 bits for them. A hidden layer of 16 tanh units sits between the sensors and the buttons. The current experiment uses Pkunk, Umgah and Yehat in both seats across several starting seeds.', 'The ship pool stays fixed during this comparison so both experiments face the same challenge.', 'Ignore leftover v5 numbers and any old \'WIN 509t\' jackpot card. The number that matters is Hold record.']),
-	title: 'What this page is'
-};
-var $elm$core$String$trim = _String_trim;
-var $elm$core$Basics$modBy = _Basics_modBy;
-var $author$project$Neat$Dashboard$uptime = function (s) {
-	var n = $elm$core$Basics$round(s);
-	return (n < 60) ? ($elm$core$String$fromInt(n) + 's') : ((n < 3600) ? ($elm$core$String$fromInt((n / 60) | 0) + ('m ' + ($elm$core$String$fromInt(
-		A2($elm$core$Basics$modBy, 60, n)) + 's'))) : ($elm$core$String$fromInt((n / 3600) | 0) + ('h ' + ($elm$core$String$fromInt(
-		A2($elm$core$Basics$modBy, 60, (n / 60) | 0)) + 'm'))));
-};
+var $elm$core$Basics$not = _Basics_not;
 var $author$project$Neat$Dashboard$header = function (model) {
 	return A2(
 		$elm$html$Html$div,
 		_List_fromArray(
 			[
-				A2($elm$html$Html$Attributes$style, 'margin-bottom', '12px')
+				A2($elm$html$Html$Attributes$style, 'margin-bottom', '18px')
 			]),
 		_List_fromArray(
 			[
 				A2(
-				$elm$html$Html$div,
+				$elm$html$Html$h1,
 				_List_fromArray(
 					[
-						A2($elm$html$Html$Attributes$style, 'display', 'flex'),
-						A2($elm$html$Html$Attributes$style, 'align-items', 'center'),
-						A2($elm$html$Html$Attributes$style, 'gap', '10px')
+						A2($elm$html$Html$Attributes$style, 'font-size', '22px'),
+						A2($elm$html$Html$Attributes$style, 'margin', '0 0 8px')
 					]),
 				_List_fromArray(
 					[
-						A2(
-						$elm$html$Html$h1,
-						_List_fromArray(
-							[
-								A2($elm$html$Html$Attributes$style, 'font-size', '22px'),
-								A2($elm$html$Html$Attributes$style, 'font-weight', '650'),
-								A2($elm$html$Html$Attributes$style, 'margin', '0')
-							]),
-						_List_fromArray(
-							[
-								$elm$html$Html$text('Melee policy training')
-							])),
-						$author$project$Neat$Dashboard$infoBtn($author$project$Neat$Dashboard$pageExplainer)
+						$elm$html$Html$text('Training progress')
 					])),
 				A2(
 				$elm$html$Html$p,
 				_List_fromArray(
 					[
-						A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$mute),
-						A2($elm$html$Html$Attributes$style, 'margin', '8px 0 0'),
-						A2($elm$html$Html$Attributes$style, 'max-width', '72ch'),
-						A2($elm$html$Html$Attributes$style, 'line-height', '1.5'),
-						A2($elm$html$Html$Attributes$style, 'font-size', '14px')
+						A2($elm$html$Html$Attributes$style, 'margin', '0'),
+						A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$mute)
 					]),
 				_List_fromArray(
 					[
-						$elm$html$Html$text('One net learning to fly Super Melee ships against the original Awesome cyborg. Hover any (i) for a plain-language explainer. Click (i) to pin it.')
-					])),
-				function () {
-				var _v0 = model.status;
-				if (_v0.$ === 'Just') {
-					var s = _v0.a;
-					return A2(
-						$elm$html$Html$p,
-						_List_fromArray(
-							[
-								A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$mute),
-								A2($elm$html$Html$Attributes$style, 'margin', '8px 0 0'),
-								A2($elm$html$Html$Attributes$style, 'font-size', '13px')
-							]),
-						_List_fromArray(
-							[
-								$elm$html$Html$text(
-								$elm$core$Maybe$withDefault$(
-									'training',
-									$elm$core$List$head(
-										$elm$core$List$reverse(
-											$elm$core$String$split$('/', s.experiment)))) + ('  ·  ' + (s.phase + (' | ' + (s.evaluator + (' / ' + (s.scoringVersion + ('  ·  ' + ($author$project$Neat$Dashboard$uptime(s.uptimeS) + ('  ·  gen ' + ($elm$core$String$fromInt(s.generation) + ('  ·  ' + ((($elm$core$String$trim(s.fitnessVersion) === '') ? 'no version' : s.fitnessVersion) + ('  ·  pool ' + (($elm$core$List$isEmpty(s.pool) ? '?' : $elm$core$String$join$(', ', s.pool)) + ('  ·  ' + ($elm$core$String$fromInt(s.nTrain) + (' train / ' + ($elm$core$String$fromInt(s.nHold) + (' hold' + (s.paused ? '  ·  PAUSED' : '')))))))))))))))))))))
-							]));
-				} else {
-					return $elm$html$Html$text('');
-				}
-			}()
-			]));
-};
-var $author$project$Neat$Dashboard$hintBar = function (model) {
-	return A2(
-		$elm$html$Html$p,
-		_List_fromArray(
-			[
-				A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$mute),
-				A2($elm$html$Html$Attributes$style, 'font-size', '13px'),
-				A2($elm$html$Html$Attributes$style, 'margin', '12px 0 18px')
-			]),
-		_List_fromArray(
-			[
-				$elm$html$Html$text(
-				model.pinned ? 'Explainer pinned. Click the dimmed area or Close to dismiss.' : 'Watch fresh-seed improvement and time since the last better champion. Generations and evaluations measure activity, not learning.')
+						$elm$html$Html$text(
+						function () {
+							var _v0 = model.review;
+							if (_v0.$ === 'Nothing') {
+								return 'Connecting';
+							} else {
+								var r = _v0.a;
+								return (!r.active) ? 'STOPPED' : ((r.age > 30) ? 'STALE' : 'LIVE');
+							}
+						}() + (function () {
+							var _v1 = model.status;
+							if (_v1.$ === 'Nothing') {
+								return '';
+							} else {
+								var s = _v1.a;
+								return (s.paused ? ' · PAUSED' : '') + (' · generation ' + $elm$core$String$fromInt(s.generation));
+							}
+						}() + ' · hover for details'))
+					]))
 			]));
 };
 var $elm$core$List$filter$ = function (isGood, list) {
@@ -8355,6 +8323,13 @@ var $author$project$Neat$Dashboard$fightRow = function (f) {
 						$author$project$Neat$Dashboard$secs(f.ticks) + ('  ·  ' + ($elm$core$String$fromInt(f.ticks) + ' ticks')))
 					]))
 			]));
+};
+var $elm$core$List$isEmpty = function (xs) {
+	if (!xs.b) {
+		return true;
+	} else {
+		return false;
+	}
 };
 var $author$project$Neat$Dashboard$groupBlock$ = function (title, fights) {
 	return $elm$core$List$isEmpty(fights) ? _List_Nil : _List_fromArray(
@@ -8650,7 +8625,6 @@ var $author$project$Neat$Dashboard$metric$ = function (label, value, win, e) {
 			]));
 };
 var $author$project$Neat$Dashboard$metric = F4($author$project$Neat$Dashboard$metric$);
-var $elm$core$Basics$not = _Basics_not;
 var $author$project$Neat$Dashboard$matchupGrid = function (s) {
 	return A2(
 		$elm$html$Html$div,
@@ -8728,10 +8702,6 @@ var $author$project$Neat$Dashboard$matchupGrid = function (s) {
 					s.pool))
 			]));
 };
-var $author$project$Neat$Dashboard$fmt2 = function (x) {
-	return $elm$core$String$fromFloat(
-		$elm$core$Basics$round(x * 100) / 100);
-};
 var $author$project$Neat$Dashboard$holdRecordExplainer$ = function (wins, n, _v0) {
 	return {
 		body: _List_fromArray(
@@ -8770,7 +8740,7 @@ var $author$project$Neat$Dashboard$metrics = function (s) {
 					$elm$core$Basics$max$(holdN, s.nHold),
 					s)),
 				$author$project$Neat$Dashboard$metric$(
-				'Generations since promotion',
+				'Generations without improvement',
 				$elm$core$String$fromInt(
 					$elm$core$Basics$max$(0, s.generation - s.champion.generation)),
 				false,
@@ -8780,16 +8750,7 @@ var $author$project$Neat$Dashboard$metrics = function (s) {
 					title: 'Plateau age'
 				}),
 				$author$project$Neat$Dashboard$metric$(
-				'Generation duration',
-				$author$project$Neat$Dashboard$fmt2(s.generationS) + ' s',
-				false,
-				{
-					body: _List_fromArray(
-						['Measured time for a completed generation, including candidate evaluations and validation. This is different from a single candidate\'s evaluation time.']),
-					title: 'Full generation duration'
-				}),
-				$author$project$Neat$Dashboard$metric$(
-				'Evaluations / second',
+				'Fights / second',
 				(s.generationS > 0) ? $author$project$Neat$Dashboard$fmt1((((s.pop + 1) * s.nTrain) + s.nHold) / s.generationS) : 'waiting',
 				false,
 				{
@@ -8926,6 +8887,10 @@ var $author$project$Neat$Dashboard$hidStrength$ = function (n, h) {
 	return $elm$core$Basics$max$(inn, out);
 };
 var $author$project$Neat$Dashboard$hidStrength = F2($author$project$Neat$Dashboard$hidStrength$);
+var $author$project$Neat$Dashboard$fmt2 = function (x) {
+	return $elm$core$String$fromFloat(
+		$elm$core$Basics$round(x * 100) / 100);
+};
 var $author$project$Neat$Dashboard$fmtW = function (w) {
 	var sign = (w >= 0) ? '+' : '';
 	return _Utils_ap(
@@ -9100,6 +9065,7 @@ var $author$project$Neat$Dashboard$inputExplainer$ = function (n, i, name) {
 	};
 };
 var $author$project$Neat$Dashboard$inputExplainer = F3($author$project$Neat$Dashboard$inputExplainer$);
+var $elm$core$Basics$modBy = _Basics_modBy;
 var $author$project$Neat$Dashboard$shouldLabelInput$ = function (i, name, _v0) {
 	return ((i < 33) && (!A2($elm$core$Basics$modBy, 4, i))) || (((i >= 33) && (i <= 42)) || (((i >= 43) && (i <= 47)) || (i === 56)));
 };
@@ -9598,6 +9564,104 @@ var $author$project$Neat$Dashboard$reviewCard = function (model) {
 		$elm$html$Html$div,
 		_List_fromArray(
 			[
+				A2($elm$html$Html$Attributes$style, 'margin-top', '18px'),
+				A2($elm$html$Html$Attributes$style, 'background', $author$project$Neat$Dashboard$card),
+				A2($elm$html$Html$Attributes$style, 'padding', '14px'),
+				A2($elm$html$Html$Attributes$style, 'border-radius', '10px')
+			]),
+		_List_fromArray(
+			[
+				A2(
+				$elm$html$Html$h2,
+				_List_fromArray(
+					[
+						A2($elm$html$Html$Attributes$style, 'font-size', '15px'),
+						A2($elm$html$Html$Attributes$style, 'margin', '0 0 8px')
+					]),
+				_List_fromArray(
+					[
+						$elm$html$Html$text('Latest evidence')
+					])),
+				(model.reviewError !== '') ? A2(
+				$elm$html$Html$p,
+				_List_fromArray(
+					[
+						A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$coral)
+					]),
+				_List_fromArray(
+					[
+						$elm$html$Html$text(model.reviewError)
+					])) : $elm$html$Html$text(''),
+				function () {
+				var _v0 = model.review;
+				if (_v0.$ === 'Nothing') {
+					return $elm$html$Html$text('Waiting for results');
+				} else {
+					var r = _v0.a;
+					return A2(
+						$elm$html$Html$div,
+						_List_Nil,
+						_List_fromArray(
+							[
+								(r.freshCheck === '') ? $elm$html$Html$text('No fresh-seed check yet.') : A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'margin', '6px 0')
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text(r.freshCheck)
+									])),
+								function () {
+								var _v1 = $elm$core$List$head(
+									$elm$core$List$reverse(r.history));
+								if (_v1.$ === 'Nothing') {
+									return $elm$html$Html$text('');
+								} else {
+									var result = _v1.a;
+									return $author$project$Neat$Dashboard$reviewRow(result);
+								}
+							}(),
+								A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$mute),
+										A2($elm$html$Html$Attributes$style, 'margin', '8px 0 0'),
+										A2($elm$html$Html$Attributes$style, 'font-size', '13px')
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text(
+										(r.phase === 'waiting') ? ('Next: ' + (r.lane + ' experiment')) : (r.lane + (' experiment · ' + (r.phase + (((r.phase === 'baseline') || (r.phase === 'challenger')) ? (' ' + ($elm$core$String$fromInt(r.trialGeneration) + ('/' + $elm$core$String$fromInt(r.targetGenerations)))) : '')))))
+									])),
+								(r.error !== '') ? A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$coral)
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text(r.error)
+									])) : $elm$html$Html$text('')
+							]));
+				}
+			}()
+			]));
+};
+var $author$project$Neat$Dashboard$uptime = function (s) {
+	var n = $elm$core$Basics$round(s);
+	return (n < 60) ? ($elm$core$String$fromInt(n) + 's') : ((n < 3600) ? ($elm$core$String$fromInt((n / 60) | 0) + ('m ' + ($elm$core$String$fromInt(
+		A2($elm$core$Basics$modBy, 60, n)) + 's'))) : ($elm$core$String$fromInt((n / 3600) | 0) + ('h ' + ($elm$core$String$fromInt(
+		A2($elm$core$Basics$modBy, 60, (n / 60) | 0)) + 'm'))));
+};
+var $author$project$Neat$Dashboard$reviewDetails = function (model) {
+	return A2(
+		$elm$html$Html$div,
+		_List_fromArray(
+			[
 				A2($elm$html$Html$Attributes$style, 'background', $author$project$Neat$Dashboard$card),
 				A2($elm$html$Html$Attributes$style, 'padding', '18px'),
 				A2($elm$html$Html$Attributes$style, 'border-radius', '12px'),
@@ -9778,7 +9842,6 @@ var $author$project$Neat$Dashboard$view = function (model) {
 		_List_fromArray(
 			[
 				$author$project$Neat$Dashboard$header(model),
-				$author$project$Neat$Dashboard$hintBar(model),
 				function () {
 				var _v0 = model.status;
 				if (_v0.$ === 'Nothing') {
@@ -9801,9 +9864,30 @@ var $author$project$Neat$Dashboard$view = function (model) {
 						_List_fromArray(
 							[
 								$author$project$Neat$Dashboard$metrics(s),
-								$author$project$Neat$Dashboard$reviewCard(model),
-								$author$project$Neat$Dashboard$matchupGrid(s),
 								$author$project$Neat$Dashboard$charts$(model, s),
+								$author$project$Neat$Dashboard$reviewCard(model),
+								A2(
+								$elm$html$Html$details,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'margin-top', '18px')
+									]),
+								_List_fromArray(
+									[
+										A2(
+										$elm$html$Html$summary,
+										_List_fromArray(
+											[
+												A2($elm$html$Html$Attributes$style, 'cursor', 'pointer'),
+												A2($elm$html$Html$Attributes$style, 'padding', '14px')
+											]),
+										_List_fromArray(
+											[
+												$elm$html$Html$text('Matchups and experiment details')
+											])),
+										$author$project$Neat$Dashboard$matchupGrid(s),
+										$author$project$Neat$Dashboard$reviewDetails(model)
+									])),
 								A2(
 								$elm$html$Html$details,
 								_List_fromArray(
