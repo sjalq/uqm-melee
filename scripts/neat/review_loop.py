@@ -19,6 +19,7 @@ ROOT = Path('/home/schalk/git/uqm-melee')
 ART = ROOT / 'artifacts/neat'
 REVIEWS = ART / 'reviews'
 RELEASE = ART / 'releases/scoring-v1'
+OPPONENT_RELEASE = ART / 'releases/opponents-v1'
 WORKER = RELEASE / 'rust/target/release/melee-worker'
 LANES = ['research', 'creative', 'radical']
 
@@ -31,12 +32,16 @@ def active_run():
     return Path(read(ART / 'active-run.json')['run'])
 
 
+def next_hour():
+    return (int(time.time()) // 3600 + 1) * 3600
+
+
 def summary():
     state = read(REVIEWS / 'state.json') if (REVIEWS / 'state.json').exists() else {'phase': 'waiting', 'history': []}
     run = active_run()
     status = read(run / 'status.json')
     state = {**state, 'server_time': time.time(), 'status_age_s': max(0, time.time() - (run / 'status.json').stat().st_mtime),
-             'mode': 'recipe-based experiments; no autonomous LLM research', 'interval_s': 3600,
+             'mode': 'recipe-based experiments; no autonomous LLM research', 'interval_s': 3600, 'next_review_at': next_hour(),
              'live_run': str(run), 'scoring_version': status.get('scoring_version'),
              'trainer_active': subprocess.run(['systemctl', '--user', 'is-active', '--quiet', 'uqm-neat.service']).returncode == 0}
     if state.get('phase') == 'waiting':
@@ -52,6 +57,14 @@ def summary():
         state['trial_generation'] = progress.get('generation', 0)
     health = REVIEWS / 'health.json'
     state['health_check'] = read(health) if health.exists() else None
+    curriculum = ART / 'curriculum/state.json'
+    if curriculum.exists():
+        data = read(curriculum)
+        from curriculum import next_opponents
+        expanded = next_opponents(data['opponents'])
+        state['curriculum'] = 'Opponent ships: ' + ', '.join(data['opponents']) + '. Next: ' + (expanded[-1] if expanded != data['opponents'] else 'complete') + '. Expansion requires 60% fresh wins, 40% against each opponent, and a confirmed 10-point gain.'
+        if data.get('error'):
+            state['curriculum'] += ' Error: ' + data['error']
     return state
 
 
@@ -78,8 +91,8 @@ def health_check():
     config = read(run / 'manifest.json')['provenance']['config']
     if config['pool'] == ['Pkunk', 'Umgah', 'Yehat'] and digest(champion['weights']) != digest(prior['weights']):
         seeds = random.Random(int(check['checked_at'])).sample(range(400000001, 500000000), 20)
-        before = audit(WORKER, prior['weights'], config['pool'], seeds)
-        after = audit(WORKER, champion['weights'], config['pool'], seeds)
+        before = audit(WORKER, prior['weights'], config['pool'], seeds, config.get('opponent_pool'))
+        after = audit(WORKER, champion['weights'], config['pool'], seeds, config.get('opponent_pool'))
         evidence = {'checked_at': check['checked_at'], 'seeds': seeds, 'before': before, 'after': after}
         atomic_json(REVIEWS / f"health-audit-{int(check['checked_at'])}.json", evidence)
         check['fresh_check'] = {'before_wins': before['wins'], 'after_wins': after['wins'], 'fights': after['fights'],
@@ -91,6 +104,8 @@ def health_check():
     atomic_json(previous_path, check)
     with (REVIEWS / 'checkins.jsonl').open('a') as journal:
         journal.write(json.dumps(check) + '\n')
+    from curriculum import consider
+    consider(ROOT, OPPONENT_RELEASE, WORKER, HERE / 'start.sh')
 
 
 def trial_arguments(lane, history):
@@ -102,12 +117,12 @@ def trial_arguments(lane, history):
     previous = next((r for r in reversed(history) if r.get('lane') == lane), None)
     return {'case_for': pro, 'case_against': con,
             'previous_result': {k: previous.get(k) for k in ['cycle','decision','baseline_wins','challenger_wins']} if previous else None,
-            'early_stop': 'After 40 generations, stop only if the challenger trails by at least 8 wins on 90 screening fights and has no validation advantage.',
+            'early_stop': 'After 40 generations, stop if the challenger trails by at least 8/90 of the screening fights and has no validation advantage.',
             'keep': 'Full independent audit and confirmation gates must still pass.'}
 
 
 def screen_rejects(results, candidate, baseline):
-    return results['challenger']['wins'] + 8 <= results['baseline']['wins'] and candidate['seat_wins'] <= baseline['seat_wins']
+    return (results['baseline']['wins'] - results['challenger']['wins']) * 90 >= 8 * results['baseline'].get('fights', 90) and candidate['seat_wins'] <= baseline['seat_wins']
 
 
 def recipe(cycle, weights, config):
@@ -141,11 +156,11 @@ def recipe(cycle, weights, config):
     return lane, idea, source, initial, hints
 
 
-def train_arm(path, initial, hints, generations):
+def train_arm(path, initial, hints, generations, release=RELEASE):
     path.mkdir(parents=True, exist_ok=True)
     atomic_json(path / 'initial.json', initial)
     atomic_json(path / 'hints.json', hints)
-    cmd = [sys.executable, str(RELEASE / 'scripts/neat/train.py'), '--artifacts', str(path), '--hints', str(path / 'hints.json'),
+    cmd = [sys.executable, str(release / 'scripts/neat/train.py'), '--artifacts', str(path), '--hints', str(path / 'hints.json'),
            '--initial', str(path / 'initial.json'), '--evaluator', 'rust', '--rust-worker', str(WORKER),
            '--scoring-version', 'combat-v1', '--control', str(ROOT / 'scripts/neat/hints.json'), '--no-dashboard', '--generations', str(generations)]
     with (path / 'run.log').open('a') as log:
@@ -156,19 +171,19 @@ def train_arm(path, initial, hints, generations):
     return read(path / 'best.json'), budget
 
 
-def audit_policies(policies, pool, seeds):
+def audit_policies(policies, pool, seeds, opponents=None):
     unique = {}
     results = {}
     for name, policy in policies:
         key = digest(policy['weights'])
         if key not in unique:
-            unique[key] = audit(WORKER, policy['weights'], pool, seeds)
+            unique[key] = audit(WORKER, policy['weights'], pool, seeds, opponents)
         results[name] = unique[key]
     return results
 
 
 def audit_passes(results, candidate, original, baseline):
-    return (results['challenger']['wins'] >= results['baseline']['wins'] + 8
+    return ((results['challenger']['wins'] - results['baseline']['wins']) * 360 >= 8 * results['baseline'].get('fights', 360)
             and candidate['seat_wins'] >= max(original['seat_wins'], baseline['seat_wins']))
 
 
@@ -203,32 +218,34 @@ def review(generations=160, deploy=True):
         if provenance.get('scoring_version') != 'combat-v1' or provenance['config']['pool'] != ['Pkunk', 'Umgah', 'Yehat']:
             raise ValueError('Live scoring or pool changed; review recipe needs revision')
         config = provenance['config']
+        trainer_release = OPPONENT_RELEASE if 'opponent_pool' in config else RELEASE
         rng = random.Random(500000000 + cycle)
         config.update(pop=16, seed=600000000 + cycle, train_seeds=rng.sample(range(1000000, 100000000), 3), pause=False, auto_expand=False)
         lane, idea, source, weights, hints = recipe(cycle, checked_weights(original), config)
         changed = {**original, 'weights': weights}
         arguments = trial_arguments(lane, state.get('history', []))
-        state.update(cycle=cycle, lane=lane, hypothesis=idea, source=source, started=time.time(), phase='baseline', screen=None, next_review_at=time.time()+3600, error='')
+        state.update(cycle=cycle, lane=lane, hypothesis=idea, source=source, started=time.time(), phase='baseline', screen=None, next_review_at=next_hour(), error='')
         evidence = {'cycle': cycle, 'lane': lane, 'hypothesis': idea, 'source': source, 'starting_run': str(run), 'started': state['started'], 'generations': generations, 'arguments': arguments}
         atomic_json(path / 'plan.json', {**evidence, 'baseline_config': config, 'challenger_config': hints,
-                                      'starting_weight_hash': digest(original['weights']), 'minimum_extra_wins': 8,
-                                      'confirmation_rule': 'Beat baseline, starting champion and current live champion on independent 360 fights; no fixed-validation regression.'})
+                                      'starting_weight_hash': digest(original['weights']), 'minimum_extra_win_fraction': 8 / 360,
+                                      'confirmation_rule': 'Beat baseline, starting champion and current live champion on a second independent 20-seed set across every current matchup and both seats; no fixed-validation regression.'})
         def phase(name):
             state['phase'] = name
             atomic_json(REVIEWS / 'state.json', state)
         try:
             state['target_generations'] = min(40, generations)
             phase('baseline')
-            baseline, base_budget = train_arm(path / 'baseline', original, config, min(40, generations))
+            baseline, base_budget = train_arm(path / 'baseline', original, config, min(40, generations), trainer_release)
             phase('challenger')
-            candidate, budget = train_arm(path / 'challenger', changed, hints, min(40, generations))
+            candidate, budget = train_arm(path / 'challenger', changed, hints, min(40, generations), trainer_release)
             if budget != base_budget:
                 raise ValueError('Unequal screening fight budgets')
             phase('screen')
             screening_seeds = rng.sample(range(300000001, 400000000), 5)
-            screening = audit_policies([('baseline', baseline), ('challenger', candidate)], config['pool'], screening_seeds)
+            screening = audit_policies([('baseline', baseline), ('challenger', candidate)], config['pool'], screening_seeds, config.get('opponent_pool'))
             atomic_json(path / 'screen.json', {'seeds': screening_seeds, **screening})
             state['screen'] = {name: result['wins'] for name, result in screening.items()}
+            state['screen']['fights'] = screening['baseline']['fights']
             evidence['screen'] = state['screen']
             if screen_rejects(screening, candidate, baseline):
                 evidence.update(decision='screen rejected', baseline_wins=screening['baseline']['wins'],
@@ -236,21 +253,21 @@ def review(generations=160, deploy=True):
                                 fights_per_arm=budget, finished=time.time())
                 atomic_json(path / 'result.json', evidence)
                 state['history'] = (state.get('history', []) + [evidence])[-60:]
-                state.update(cycle=cycle+1, phase='waiting', next_review_at=state['started']+3600)
+                state.update(cycle=cycle+1, phase='waiting', next_review_at=next_hour())
                 atomic_json(REVIEWS / 'state.json', state)
                 return
             if generations > 40:
                 state['target_generations'] = generations
                 phase('baseline')
-                baseline, base_budget = train_arm(path / 'baseline', original, config, generations)
+                baseline, base_budget = train_arm(path / 'baseline', original, config, generations, trainer_release)
                 phase('challenger')
-                candidate, budget = train_arm(path / 'challenger', changed, hints, generations)
+                candidate, budget = train_arm(path / 'challenger', changed, hints, generations, trainer_release)
             if budget != base_budget:
                 raise ValueError('Unequal fight budgets')
             evidence['fights_per_arm'] = budget
             phase('audit')
             seeds = rng.sample(range(100000001, 200000000), 20)
-            results = audit_policies([('baseline', baseline), ('challenger', candidate)], config['pool'], seeds)
+            results = audit_policies([('baseline', baseline), ('challenger', candidate)], config['pool'], seeds, config.get('opponent_pool'))
             atomic_json(path / 'audit.json', {'seeds': seeds, **results})
             evidence.update(baseline_wins=results['baseline']['wins'], challenger_wins=results['challenger']['wins'], audit_fights=results['baseline']['fights'])
             passed = audit_passes(results, candidate, original, baseline)
@@ -260,7 +277,7 @@ def review(generations=160, deploy=True):
                 current_run = active_run()
                 current = read(current_run / 'best.json')
                 seeds = rng.sample(range(200000001, 300000000), 20)
-                confirm = audit_policies([('baseline', baseline), ('challenger', candidate), ('starting', original), ('live', current)], config['pool'], seeds)
+                confirm = audit_policies([('baseline', baseline), ('challenger', candidate), ('starting', original), ('live', current)], config['pool'], seeds, config.get('opponent_pool'))
                 atomic_json(path / 'confirmation.json', {'seeds': seeds, **confirm})
                 passed = confirmation_passes(confirm, candidate, current)
                 evidence['confirmation_wins'] = {name: value['wins'] for name, value in confirm.items()}
@@ -273,7 +290,7 @@ def review(generations=160, deploy=True):
                         deployment = ART / 'deployment.json'
                         previous = read(deployment) if deployment.exists() else None
                         atomic_json(path / 'previous-deployment.json', previous)
-                        atomic_json(deployment, {'release': str(RELEASE), 'worker': str(WORKER), 'run': str(path / 'challenger'),
+                        atomic_json(deployment, {'release': str(trainer_release), 'worker': str(WORKER), 'run': str(path / 'challenger'),
                                                  'hints': str(path / 'challenger/hints.json'), 'initial': str(path / 'challenger/initial.json')})
                         try:
                             subprocess.run(['bash', str(HERE / 'start.sh')], check=True, timeout=100, stdout=subprocess.DEVNULL)
@@ -294,7 +311,7 @@ def review(generations=160, deploy=True):
             state['error'] = str(error)
         atomic_json(path / 'result.json', evidence)
         state['history'] = (state.get('history', []) + [evidence])[-60:]
-        state.update(cycle=cycle+1, phase='waiting', next_review_at=max(state['started']+3600, time.time()))
+        state.update(cycle=cycle+1, phase='waiting', next_review_at=next_hour())
         atomic_json(REVIEWS / 'state.json', state)
 
 

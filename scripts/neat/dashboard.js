@@ -6391,8 +6391,8 @@ var $elm$http$Http$get = function (r) {
 	return $elm$http$Http$request(
 		{body: $elm$http$Http$emptyBody, expect: r.expect, headers: _List_Nil, method: 'GET', timeout: $elm$core$Maybe$Nothing, tracker: $elm$core$Maybe$Nothing, url: r.url});
 };
-var $author$project$Neat$Dashboard$Status$ = function (generation, bestFitness, meanFitness, wins, own, enemy, evalS, lives, sigma, pop, episodeTicks, notes, history, hall, error, paused, gpu, uptimeS, fitnessVersion, nTrain, nHold, pool, champion, experiment, phase, evaluator, generationS, scoringVersion) {
-	return {bestFitness: bestFitness, champion: champion, enemy: enemy, episodeTicks: episodeTicks, error: error, evalS: evalS, evaluator: evaluator, experiment: experiment, fitnessVersion: fitnessVersion, generation: generation, generationS: generationS, gpu: gpu, hall: hall, history: history, lives: lives, meanFitness: meanFitness, nHold: nHold, nTrain: nTrain, notes: notes, own: own, paused: paused, phase: phase, pool: pool, pop: pop, scoringVersion: scoringVersion, sigma: sigma, uptimeS: uptimeS, wins: wins};
+var $author$project$Neat$Dashboard$Status$ = function (generation, bestFitness, meanFitness, wins, own, enemy, evalS, lives, sigma, pop, episodeTicks, notes, history, hall, error, paused, gpu, uptimeS, fitnessVersion, nTrain, nHold, pool, champion, experiment, phase, evaluator, generationS, scoringVersion, opponents) {
+	return {bestFitness: bestFitness, champion: champion, enemy: enemy, episodeTicks: episodeTicks, error: error, evalS: evalS, evaluator: evaluator, experiment: experiment, fitnessVersion: fitnessVersion, generation: generation, generationS: generationS, gpu: gpu, hall: hall, history: history, lives: lives, meanFitness: meanFitness, nHold: nHold, nTrain: nTrain, notes: notes, opponents: opponents, own: own, paused: paused, phase: phase, pool: pool, pop: pop, scoringVersion: scoringVersion, sigma: sigma, uptimeS: uptimeS, wins: wins};
 };
 var $author$project$Neat$Dashboard$Status = function (generation) {
 	return function (bestFitness) {
@@ -6422,7 +6422,9 @@ var $author$project$Neat$Dashboard$Status = function (generation) {
 																									return function (evaluator) {
 																										return function (generationS) {
 																											return function (scoringVersion) {
-																												return $author$project$Neat$Dashboard$Status$(generation, bestFitness, meanFitness, wins, own, enemy, evalS, lives, sigma, pop, episodeTicks, notes, history, hall, error, paused, gpu, uptimeS, fitnessVersion, nTrain, nHold, pool, champion, experiment, phase, evaluator, generationS, scoringVersion);
+																												return function (opponents) {
+																													return $author$project$Neat$Dashboard$Status$(generation, bestFitness, meanFitness, wins, own, enemy, evalS, lives, sigma, pop, episodeTicks, notes, history, hall, error, paused, gpu, uptimeS, fitnessVersion, nTrain, nHold, pool, champion, experiment, phase, evaluator, generationS, scoringVersion, opponents);
+																												};
 																											};
 																										};
 																									};
@@ -6690,113 +6692,117 @@ var $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$ = function
 };
 var $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required = F3($NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$);
 var $author$project$Neat$Dashboard$statusDecoder = $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-	'scoring_version',
-	$elm$json$Json$Decode$string,
-	'unknown',
+	'opponent_pool',
+	$elm$json$Json$Decode$list($elm$json$Json$Decode$string),
+	_List_Nil,
 	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-		'generation_s',
-		$author$project$Neat$Dashboard$floatish,
-		0,
+		'scoring_version',
+		$elm$json$Json$Decode$string,
+		'unknown',
 		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-			'evaluator',
-			$elm$json$Json$Decode$string,
-			'elm',
+			'generation_s',
+			$author$project$Neat$Dashboard$floatish,
+			0,
 			$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-				'phase',
+				'evaluator',
 				$elm$json$Json$Decode$string,
-				'',
+				'elm',
 				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-					'experiment',
+					'phase',
 					$elm$json$Json$Decode$string,
 					'',
 					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-						'champion',
-						$author$project$Neat$Dashboard$championDecoder,
-						$author$project$Neat$Dashboard$emptyChampion,
+						'experiment',
+						$elm$json$Json$Decode$string,
+						'',
 						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-							'pool',
-							$elm$json$Json$Decode$list($elm$json$Json$Decode$string),
-							_List_Nil,
+							'champion',
+							$author$project$Neat$Dashboard$championDecoder,
+							$author$project$Neat$Dashboard$emptyChampion,
 							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-								'n_hold',
-								$elm$json$Json$Decode$int,
-								0,
+								'pool',
+								$elm$json$Json$Decode$list($elm$json$Json$Decode$string),
+								_List_Nil,
 								$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-									'n_train',
+									'n_hold',
 									$elm$json$Json$Decode$int,
 									0,
 									$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-										'fitness_version',
-										$elm$json$Json$Decode$string,
-										'',
+										'n_train',
+										$elm$json$Json$Decode$int,
+										0,
 										$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-											'uptime_s',
-											$author$project$Neat$Dashboard$floatish,
-											0,
+											'fitness_version',
+											$elm$json$Json$Decode$string,
+											'',
 											$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-												'gpu',
-												$elm$json$Json$Decode$bool,
-												false,
+												'uptime_s',
+												$author$project$Neat$Dashboard$floatish,
+												0,
 												$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-													'paused',
+													'gpu',
 													$elm$json$Json$Decode$bool,
 													false,
 													$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-														'error',
-														$elm$json$Json$Decode$string,
-														'',
+														'paused',
+														$elm$json$Json$Decode$bool,
+														false,
 														$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-															'hall',
-															$elm$json$Json$Decode$list($author$project$Neat$Dashboard$hallDecoder),
-															_List_Nil,
+															'error',
+															$elm$json$Json$Decode$string,
+															'',
 															$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																'history',
-																$elm$json$Json$Decode$list($author$project$Neat$Dashboard$pointDecoder),
+																'hall',
+																$elm$json$Json$Decode$list($author$project$Neat$Dashboard$hallDecoder),
 																_List_Nil,
 																$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																	'notes',
-																	$elm$json$Json$Decode$string,
-																	'',
+																	'history',
+																	$elm$json$Json$Decode$list($author$project$Neat$Dashboard$pointDecoder),
+																	_List_Nil,
 																	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																		'episode_ticks',
-																		$elm$json$Json$Decode$int,
-																		0,
+																		'notes',
+																		$elm$json$Json$Decode$string,
+																		'',
 																		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																			'pop',
+																			'episode_ticks',
 																			$elm$json$Json$Decode$int,
 																			0,
 																			$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																				'sigma',
-																				$author$project$Neat$Dashboard$floatish,
+																				'pop',
+																				$elm$json$Json$Decode$int,
 																				0,
 																				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																					'lives',
-																					$elm$json$Json$Decode$int,
+																					'sigma',
+																					$author$project$Neat$Dashboard$floatish,
 																					0,
 																					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																						'eval_s',
-																						$author$project$Neat$Dashboard$floatish,
+																						'lives',
+																						$elm$json$Json$Decode$int,
 																						0,
-																						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																							'enemy',
+																						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+																							'eval_s',
 																							$author$project$Neat$Dashboard$floatish,
+																							0,
 																							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																								'own',
+																								'enemy',
 																								$author$project$Neat$Dashboard$floatish,
-																								$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-																									'wins',
-																									$elm$json$Json$Decode$int,
-																									0,
-																									$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																										'mean_fitness',
-																										$author$project$Neat$Dashboard$floatish,
+																								$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+																									'own',
+																									$author$project$Neat$Dashboard$floatish,
+																									$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+																										'wins',
+																										$elm$json$Json$Decode$int,
+																										0,
 																										$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																											'best_fitness',
+																											'mean_fitness',
 																											$author$project$Neat$Dashboard$floatish,
 																											$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-																												'generation',
-																												$elm$json$Json$Decode$int,
-																												$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$Status)))))))))))))))))))))))))))));
+																												'best_fitness',
+																												$author$project$Neat$Dashboard$floatish,
+																												$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+																													'generation',
+																													$elm$json$Json$Decode$int,
+																													$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$Status))))))))))))))))))))))))))))));
 var $author$project$Neat$Dashboard$fetch = $elm$http$Http$get(
 	{
 		expect: $elm$http$Http$expectJson$($author$project$Neat$Dashboard$Got, $author$project$Neat$Dashboard$statusDecoder),
@@ -6888,8 +6894,8 @@ var $author$project$Neat$Dashboard$fetchNet = $elm$http$Http$get(
 var $author$project$Neat$Dashboard$GotReview = function (a) {
 	return {$: 'GotReview', a: a};
 };
-var $author$project$Neat$Dashboard$Review$ = function (phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration, targetGenerations, screen, freshCheck) {
-	return {active: active, age: age, error: error, freshCheck: freshCheck, history: history, hypothesis: hypothesis, lane: lane, next: next, now: now, phase: phase, screen: screen, targetGenerations: targetGenerations, trialGeneration: trialGeneration};
+var $author$project$Neat$Dashboard$Review$ = function (phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration, targetGenerations, screen, freshCheck, curriculum) {
+	return {active: active, age: age, curriculum: curriculum, error: error, freshCheck: freshCheck, history: history, hypothesis: hypothesis, lane: lane, next: next, now: now, phase: phase, screen: screen, targetGenerations: targetGenerations, trialGeneration: trialGeneration};
 };
 var $author$project$Neat$Dashboard$Review = function (phase) {
 	return function (lane) {
@@ -6904,7 +6910,9 @@ var $author$project$Neat$Dashboard$Review = function (phase) {
 										return function (targetGenerations) {
 											return function (screen) {
 												return function (freshCheck) {
-													return $author$project$Neat$Dashboard$Review$(phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration, targetGenerations, screen, freshCheck);
+													return function (curriculum) {
+														return $author$project$Neat$Dashboard$Review$(phase, lane, hypothesis, error, age, active, next, now, history, trialGeneration, targetGenerations, screen, freshCheck, curriculum);
+													};
 												};
 											};
 										};
@@ -6965,83 +6973,93 @@ var $author$project$Neat$Dashboard$reviewResultDecoder = $NoRedInk$elm_json_deco
 								$elm$json$Json$Decode$int,
 								$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$ReviewResult)))))))));
 var $author$project$Neat$Dashboard$reviewDecoder = $NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-	'health_check',
-	$elm$json$Json$Decode$oneOf(
-		_List_fromArray(
-			[
-				$elm$json$Json$Decode$at$(
-				_List_fromArray(
-					['fresh_check']),
-				A4(
-					$elm$json$Json$Decode$map3,
-					F3(
-						function (before, after, count) {
-							return 'Fresh fights: ' + ($elm$core$String$fromInt(before) + (' → ' + ($elm$core$String$fromInt(after) + (' wins / ' + ($elm$core$String$fromInt(count) + ' against the reference policy.')))));
-						}),
-					A2($elm$json$Json$Decode$field, 'before_wins', $elm$json$Json$Decode$int),
-					A2($elm$json$Json$Decode$field, 'after_wins', $elm$json$Json$Decode$int),
-					A2($elm$json$Json$Decode$field, 'fights', $elm$json$Json$Decode$int))),
-				$elm$json$Json$Decode$succeed('')
-			])),
+	'curriculum',
+	$elm$json$Json$Decode$string,
 	'',
 	$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-		'screen',
+		'health_check',
 		$elm$json$Json$Decode$oneOf(
 			_List_fromArray(
 				[
-					A3(
-					$elm$json$Json$Decode$map2,
-					F2(
-						function (b, c) {
-							return '40-generation screening: baseline ' + ($elm$core$String$fromInt(b) + (', challenger ' + ($elm$core$String$fromInt(c) + ' wins / 90 fights. These seeds cannot qualify a deployment.')));
-						}),
-					A2($elm$json$Json$Decode$field, 'baseline', $elm$json$Json$Decode$int),
-					A2($elm$json$Json$Decode$field, 'challenger', $elm$json$Json$Decode$int)),
-					$elm$json$Json$Decode$null('')
+					$elm$json$Json$Decode$at$(
+					_List_fromArray(
+						['fresh_check']),
+					A4(
+						$elm$json$Json$Decode$map3,
+						F3(
+							function (before, after, count) {
+								return 'Fresh fights: ' + ($elm$core$String$fromInt(before) + (' → ' + ($elm$core$String$fromInt(after) + (' wins / ' + ($elm$core$String$fromInt(count) + ' against the reference policy.')))));
+							}),
+						A2($elm$json$Json$Decode$field, 'before_wins', $elm$json$Json$Decode$int),
+						A2($elm$json$Json$Decode$field, 'after_wins', $elm$json$Json$Decode$int),
+						A2($elm$json$Json$Decode$field, 'fights', $elm$json$Json$Decode$int))),
+					$elm$json$Json$Decode$succeed('')
 				])),
 		'',
 		$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-			'target_generations',
-			$elm$json$Json$Decode$int,
-			160,
+			'screen',
+			$elm$json$Json$Decode$oneOf(
+				_List_fromArray(
+					[
+						A4(
+						$elm$json$Json$Decode$map3,
+						F3(
+							function (b, c, n) {
+								return '40-generation screening: baseline ' + ($elm$core$String$fromInt(b) + (', challenger ' + ($elm$core$String$fromInt(c) + (' wins / ' + ($elm$core$String$fromInt(n) + ' fights. These seeds cannot qualify a deployment.')))));
+							}),
+						A2($elm$json$Json$Decode$field, 'baseline', $elm$json$Json$Decode$int),
+						A2($elm$json$Json$Decode$field, 'challenger', $elm$json$Json$Decode$int),
+						$elm$json$Json$Decode$oneOf(
+							_List_fromArray(
+								[
+									A2($elm$json$Json$Decode$field, 'fights', $elm$json$Json$Decode$int),
+									$elm$json$Json$Decode$succeed(90)
+								]))),
+						$elm$json$Json$Decode$null('')
+					])),
+			'',
 			$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-				'trial_generation',
+				'target_generations',
 				$elm$json$Json$Decode$int,
-				0,
+				160,
 				$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-					'history',
-					$elm$json$Json$Decode$list($author$project$Neat$Dashboard$reviewResultDecoder),
-					_List_Nil,
-					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-						'server_time',
-						$elm$json$Json$Decode$float,
-						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-							'next_review_at',
+					'trial_generation',
+					$elm$json$Json$Decode$int,
+					0,
+					$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+						'history',
+						$elm$json$Json$Decode$list($author$project$Neat$Dashboard$reviewResultDecoder),
+						_List_Nil,
+						$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+							'server_time',
 							$elm$json$Json$Decode$float,
-							0,
-							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-								'trainer_active',
-								$elm$json$Json$Decode$bool,
+							$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+								'next_review_at',
+								$elm$json$Json$Decode$float,
+								0,
 								$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
-									'status_age_s',
-									$elm$json$Json$Decode$float,
-									$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-										'error',
-										$elm$json$Json$Decode$string,
-										'',
+									'trainer_active',
+									$elm$json$Json$Decode$bool,
+									$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$required$(
+										'status_age_s',
+										$elm$json$Json$Decode$float,
 										$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-											'hypothesis',
+											'error',
 											$elm$json$Json$Decode$string,
-											'First review pending',
+											'',
 											$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-												'lane',
+												'hypothesis',
 												$elm$json$Json$Decode$string,
-												'research',
+												'First review pending',
 												$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
-													'phase',
+													'lane',
 													$elm$json$Json$Decode$string,
-													'waiting',
-													$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$Review))))))))))))));
+													'research',
+													$NoRedInk$elm_json_decode_pipeline$Json$Decode$Pipeline$optional$(
+														'phase',
+														$elm$json$Json$Decode$string,
+														'waiting',
+														$elm$json$Json$Decode$succeed($author$project$Neat$Dashboard$Review)))))))))))))));
 var $author$project$Neat$Dashboard$fetchReview = $elm$http$Http$get(
 	{
 		expect: $elm$http$Http$expectJson$($author$project$Neat$Dashboard$GotReview, $author$project$Neat$Dashboard$reviewDecoder),
@@ -8697,7 +8715,7 @@ var $author$project$Neat$Dashboard$matchupGrid = function (s) {
 										title: us + (' vs ' + them)
 									});
 							},
-							s.pool);
+							$elm$core$List$isEmpty(s.opponents) ? s.pool : s.opponents);
 					},
 					s.pool))
 			]));
@@ -9781,7 +9799,7 @@ var $author$project$Neat$Dashboard$reviewDetails = function (model) {
 									]),
 								_List_fromArray(
 									[
-										$elm$html$Html$text('Keep rule: at least 8 extra wins on 360 fresh fights, then beat the baseline and live champion on another 360. Failed ideas stay in the ledger; the live champion stays protected.')
+										$elm$html$Html$text('Keep rule: a fresh-win gain equivalent to 8 per 360 fights, then independent confirmation against baseline and live champion. Failed ideas stay in the ledger.')
 									])),
 								(r.freshCheck !== '') ? A2(
 								$elm$html$Html$p,
@@ -9792,6 +9810,16 @@ var $author$project$Neat$Dashboard$reviewDetails = function (model) {
 								_List_fromArray(
 									[
 										$elm$html$Html$text(r.freshCheck)
+									])) : $elm$html$Html$text(''),
+								(r.curriculum !== '') ? A2(
+								$elm$html$Html$p,
+								_List_fromArray(
+									[
+										A2($elm$html$Html$Attributes$style, 'color', $author$project$Neat$Dashboard$mute)
+									]),
+								_List_fromArray(
+									[
+										$elm$html$Html$text(r.curriculum)
 									])) : $elm$html$Html$text(''),
 								(r.error !== '') ? A2(
 								$elm$html$Html$p,

@@ -54,6 +54,7 @@ type alias Review =
     , targetGenerations : Int
     , screen : String
     , freshCheck : String
+    , curriculum : String
     }
 
 
@@ -88,8 +89,9 @@ reviewDecoder =
         |> P.optional "history" (D.list reviewResultDecoder) []
         |> P.optional "trial_generation" D.int 0
         |> P.optional "target_generations" D.int 160
-        |> P.optional "screen" (D.oneOf [ D.map2 (\b c -> "40-generation screening: baseline " ++ String.fromInt b ++ ", challenger " ++ String.fromInt c ++ " wins / 90 fights. These seeds cannot qualify a deployment.") (D.field "baseline" D.int) (D.field "challenger" D.int), D.null "" ]) ""
+        |> P.optional "screen" (D.oneOf [ D.map3 (\b c n -> "40-generation screening: baseline " ++ String.fromInt b ++ ", challenger " ++ String.fromInt c ++ " wins / " ++ String.fromInt n ++ " fights. These seeds cannot qualify a deployment.") (D.field "baseline" D.int) (D.field "challenger" D.int) (D.oneOf [ D.field "fights" D.int, D.succeed 90 ]), D.null "" ]) ""
         |> P.optional "health_check" (D.oneOf [ D.at [ "fresh_check" ] (D.map3 (\before after count -> "Fresh fights: " ++ String.fromInt before ++ " → " ++ String.fromInt after ++ " wins / " ++ String.fromInt count ++ " against the reference policy.") (D.field "before_wins" D.int) (D.field "after_wins" D.int) (D.field "fights" D.int)), D.succeed "" ]) ""
+        |> P.optional "curriculum" D.string ""
 
 
 reviewResultDecoder : D.Decoder ReviewResult
@@ -153,8 +155,9 @@ reviewDetails model =
                     , p [ A.style "line-height" "1.5" ] [ text r.hypothesis ]
                     , if r.phase == "baseline" || r.phase == "challenger" then p [ A.style "color" mute ] [ text (r.phase ++ ": generation " ++ String.fromInt r.trialGeneration ++ " / " ++ String.fromInt r.targetGenerations ++ ". Both arms get the same fight budget.") ] else text ""
                     , if r.screen /= "" && r.phase /= "waiting" then p [ A.style "color" gold ] [ text r.screen ] else text ""
-                    , p [ A.style "color" mute, A.style "font-size" "13px" ] [ text "Keep rule: at least 8 extra wins on 360 fresh fights, then beat the baseline and live champion on another 360. Failed ideas stay in the ledger; the live champion stays protected." ]
+                    , p [ A.style "color" mute, A.style "font-size" "13px" ] [ text "Keep rule: a fresh-win gain equivalent to 8 per 360 fights, then independent confirmation against baseline and live champion. Failed ideas stay in the ledger." ]
                     , if r.freshCheck /= "" then p [ A.style "color" ink ] [ text r.freshCheck ] else text ""
+                    , if r.curriculum /= "" then p [ A.style "color" mute ] [ text r.curriculum ] else text ""
                     , if r.error /= "" then p [ A.style "color" coral ] [ text r.error ] else text ""
                     , if List.isEmpty r.history then
                         p [ A.style "color" mute ] [ text "No completed reviews yet. Fresh-seed improvement has not been demonstrated." ]
@@ -223,6 +226,7 @@ type alias Status =
     , evaluator : String
     , generationS : Float
     , scoringVersion : String
+    , opponents : List String
     }
 
 
@@ -480,6 +484,7 @@ statusDecoder =
         |> P.optional "evaluator" D.string "elm"
         |> P.optional "generation_s" floatish 0
         |> P.optional "scoring_version" D.string "unknown"
+        |> P.optional "opponent_pool" (D.list D.string) []
 
 
 emptyChampion : Champion
@@ -732,7 +737,7 @@ matchupGrid s =
                         metric (us ++ " vs " ++ them) (String.fromInt wins ++ " / " ++ String.fromInt (List.length fights)) (wins == List.length fights && wins > 0)
                             { title = us ++ " vs " ++ them
                             , body = [ "Saved validation wins. Bottom seat: " ++ String.fromInt bottom ++ ". Top seat: " ++ String.fromInt top ++ ". Timeouts: " ++ String.fromInt timeouts ++ ".", "A zero or seat imbalance identifies a weakness. These fixed validation results are not fresh-seed evidence. Expand the fight list for crew and individual seeds." ] }
-                    ) s.pool
+                    ) (if List.isEmpty s.opponents then s.pool else s.opponents)
                 ) s.pool)
         ]
 

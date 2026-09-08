@@ -35,3 +35,14 @@ class ReviewTests(unittest.TestCase):
         results['challenger']['wins'] = 12
         self.assertTrue(screen_rejects(results, {'seat_wins': 21}, {'seat_wins': 21}))
         self.assertFalse(screen_rejects(results, {'seat_wins': 22}, {'seat_wins': 21}))
+
+    def test_gates_scale_with_expanded_opponent_matrix(self):
+        policy = {'seat_wins': 40}
+        results = {'baseline': {'wins': 100, 'fights': 480}, 'challenger': {'wins': 110, 'fights': 480}}
+        self.assertFalse(audit_passes(results, policy, policy, policy))
+        results['challenger']['wins'] = 111
+        self.assertTrue(audit_passes(results, policy, policy, policy))
+        results = {'baseline': {'wins': 40, 'fights': 120}, 'challenger': {'wins': 30, 'fights': 120}}
+        self.assertFalse(screen_rejects(results, policy, policy))
+        results['challenger']['wins'] = 29
+        self.assertTrue(screen_rejects(results, policy, policy))

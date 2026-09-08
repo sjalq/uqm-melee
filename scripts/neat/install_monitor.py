@@ -44,8 +44,8 @@ Environment=OMP_NUM_THREADS=1
 (units / 'uqm-review.timer').write_text("""[Unit]
 Description=Try a new Melee experiment every hour
 [Timer]
-OnActiveSec=5
-OnUnitActiveSec=1h
+OnCalendar=hourly
+Persistent=true
 AccuracySec=1s
 Unit=uqm-review.service
 [Install]
@@ -58,14 +58,14 @@ Type=oneshot
 ExecStart=/usr/bin/python3 {release}/review_loop.py health
 AllowedCPUs=4,5
 CPUWeight=100
-MemoryMax=256M
+MemoryMax=1G
 MemorySwapMax=0
 """)
 (units / 'uqm-health.timer').write_text("""[Unit]
 Description=Check Melee training every 20 minutes
 [Timer]
-OnActiveSec=5
-OnUnitActiveSec=20min
+OnCalendar=*-*-* *:00/20:00
+Persistent=true
 AccuracySec=1s
 [Install]
 WantedBy=timers.target

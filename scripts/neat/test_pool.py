@@ -86,6 +86,21 @@ class ScenarioTests(unittest.TestCase):
         self.assertTrue(all(scenario["foe"] == "cyborg" for scenario in scenarios))
         self.assertTrue(all("weights" not in scenario for scenario in scenarios))
 
+    def test_opponent_expansion_preserves_our_ships_and_all_old_fights(self):
+        opponents = list(START_POOL) + ["Earthling", "Shofixti"]
+        hints = {**HINTS, "opponent_pool": opponents}
+        hold = make_hold_scenarios(hints)
+        self.assertEqual(len(hold), 3 * 5 * 2 * 2)
+        self.assertEqual(set(START_POOL), {f["us"] for f in hold})
+        self.assertEqual(set(opponents), {f["them"] for f in hold})
+        for gen in range(4):
+            training = make_train_scenarios(hints, gen)
+            self.assertEqual(len(training), 15)
+            self.assertEqual({(a,b) for a in START_POOL for b in opponents}, {(f["us"],f["them"]) for f in training})
+            self.assertTrue(all(f["foe"] == "cyborg" and f["rating"] == "awesome" for f in training))
+        old = {(f["us"],f["them"],f["seed"],f["swap"]) for f in make_hold_scenarios(HINTS)}
+        self.assertTrue(old <= {(f["us"],f["them"],f["seed"],f["swap"]) for f in hold})
+
 
 if __name__ == "__main__":
     unittest.main()

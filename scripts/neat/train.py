@@ -137,6 +137,10 @@ def load_hints() -> dict:
         raise ValueError("training and validation seeds must be disjoint")
     if len(set(defaults["pool"])) != len(defaults["pool"]) or any(s not in ALL_SHIPS for s in defaults["pool"]):
         raise ValueError("pool must contain unique, known ships")
+    if "opponent_pool" in defaults:
+        opponents = defaults["opponent_pool"]
+        if not isinstance(opponents, list) or not opponents or len(set(opponents)) != len(opponents) or any(ship not in ALL_SHIPS for ship in opponents):
+            raise ValueError("opponent_pool must contain unique, known ships")
     return defaults
 
 
@@ -346,16 +350,16 @@ def pack(us, them, foe, seeds, group, hints, swaps=(False, True)):
     return out
 
 
-def pool_pairs(pool):
-    return [(a, b) for a in pool for b in pool]
+def pool_pairs(pool, opponents=None):
+    return [(a, b) for a in pool for b in (pool if opponents is None else opponents)]
 
 
 def make_train_scenarios(hints, gen):
     pool = list(hints.get("pool") or START_POOL)
     seeds = list(hints.get("train_seeds") or [1701])
     seeds = [seeds[gen % len(seeds)]]
-    pairs = pool_pairs(pool)
-    if len(pairs) > 12:
+    pairs = pool_pairs(pool, hints.get("opponent_pool"))
+    if len(pairs) > 12 and "opponent_pool" not in hints:
         rng = __import__("random").Random(gen * 31 + 7)
         rng.shuffle(pairs)
         pairs = pairs[:12]
@@ -370,7 +374,7 @@ def make_hold_scenarios(hints):
     pool = list(hints.get("pool") or START_POOL)
     seeds = list(hints.get("hold_seeds") or [42])
     out = []
-    for us, them in pool_pairs(pool):
+    for us, them in pool_pairs(pool, hints.get("opponent_pool")):
         out += pack(us, them, "cyborg", seeds, f"{us}-{them}", hints)
     return out
 
@@ -483,7 +487,7 @@ def run_loop():
         log(f"restored exact search state at generation {gen}")
     state.update({"generation": gen, "sigma": hints["sigma"], "pop": hints["pop"],
                   "episode_ticks": hints["episode_ticks"], "notes": hints.get("notes", ""),
-                  "pool": hints["pool"], "search": hints["search"], "experiment": str(ART),
+                  "pool": hints["pool"], "opponent_pool": hints.get("opponent_pool", hints["pool"]), "search": hints["search"], "experiment": str(ART),
                   "phase": "baseline", "paused": hints["pause"], "evaluator": EVALUATOR, "scoring_version": SCORING_VERSION})
     if not NO_DASHBOARD:
         atomic_json(ACTIVE_RUN_FILE, {"run": str(ART), "evaluator": EVALUATOR, "scoring_version": SCORING_VERSION})
@@ -588,7 +592,7 @@ def run_loop():
                 "validation_wins": hold["seat_wins"], "champion_wins": champion["seat_wins"],
                 "promoted": promoted, "sigma": hints["sigma"], "lr": hints["lr"],
                 "fitness_version": FITNESS_VERSION, "search": hints["search"],
-                "n_train": len(train_scen), "n_hold": len(hold_scen), "pool": hints["pool"],
+                "n_train": len(train_scen), "n_hold": len(hold_scen), "pool": hints["pool"], "opponent_pool": hints.get("opponent_pool", hints["pool"]),
                 "train_seed": train_scen[0]["seed"], "generation_s": elapsed,
                 "candidate_train": slim(candidate), "candidate_validation": slim(hold),
                 "center_train": slim(center), "population": [slim(r) for r in recs],
