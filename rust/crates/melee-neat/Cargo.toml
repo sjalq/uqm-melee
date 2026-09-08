@@ -1,0 +1,8 @@
+[package]
+name = "melee-neat"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+melee-core = { path = "../melee-core" }
+melee-sim = { path = "../melee-sim" }

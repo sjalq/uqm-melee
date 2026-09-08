@@ -1,4 +1,4 @@
-module Helpers.LongGame exposing (Outcome(..), Report, healthy, nextEvent, run, runWith, start)
+module Helpers.LongGame exposing (Outcome(..), Report, healthy, nextEvent, run, runFold, runWith, start)
 
 import Melee.Catalog as Catalog
 import Melee.Input exposing (CyborgRating(..))
@@ -49,14 +49,37 @@ run maxTicks game =
 
 runWith : Strategy.Pilots -> Melee.Units.Sided CyborgRating -> Int -> Game.Model -> Report
 runWith pilots ratings maxTicks game =
-    loop pilots ratings maxTicks 0 0 0 (progress game) game
+    runFold (\_ s -> ( pilots, s )) () ratings maxTicks game
+
+
+{-| Like `runWith`, but `prep` may rebuild the pilots between events.
+Use this to thread policy feedback across 24 Hz thinks without storing
+it in the battle Seed or combatant combat fields.
+-}
+runFold : (Game.Model -> s -> ( Strategy.Pilots, s )) -> s -> Melee.Units.Sided CyborgRating -> Int -> Game.Model -> Report
+runFold prep state ratings maxTicks game =
+    loopFold prep ratings maxTicks 0 0 0 (progress game) state game
 
 
 health : Game.Model -> ( Int, Int )
 health game =
-    Game.phaseArena game.phase
+    case crewOf game.phase of
+        Just crew ->
+            crew
+
+        Nothing ->
+            case game.survivor of
+                Just arena ->
+                    ( Game.crew arena.combatants.bottom arena, Game.crew arena.combatants.top arena )
+
+                Nothing ->
+                    ( 0, 0 )
+
+
+crewOf : Game.Phase -> Maybe ( Int, Int )
+crewOf phase =
+    Game.phaseArena phase
         |> Maybe.map (\a -> ( Game.crew a.combatants.bottom a, Game.crew a.combatants.top a ))
-        |> Maybe.withDefault ( 0, 0 )
 
 
 progress : Game.Model -> ( Int, Int, Int )
@@ -68,8 +91,8 @@ progress game =
     ( game.round, bottom, top )
 
 
-loop : Strategy.Pilots -> Melee.Units.Sided CyborgRating -> Int -> Int -> Int -> Int -> ( Int, Int, Int ) -> Game.Model -> Report
-loop pilots ratings maxTicks ticks quiet longest previous game =
+loopFold : (Game.Model -> s -> ( Strategy.Pilots, s )) -> Melee.Units.Sided CyborgRating -> Int -> Int -> Int -> Int -> ( Int, Int, Int ) -> s -> Game.Model -> Report
+loopFold prep ratings maxTicks ticks quiet longest previous state game =
     let
         complete =
             case game.phase of
@@ -104,11 +127,14 @@ loop pilots ratings maxTicks ticks quiet longest previous game =
                 _ ->
                     "pending"
         , crew = health game
-        , ships = Game.phaseArena game.phase |> Maybe.map (\a -> ( (Catalog.info (State.kind a.combatants.bottom)).name, (Catalog.info (State.kind a.combatants.top)).name )) |> Maybe.withDefault ( "", "" )
+        , ships = shipsOf game
         }
 
     else
         let
+            ( pilots, nextState ) =
+                prep game state
+
             -- One real 60 Hz update. This includes the 24 Hz physics pump,
             -- countdowns, death, resurrection, selection and survivor carry.
             ( elapsed, next ) =
@@ -131,7 +157,26 @@ loop pilots ratings maxTicks ticks quiet longest previous game =
                 else
                     dry
         in
-        loop pilots ratings maxTicks (ticks + elapsed) dry (max longest longestBeforeProgress) current next
+        loopFold prep ratings maxTicks (ticks + elapsed) dry (max longest longestBeforeProgress) current nextState next
+
+
+shipsOf : Game.Model -> ( String, String )
+shipsOf game =
+    let
+        fromArena arena =
+            ( (Catalog.info (State.kind arena.combatants.bottom)).name, (Catalog.info (State.kind arena.combatants.top)).name )
+    in
+    case Game.phaseArena game.phase of
+        Just arena ->
+            fromArena arena
+
+        Nothing ->
+            case game.survivor of
+                Just arena ->
+                    fromArena arena
+
+                Nothing ->
+                    ( "", "" )
 
 
 nextEvent : Strategy.Pilots -> Melee.Units.Sided CyborgRating -> Int -> Game.Model -> ( Int, Game.Model )

@@ -21,3 +21,9 @@ tests/viewer.js
 *.key
 .lamdera-app
 backups/
+
+# Rust build output and Elm<->Rust differential dumps
+rust/target/
+artifacts/
+__pycache__/
+*.pyc
