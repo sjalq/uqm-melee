@@ -1,3 +1,5 @@
+#![cfg_attr(target_arch = "nvptx64", no_std)]
+
 //! Bit-exact Rust mirror of the pure-integer foundation of `src/Melee/`.
 //!
 //! Every function here is a literal transcription of its Elm counterpart.
@@ -21,6 +23,9 @@ pub fn idiv(a: i64, b: i64) -> i64 {
 /// only ever uses positive divisors, where this is `rem_euclid`.
 #[inline(always)]
 pub fn mod_by(n: i64, x: i64) -> i64 {
-    debug_assert!(n > 0, "modBy with non-positive divisor is not used by the sim");
+    debug_assert!(
+        n > 0,
+        "modBy with non-positive divisor is not used by the sim"
+    );
     x.rem_euclid(n)
 }

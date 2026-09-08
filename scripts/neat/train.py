@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenAI-ES trainer for the Elm Neat kernel.
+"""Evolution-strategies trainer with interchangeable Elm and Rust evaluators.
 
 Caps: 2 CPU cores, 4 GB host RAM. GPU is optional (tiny weight updates).
 Dashboard: http://0.0.0.0:8788
@@ -8,9 +8,13 @@ Hot-reload: scripts/neat/hints.json
 
 from __future__ import annotations
 
+import argparse
 import json
+import math
 import os
 import queue
+import random
+import selectors
 import signal
 import subprocess
 import sys
@@ -25,6 +29,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from layout import ALL_SHIPS, FITNESS_VERSION, N_HIDDEN, N_IN, N_OUT, N_WEIGHTS, START_POOL  # noqa: E402
 from score import cvar_mean, centered_ranks, scenario_win  # noqa: E402
+from experiment import atomic_json, checked_weights, digest, fork_checkpoint, noise_vector, result_key, source_hashes, tuples
 
 ART = ROOT / "artifacts" / "neat"
 HALL = ART / "hall"
@@ -34,8 +39,15 @@ METRICS = ART / "metrics.jsonl"
 BEST = ART / "best.json"
 WORKER = HERE / "worker.js"
 KERNEL = HERE / "kernel.js"
+EVALUATOR = "elm"
+RUST_WORKER = ROOT / "rust" / "target" / "release" / "melee-worker"
 PORT = int(os.environ.get("NEAT_PORT", "8788"))
 WORKERS = int(os.environ.get("NEAT_WORKERS", "2"))
+CONTROL = None
+INITIAL = None
+MAX_GENERATIONS = None
+NO_DASHBOARD = False
+RESUME_FROM = None
 
 ART.mkdir(parents=True, exist_ok=True)
 HALL.mkdir(parents=True, exist_ok=True)
@@ -44,7 +56,7 @@ stop = threading.Event()
 lock = threading.Lock()
 state = {
     "generation": 0,
-    "best_fitness": float("-inf"),
+    "best_fitness": -1e300,
     "mean_fitness": 0.0,
     "wins": 0,
     "own": 0.0,
@@ -93,12 +105,17 @@ def load_hints() -> dict:
         "roster": [],
         "pool": list(START_POOL),
         "expand_at": 0.8,
+        "search": "es",
+        "auto_expand": False,
     }
     try:
         data = json.loads(HINTS.read_text())
         defaults.update(data)
     except Exception as e:
-        log(f"hints read failed: {e}")
+        raise ValueError(f"cannot read hints; refusing to train with defaults: {e}") from e
+    if CONTROL is not None:
+        control = json.loads(CONTROL.read_text())
+        defaults["pause"] = bool(control.get("pause", True))
     defaults["pop"] = int(max(8, min(32, defaults["pop"])))
     defaults["sigma"] = float(max(0.02, min(0.4, defaults["sigma"])))
     defaults["lr"] = float(max(0.01, min(0.4, defaults.get("lr", 0.08))))
@@ -112,6 +129,12 @@ def load_hints() -> dict:
     if not isinstance(defaults.get("pool"), list) or not defaults["pool"]:
         defaults["pool"] = list(START_POOL)
     defaults["expand_at"] = float(defaults.get("expand_at") or 0.8)
+    if defaults["search"] not in ("es", "block_es"):
+        raise ValueError("search must be es or block_es")
+    if set(defaults["train_seeds"]) & set(defaults["hold_seeds"]):
+        raise ValueError("training and validation seeds must be disjoint")
+    if len(set(defaults["pool"])) != len(defaults["pool"]) or any(s not in ALL_SHIPS for s in defaults["pool"]):
+        raise ValueError("pool must contain unique, known ships")
     return defaults
 
 
@@ -123,75 +146,9 @@ def save_status() -> None:
         payload["hall"] = state["hall"][-20:]
         payload["n_weights"] = N_WEIGHTS
         payload["fitness_version"] = FITNESS_VERSION
-    STATUS.write_text(json.dumps(payload, indent=2))
-
-
-def restore_state() -> None:
-    if STATUS.exists():
-        try:
-            data = json.loads(STATUS.read_text())
-            saved_w = data.get("n_weights")
-            if saved_w != N_WEIGHTS:
-                log(f"status width {saved_w} != {N_WEIGHTS}, starting fresh")
-            else:
-                saved_v = data.get("fitness_version")
-                if saved_v != FITNESS_VERSION:
-                    log(f"fitness_version {saved_v} != {FITNESS_VERSION}, ignore status counters")
-                else:
-                    for k in (
-                        "best_fitness",
-                        "mean_fitness",
-                        "own",
-                        "enemy",
-                        "lives",
-                        "sigma",
-                        "pop",
-                        "episode_ticks",
-                        "notes",
-                        "gpu",
-                    ):
-                        if k in data and data[k] not in (None, [], 0, 0.0, float("-inf")):
-                            state[k] = data[k]
-                    if isinstance(data.get("champion"), dict) and data["champion"]:
-                        state["champion"] = data["champion"]
-                    log(f"restored status lives {state.get('lives')} (gen comes from versioned metrics)")
-        except Exception as e:
-            log(f"status restore: {e}")
-    if (not state.get("history")) and METRICS.exists():
-        hist = []
-        wins_total = 0
-        try:
-            for line in METRICS.read_text().splitlines():
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                if row.get("fitness_version") != FITNESS_VERSION:
-                    continue
-                w = int(row.get("wins") or 0)
-                wins_total += w
-                hist.append(
-                    {
-                        "gen": row.get("gen", 0),
-                        "mean": row.get("mean", 0),
-                        "best": row.get("best", 0),
-                        "own": row.get("own", 0),
-                        "enemy": row.get("enemy", 0),
-                        "wins": w,
-                    }
-                )
-            if hist:
-                state["history"] = hist[-200:]
-                last = hist[-1]
-                state["generation"] = last["gen"]
-                state["mean_fitness"] = last["mean"]
-                state["best_fitness"] = last["best"]
-                state["own"] = last["own"]
-                state["enemy"] = last["enemy"]
-                if not state.get("wins"):
-                    state["wins"] = wins_total
-                log(f"restored {len(hist)} {FITNESS_VERSION} gens from metrics.jsonl")
-        except Exception as e:
-            log(f"metrics restore: {e}")
+    if not math.isfinite(payload["best_fitness"]):
+        payload["best_fitness"] = -1e300
+    atomic_json(STATUS, payload)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -243,7 +200,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class KernelPool:
-    def __init__(self, n: int):
+    def __init__(self, n: int, evaluator=None, rust_worker=None):
+        self.evaluator = evaluator or EVALUATOR
+        self.rust_worker = Path(rust_worker or RUST_WORKER).resolve()
+        if self.evaluator not in ("elm", "rust"):
+            raise ValueError(f"unknown evaluator {self.evaluator}")
+        if self.evaluator == "rust" and not os.access(self.rust_worker, os.X_OK):
+            raise FileNotFoundError(f"Rust evaluator is not executable: {self.rust_worker}")
         self.procs = []
         self.lock = threading.Lock()
         self.q: queue.Queue = queue.Queue()
@@ -257,11 +220,11 @@ class KernelPool:
         env = os.environ.copy()
         env["NODE_OPTIONS"] = "--max-old-space-size=512"
         p = subprocess.Popen(
-            ["node", str(WORKER)],
+            [str(self.rust_worker)] if self.evaluator == "rust" else ["node", str(WORKER)],
             cwd=str(HERE),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=(ART / f"worker-{i}.stderr.log").open("a"),
             text=True,
             bufsize=1,
             env=env,
@@ -270,7 +233,7 @@ class KernelPool:
             self.procs[i] = p
         else:
             self.procs.append(p)
-        log(f"worker {i} pid {p.pid}")
+        log(f"{self.evaluator} worker {i} pid {p.pid}")
 
     def eval_job(self, job, timeout=180):
         payload = {
@@ -294,11 +257,18 @@ class KernelPool:
             assert p.stdin and p.stdout
             p.stdin.write(line_in + "\n")
             p.stdin.flush()
+            with selectors.DefaultSelector() as selector:
+                selector.register(p.stdout, selectors.EVENT_READ)
+                if not selector.select(timeout):
+                    p.kill()
+                    p.wait()
+                    raise TimeoutError(f"worker {idx} exceeded {timeout}s for {payload['us']} vs {payload['them']}")
             line = p.stdout.readline()
             if not line:
-                err = p.stderr.read() if p.stderr else ""
-                raise RuntimeError(f"worker {idx} empty stdout {err[-400:]}")
+                raise RuntimeError(f"worker {idx} empty stdout; see worker-{idx}.stderr.log")
             rec = json.loads(line)
+            if rec.get("error") or not math.isfinite(float(rec.get("fitness", float("nan")))):
+                raise RuntimeError(f"invalid worker result: {rec}")
             rec["swap"] = payload["swap"]
             rec["us_ship"] = payload["us"]
             rec["them"] = payload["them"]
@@ -344,8 +314,9 @@ class KernelPool:
         for p in self.procs:
             try:
                 p.terminate()
+                p.wait(timeout=5)
             except Exception:
-                pass
+                p.kill()
 
 
 def pack(us, them, foe, seeds, group, hints, swaps=(False, True)):
@@ -376,8 +347,7 @@ def pool_pairs(pool):
 def make_train_scenarios(hints, gen):
     pool = list(hints.get("pool") or START_POOL)
     seeds = list(hints.get("train_seeds") or [1701])
-    if len(pool) <= 4:
-        seeds = seeds[:1]
+    seeds = [seeds[gen % len(seeds)]]
     pairs = pool_pairs(pool)
     if len(pairs) > 12:
         rng = __import__("random").Random(gen * 31 + 7)
@@ -392,7 +362,7 @@ def make_train_scenarios(hints, gen):
 
 def make_hold_scenarios(hints):
     pool = list(hints.get("pool") or START_POOL)
-    seeds = list(hints.get("hold_seeds") or [42])[:1]
+    seeds = list(hints.get("hold_seeds") or [42])
     out = []
     for us, them in pool_pairs(pool):
         out += pack(us, them, "cyborg", seeds, f"{us}-{them}", hints)
@@ -402,6 +372,8 @@ def make_hold_scenarios(hints):
 def maybe_expand_pool(hints, hold):
     """Add the next catalog hull only after a saved champion clears expand_at on hold."""
     pool = list(hints.get("pool") or START_POOL)
+    if not hints.get("auto_expand", False):
+        return pool, False
     n = max(1, len(hold.get("scenarios") or []))
     wins = int(hold.get("seat_wins") or 0)
     rate = wins / n
@@ -413,7 +385,7 @@ def maybe_expand_pool(hints, hold):
     pool.append(rest[0])
     data = dict(hints)
     data["pool"] = pool
-    HINTS.write_text(json.dumps(data, indent=2) + "\n")
+    atomic_json(HINTS, data)
     log(f"pool expand +{pool[-1]} size {len(pool)} hold {wins}/{n}")
     return pool, True
 
@@ -422,13 +394,13 @@ def load_best():
     if BEST.exists():
         try:
             data = json.loads(BEST.read_text())
-            w = data.get("weights")
-            if isinstance(w, list) and len(w) == N_WEIGHTS:
-                log(f"resumed weights from best.json (fitness re-scored)")
-                return w, float("-inf")
-            log(f"rejected best.json length {0 if not isinstance(w, list) else len(w)} want {N_WEIGHTS}")
+            w = checked_weights(data)
+            log("loaded champion from best.json (validation re-scored)")
+            return w, float("-inf")
         except Exception as e:
-            log(f"best.json: {e}")
+            raise ValueError(f"refusing to discard existing champion: {e}") from e
+    if INITIAL is not None:
+        return checked_weights(json.loads(INITIAL.read_text())), float("-inf")
     log(f"init zeros width {N_WEIGHTS}")
     return [0.0] * N_WEIGHTS, float("-inf")
 
@@ -445,9 +417,9 @@ def save_best(weights, rec, gen):
     if rec.get("core_dual") is None:
         rec["core_dual"] = bool(rec.get("dual"))
     payload = {"generation": gen, "n_weights": N_WEIGHTS, "fitness_version": FITNESS_VERSION, "weights": [float(x) for x in weights], **meta}
-    BEST.write_text(json.dumps(payload))
+    atomic_json(BEST, payload)
     hall = HALL / f"gen{gen:05d}_fit{rec['fitness']:.2f}.json"
-    hall.write_text(json.dumps(payload))
+    atomic_json(hall, payload)
     with lock:
         state["hall"].append({"gen": gen, "fitness": rec["fitness"], "winner": rec.get("winner"), "own": rec.get("own"), "enemy": rec.get("enemy"), "file": hall.name})
         state["champion"] = {
@@ -459,169 +431,185 @@ def save_best(weights, rec, gen):
         }
 
 
-def fitness_of(rec):
-    return float(rec.get("fitness", 0))
-
-
 def run_loop():
-    restore_state()
+    import numpy as np
+
     hints = load_hints()
-    with lock:
-        state["gpu"] = False
-        state["sigma"] = hints["sigma"]
-        state["pop"] = hints["pop"]
-        state["episode_ticks"] = hints["episode_ticks"]
-        state["notes"] = hints.get("notes", "")
-        state["fitness_version"] = FITNESS_VERSION
-    theta, best_f = load_best()
-    with lock:
-        state["best_fitness"] = best_f
+    config = {k: v for k, v in hints.items() if k not in ("pause", "notes")}
+    provenance = {"config": config, "source_sha256": source_hashes(HERE, EVALUATOR, RUST_WORKER), "fitness_version": FITNESS_VERSION}
+    manifest_path = ART / "manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+        if manifest["provenance"] != provenance:
+            raise ValueError("experiment code or configuration changed; use a new artifacts directory")
+        if RESUME_FROM and manifest.get("resumed_from", {}).get("artifacts") != str(RESUME_FROM):
+            raise ValueError("existing run was not forked from --resume-from")
+    else:
+        manifest = {"created_at": time.time(), "provenance": provenance, "initial": str(INITIAL) if INITIAL else None,
+                    "initial_sha256": digest(checked_weights(json.loads(INITIAL.read_text()))) if INITIAL else None}
+        if RESUME_FROM:
+            manifest["resumed_from"] = fork_checkpoint(RESUME_FROM, ART, provenance)
+        atomic_json(manifest_path, manifest)
+    if INITIAL and manifest.get("initial_sha256") != digest(checked_weights(json.loads(INITIAL.read_text()))):
+        raise ValueError("initial policy changed since experiment creation")
+    fingerprint = digest(provenance)
+    checkpoint_path = ART / "checkpoint.json"
+    rng = random.Random(hints["seed"])
+    gen = 0
+    weights, _ = load_best()
+    theta = np.array(weights, dtype=np.float64)
+    champion = None
+    if checkpoint_path.exists():
+        checkpoint = json.loads(checkpoint_path.read_text())
+        if checkpoint["fingerprint"] != fingerprint:
+            raise ValueError("checkpoint does not belong to this experiment")
+        theta = np.array(checked_weights(checkpoint), dtype=np.float64)
+        rng.setstate(tuples(checkpoint["rng"]))
+        gen = checkpoint["generation"]
+        champion = checkpoint["champion"]
+        checked_weights(champion)
+        state.update(checkpoint["status"])
+        state["started"] = time.time()
         state["error"] = ""
-        state["pool"] = list(hints.get("pool") or START_POOL)
+        save_best(champion["weights"], champion, champion["generation"])
+        log(f"restored exact search state at generation {gen}")
+    state.update({"generation": gen, "sigma": hints["sigma"], "pop": hints["pop"],
+                  "episode_ticks": hints["episode_ticks"], "notes": hints.get("notes", ""),
+                  "pool": hints["pool"], "search": hints["search"], "experiment": str(ART),
+                  "phase": "baseline", "paused": hints["pause"], "evaluator": EVALUATOR})
+    if not NO_DASHBOARD:
+        atomic_json(ROOT / "artifacts/neat/active-run.json", {"run": str(ART), "evaluator": EVALUATOR})
+    save_status()
+
+    def wait_if_paused():
+        while not stop.is_set():
+            current = load_hints()
+            if {k: v for k, v in current.items() if k not in ("pause", "notes")} != config:
+                raise ValueError("live experiment configuration changed; create a new experiment")
+            state["paused"] = current["pause"]
+            state["notes"] = current.get("notes", "")
+            if not current["pause"]:
+                return
+            save_status()
+            stop.wait(1)
+
     kernels = KernelPool(WORKERS)
-    gen = int(state.get("generation") or 0)
-    rng = __import__("random").Random(hints.get("seed", 1701))
-    np = __import__("numpy")
-    theta = np.array(theta, dtype=np.float64)
-    best_wins = -1
-    bench_done = False
 
     def eval_weights(w, scenarios):
-        t0 = time.time()
+        wait_if_paused()
+        if stop.is_set():
+            raise InterruptedError("training stopped at evaluation boundary")
+        started = time.monotonic()
         rec = kernels.eval_scenarios(w, scenarios)
-        rec["eval_s"] = time.time() - t0
+        if rec.get("error"):
+            raise RuntimeError(rec["error"])
+        rec["eval_s"] = time.monotonic() - started
         rec["weights"] = [float(x) for x in w]
+        state["lives"] += len(scenarios)
+        state["eval_s"] = rec["eval_s"]
+        save_status()
         return rec
 
+    def persist():
+        atomic_json(checkpoint_path, {
+            "fitness_version": FITNESS_VERSION, "fingerprint": fingerprint,
+            "generation": gen, "weights": theta.tolist(), "rng": rng.getstate(),
+            "champion": champion, "status": state,
+        })
+
+    def slim(rec):
+        return {k: v for k, v in rec.items() if k != "weights"}
+
     try:
-        train_scen = make_train_scenarios(hints, gen)
         hold_scen = make_hold_scenarios(hints)
-        baseline = eval_weights(theta.tolist(), hold_scen)
-        best_f = float(baseline.get("fitness") or 0)
-        best_wins = int(baseline.get("seat_wins") or 0)
-        save_best(theta, baseline, gen)
-        with lock:
-            state["best_fitness"] = best_f
-        log(f"baseline hold {best_f:.2f} dual={baseline.get('dual')} seats={best_wins} n={len(hold_scen)}")
-        with lock:
-            state["n_train"] = len(train_scen)
-            state["n_hold"] = len(hold_scen)
-        save_status()
+        if champion is None:
+            champion = eval_weights(theta, hold_scen)
+            champion.update({"generation": 0, "fitness_version": FITNESS_VERSION})
+            save_best(champion["weights"], champion, 0)
+            atomic_json(ART / "baseline.json", slim(champion))
+            state["best_fitness"] = champion["fitness"]
+            log(f"baseline validation {champion['seat_wins']}/{len(hold_scen)} score {champion['fitness']:.2f}")
+            persist()
+        else:
+            state["best_fitness"] = champion["fitness"]
+        state["n_hold"] = len(hold_scen)
 
-        while not stop.is_set():
-            hints = load_hints()
-            pop = hints["pop"]
-            sigma = hints["sigma"]
-            lr = hints["lr"]
-            ticks = hints["episode_ticks"]
+        while not stop.is_set() and (MAX_GENERATIONS is None or gen < MAX_GENERATIONS):
+            wait_if_paused()
+            if stop.is_set():
+                break
+            started = time.monotonic()
             train_scen = make_train_scenarios(hints, gen)
-            hold_scen = make_hold_scenarios(hints)
-            with lock:
-                state["sigma"] = sigma
-                state["pop"] = pop
-                state["episode_ticks"] = ticks
-                state["notes"] = hints.get("notes", "")
-                state["paused"] = bool(hints.get("pause"))
-                state["n_train"] = len(train_scen)
-                state["n_hold"] = len(hold_scen)
-                state["pool"] = list(hints.get("pool") or START_POOL)
-            if hints.get("pause"):
-                save_status()
-                time.sleep(1)
-                continue
-
-            half = max(4, pop // 2)
-            ship_pool = list(hints.get("pool") or START_POOL)
-            noises = [np.array([rng.gauss(0, 1) for _ in range(N_WEIGHTS)]) for _ in range(half)]
-            recs = []
-            dirs = []
-            for eps in noises:
-                if stop.is_set():
-                    break
-                plus = eval_weights((theta + sigma * eps).tolist(), train_scen)
-                minus = eval_weights((theta - sigma * eps).tolist(), train_scen)
+            state.update({"phase": "training", "n_train": len(train_scen), "generation": gen})
+            save_status()
+            recs, dirs = [], []
+            half = hints["pop"] // 2
+            for _ in range(half):
+                eps = np.array(noise_vector(rng, hints["search"], gen), dtype=np.float64)
+                plus = eval_weights(theta + hints["sigma"] * eps, train_scen)
+                minus = eval_weights(theta - hints["sigma"] * eps, train_scen)
                 recs.extend([plus, minus])
                 dirs.extend([eps, -eps])
-                with lock:
-                    state["lives"] += 2 * len(train_scen)
-                    state["eval_s"] = plus.get("eval_s", 0)
-                    state["error"] = plus.get("error") or minus.get("error") or state["error"]
-                save_status()
-                if not bench_done and plus.get("eval_s"):
-                    nsc = max(1, len(train_scen))
-                    tps = (ticks * nsc) / max(1e-6, plus["eval_s"])
-                    log(f"bench {tps:.0f} scenario-ticks/s over {plus['eval_s']:.3f}s x{nsc}")
-                    bench_done = True
-
-            if not recs:
-                break
-            fits = [float(r.get("fitness") or 0) for r in recs]
-            ranks = centered_ranks(fits)
-            step = np.zeros_like(theta)
-            for u, eps in zip(ranks, dirs):
-                step += u * eps
-            theta = theta + (lr / max(1, len(recs))) * step
-
-            mean = sum(fits) / len(fits)
-            own = sum(float(r.get("own") or 0) for r in recs) / len(recs)
-            enemy = sum(float(r.get("enemy") or 0) for r in recs) / len(recs)
-            wins = int(sum(1 for r in recs if r.get("dual")))
-            best_i = max(range(len(recs)), key=lambda i: (int(recs[i].get("seat_wins") or 0), fits[i]))
-            cand = recs[best_i]
-            hold = eval_weights(cand["weights"], hold_scen)
-            with lock:
-                state["lives"] += len(hold_scen)
-            hold["core_dual"] = bool(hold.get("dual"))
-            hold_wins = int(hold.get("seat_wins") or 0)
-            hold_fit = float(hold.get("fitness") or 0)
-            if (hold_wins, hold_fit) > (best_wins, best_f):
-                best_wins = hold_wins
-                best_f = hold_fit
-                save_best(cand["weights"], hold, gen)
-                log(f"champion hold {best_f:.2f} dual={hold.get('dual')} seats={hold_wins}/{len(hold_scen)}")
-                ship_pool, grew = maybe_expand_pool(hints, hold)
-                if grew:
-                    best_f = float("-inf")
-                    best_wins = -1
-                    hints = load_hints()
-                    log("pool grew, reset champion fitness")
-            with lock:
-                state["pool"] = ship_pool
-
-            gen += 1
-            with lock:
-                state["generation"] = gen
-                state["best_fitness"] = best_f
-                state["mean_fitness"] = mean
-                state["wins"] += wins
-                state["own"] = own
-                state["enemy"] = enemy
-                state["history"].append({"gen": gen, "mean": mean, "best": best_f, "own": own, "enemy": enemy, "wins": wins})
-            with METRICS.open("a") as f:
-                f.write(
-                    json.dumps(
-                        {
-                            "gen": gen,
-                            "mean": mean,
-                            "best": best_f,
-                            "own": own,
-                            "enemy": enemy,
-                            "wins": wins,
-                            "sigma": sigma,
-                            "fitness_version": FITNESS_VERSION,
-                            "n_train": len(train_scen),
-                            "n_hold": len(hold_scen),
-                            "pool": list(hints.get("pool") or START_POOL),
-                        }
-                    )
-                    + "\n"
-                )
+            fits = [r["fitness"] for r in recs]
+            update = np.zeros_like(theta)
+            for utility, eps in zip(centered_ranks(fits), dirs):
+                update += utility * eps
+            theta = theta + (hints["lr"] / len(recs)) * update
+            if not np.isfinite(theta).all():
+                raise ValueError("search centre contains non-finite weights")
+            center = eval_weights(theta, train_scen)
+            candidate = max(recs + [center], key=result_key)
+            state["phase"] = "validation"
             save_status()
-            log(f"gen {gen} mean {mean:.2f} best {best_f:.2f} crew {own:.1f}/{enemy:.1f} wins+{wins} nsc={len(train_scen)}")
+            hold = eval_weights(candidate["weights"], hold_scen)
+            promoted = result_key(hold) > result_key(champion)
+            if promoted:
+                champion = {**hold, "generation": gen + 1, "fitness_version": FITNESS_VERSION}
+                save_best(champion["weights"], champion, gen + 1)
+                log(f"champion validation {champion['seat_wins']}/{len(hold_scen)} score {champion['fitness']:.2f}")
+            gen += 1
+            wins = sum(r["seat_wins"] for r in recs)
+            mean = sum(fits) / len(fits)
+            own = sum(r["own"] for r in recs) / len(recs)
+            enemy = sum(r["enemy"] for r in recs) / len(recs)
+            elapsed = time.monotonic() - started
+            row = {
+                "gen": gen, "at": time.time(), "mean": mean, "best": champion["fitness"],
+                "own": own, "enemy": enemy, "wins": wins, "train_fights": len(recs) * len(train_scen),
+                "train_best_wins": candidate["seat_wins"], "center_train_wins": center["seat_wins"],
+                "validation_wins": hold["seat_wins"], "champion_wins": champion["seat_wins"],
+                "promoted": promoted, "sigma": hints["sigma"], "lr": hints["lr"],
+                "fitness_version": FITNESS_VERSION, "search": hints["search"],
+                "n_train": len(train_scen), "n_hold": len(hold_scen), "pool": hints["pool"],
+                "train_seed": train_scen[0]["seed"], "generation_s": elapsed,
+                "candidate_train": slim(candidate), "candidate_validation": slim(hold),
+                "center_train": slim(center), "population": [slim(r) for r in recs],
+            }
+            state.update({"generation": gen, "mean_fitness": mean, "best_fitness": champion["fitness"],
+                          "own": own, "enemy": enemy, "wins": state["wins"] + wins,
+                          "train_best_wins": candidate["seat_wins"], "validation_wins": hold["seat_wins"],
+                          "champion_wins": champion["seat_wins"], "generation_s": elapsed})
+            state["history"] = (state["history"] + [{k: row[k] for k in ("gen", "mean", "best", "own", "enemy", "wins")}])[-200:]
+            persist()
+            with METRICS.open("a") as f:
+                f.write(json.dumps(row, allow_nan=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            save_status()
+            log(f"gen {gen} train-best {candidate['seat_wins']}/{len(train_scen)} validation {hold['seat_wins']}/{len(hold_scen)} champion {champion['seat_wins']}/{len(hold_scen)} seed {train_scen[0]['seed']} {elapsed:.1f}s")
+        if not stop.is_set():
+            state["phase"] = "complete"
+            atomic_json(ART / "complete.json", {
+                "generation": gen, "baseline": json.loads((ART / "baseline.json").read_text()),
+                "champion": slim(champion), "fingerprint": fingerprint,
+            })
+            save_status()
+    except InterruptedError:
+        log("stopped; next start replays any incomplete generation from its checkpoint")
     except Exception as e:
         log(f"loop crash: {e}")
-        with lock:
-            state["error"] = str(e)
+        state["error"] = str(e)
+        state["phase"] = "error"
         save_status()
         raise
     finally:
@@ -629,23 +617,53 @@ def run_loop():
 
 
 def main():
-    if not KERNEL.exists():
-        log("kernel.js missing")
-        sys.exit(2)
-    restore_state()
-    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    log(f"dashboard http://0.0.0.0:{PORT}")
-    save_status()
-
+    global ART, HALL, HINTS, STATUS, METRICS, BEST, CONTROL, INITIAL, MAX_GENERATIONS, NO_DASHBOARD
+    global EVALUATOR, RUST_WORKER, RESUME_FROM
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--artifacts", type=Path, default=ART)
+    parser.add_argument("--hints", type=Path, default=HINTS)
+    parser.add_argument("--control", type=Path)
+    parser.add_argument("--initial", type=Path)
+    parser.add_argument("--generations", type=int)
+    parser.add_argument("--no-dashboard", action="store_true")
+    parser.add_argument("--evaluator", choices=("elm", "rust"), default="elm")
+    parser.add_argument("--rust-worker", type=Path, default=RUST_WORKER)
+    parser.add_argument("--resume-from", type=Path, help="fork an exact checkpoint into a new run with identical configuration")
+    args = parser.parse_args()
+    if args.generations is not None and args.generations < 1:
+        parser.error("--generations must be positive")
+    ART = args.artifacts.resolve()
+    HALL, STATUS, METRICS, BEST = ART / "hall", ART / "status.json", ART / "metrics.jsonl", ART / "best.json"
+    HINTS = args.hints.resolve()
+    CONTROL = args.control.resolve() if args.control else None
+    INITIAL = args.initial.resolve() if args.initial else None
+    MAX_GENERATIONS = args.generations
+    NO_DASHBOARD = args.no_dashboard
+    EVALUATOR = args.evaluator
+    RUST_WORKER = args.rust_worker.resolve()
+    RESUME_FROM = args.resume_from.resolve() if args.resume_from else None
+    ART.mkdir(parents=True, exist_ok=True)
+    HALL.mkdir(parents=True, exist_ok=True)
+    if EVALUATOR == "elm" and not KERNEL.exists():
+        raise FileNotFoundError("kernel.js missing")
+    if EVALUATOR == "rust" and not os.access(RUST_WORKER, os.X_OK):
+        raise FileNotFoundError(f"Rust evaluator is not executable: {RUST_WORKER}")
+    httpd = None
+    if not NO_DASHBOARD:
+        httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        log(f"dashboard port {PORT}; experiment {ART}")
     def handle(sig, _frm):
         log(f"signal {sig}")
         stop.set()
-
     signal.signal(signal.SIGINT, handle)
     signal.signal(signal.SIGTERM, handle)
-    run_loop()
-    httpd.shutdown()
+    try:
+        run_loop()
+    finally:
+        if httpd is not None:
+            httpd.shutdown()
+            httpd.server_close()
 
 
 if __name__ == "__main__":

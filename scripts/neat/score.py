@@ -45,8 +45,15 @@ def centered_ranks(fits):
     ranks = [0.0] * n
     if n == 1:
         return ranks
-    for r, i in enumerate(order):
-        ranks[i] = r / (n - 1) - 0.5
+    start = 0
+    while start < n:
+        end = start + 1
+        while end < n and fits[order[end]] == fits[order[start]]:
+            end += 1
+        rank = ((start + end - 1) / 2) / (n - 1) - 0.5
+        for i in order[start:end]:
+            ranks[i] = rank
+        start = end
     return ranks
 
 

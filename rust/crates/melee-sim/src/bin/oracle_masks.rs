@@ -63,7 +63,14 @@ fn opaque_row((name, mask): &Probe) -> String {
                     values.push(m.opaque(x, y));
                 }
             }
-            format!("opaque {name} {}x{}@{},{} {}", m.width, m.height, m.x, m.y, bits(&values))
+            format!(
+                "opaque {name} {}x{}@{},{} {}",
+                m.width,
+                m.height,
+                m.x,
+                m.y,
+                bits(&values)
+            )
         }
     }
 }

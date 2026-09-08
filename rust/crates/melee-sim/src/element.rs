@@ -12,7 +12,7 @@ pub const MAX_DISPLAY_ELEMENTS: usize = 150;
 pub struct ElementId(pub i64);
 
 /// playerNr -1 / 0 / 1.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Hash)]
 pub enum Owner {
     #[default]
     Neutral,
@@ -30,7 +30,7 @@ impl Owner {
 }
 
 /// ELEMENT_FLAGS as booleans, in the Elm field order.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Hash)]
 pub struct ElementFlags {
     pub player_ship: bool,
     pub appearing: bool,
@@ -49,7 +49,7 @@ pub struct ElementFlags {
 }
 
 /// Ships and the planet are not FINITE_LIFE; weapons are.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Life {
     Persistent(i64),
     Finite(i64),
@@ -81,7 +81,7 @@ impl Life {
 }
 
 /// `gfxlib.h INTERSECT_CONTROL`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Hash)]
 pub struct IntersectControl {
     pub last_time_val: i64,
     pub end_point: WorldPoint,
@@ -89,7 +89,7 @@ pub struct IntersectControl {
 }
 
 /// Display prim. OBJECT_CLOAKED is `NoPrim` or a black `StampFill`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Hash)]
 pub enum Prim {
     #[default]
     NoPrim,
@@ -113,14 +113,14 @@ impl Prim {
 }
 
 /// C STATE: location plus the facing/anim index of the stamp.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Hash)]
 pub struct Image {
     pub location: WorldPoint,
     pub frame_index: i64,
 }
 
 /// `Melee.Element.Body`. Payload-carrying variants keep the Elm payloads.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Body {
     Ship(Side),
     Wreck(Side),
@@ -219,7 +219,7 @@ impl Body {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Element {
     pub id: ElementId,
     pub owner: Owner,
@@ -244,7 +244,7 @@ pub struct Element {
 }
 
 /// `Melee.Projectile.State`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum ProjectileState {
     Flying {
         kind: MissileKind,

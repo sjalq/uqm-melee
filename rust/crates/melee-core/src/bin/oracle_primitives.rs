@@ -65,7 +65,13 @@ fn rng_sweep() -> Vec<String> {
         }
         rows.push(row(&format!("rng {s}"), &values));
     }
-    for (s, n) in [(1i64, 0i64), (42, -5), (42, 2147483647), (42, 2147483648), (7, 12345)] {
+    for (s, n) in [
+        (1i64, 0i64),
+        (42, -5),
+        (42, 2147483647),
+        (42, 2147483648),
+        (7, 12345),
+    ] {
         let (prev, after) = Seed(s).seed_random(n);
         rows.push(row(&format!("rngseed {s} {n}"), &[prev, after.0]));
     }
@@ -83,14 +89,18 @@ fn trig_sweep() -> Vec<String> {
         rows.push(row(&format!("sin {a}"), &values));
     }
     for a in -40..=40i64 {
-        rows.push(row(&format!("norm {a}"), &[trig::normalize_angle(a), trig::normalize_facing(a)]));
+        rows.push(row(
+            &format!("norm {a}"),
+            &[trig::normalize_angle(a), trig::normalize_facing(a)],
+        ));
     }
     rows
 }
 
 fn arctan_sweep() -> Vec<String> {
-    const GRID: [i64; 13] =
-        [-4096, -1024, -257, -64, -17, -1, 0, 1, 17, 64, 257, 1024, 4096];
+    const GRID: [i64; 13] = [
+        -4096, -1024, -257, -64, -17, -1, 0, 1, 17, 64, 257, 1024, 4096,
+    ];
     let mut pairs: Vec<(i64, i64)> = Vec::new();
     for &x in GRID.iter() {
         for &y in GRID.iter() {
@@ -161,8 +171,7 @@ fn integrate(n: i64, v: VelocityDesc) -> ((i64, i64), VelocityDesc) {
 fn velocity_sweep() -> Vec<String> {
     let (dxs, seed1) = stream(500, 4000, Seed(424242));
     let (dys, _) = stream(500, 4000, seed1);
-    let pairs: Vec<(i64, i64)> =
-        dxs.iter().zip(dys.iter()).map(|(&a, &b)| (a, b)).collect();
+    let pairs: Vec<(i64, i64)> = dxs.iter().zip(dys.iter()).map(|(&a, &b)| (a, b)).collect();
 
     let mut rows = Vec::new();
 

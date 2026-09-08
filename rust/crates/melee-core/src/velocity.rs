@@ -48,10 +48,22 @@ fn make_word(lo: i64, hi: i64) -> i64 {
 
 pub const ZERO: VelocityDesc = VelocityDesc {
     travel_angle: 0,
-    vector: WorldExtent { width: 0, height: 0 },
-    fract: WorldExtent { width: 0, height: 0 },
-    error: WorldExtent { width: 0, height: 0 },
-    incr: WorldExtent { width: 0, height: 0 },
+    vector: WorldExtent {
+        width: 0,
+        height: 0,
+    },
+    fract: WorldExtent {
+        width: 0,
+        height: 0,
+    },
+    error: WorldExtent {
+        width: 0,
+        height: 0,
+    },
+    incr: WorldExtent {
+        width: 0,
+        height: 0,
+    },
 };
 
 pub fn get_current(v: &VelocityDesc) -> (i64, i64) {
@@ -70,10 +82,25 @@ pub fn get_next(num_frames: i64, v: &VelocityDesc) -> ((i64, i64), VelocityDesc)
         let d = vector * num_frames + s_byte(lo_byte(incr)) * (e / VELOCITY_SCALE);
         (d, remainder(e))
     }
-    let (dx, err_x) = axis(v.error.width, v.fract.width, v.vector.width, v.incr.width, num_frames);
-    let (dy, err_y) = axis(v.error.height, v.fract.height, v.vector.height, v.incr.height, num_frames);
+    let (dx, err_x) = axis(
+        v.error.width,
+        v.fract.width,
+        v.vector.width,
+        v.incr.width,
+        num_frames,
+    );
+    let (dy, err_y) = axis(
+        v.error.height,
+        v.fract.height,
+        v.vector.height,
+        v.incr.height,
+        num_frames,
+    );
     let mut out = *v;
-    out.error = WorldExtent { width: err_x, height: err_y };
+    out.error = WorldExtent {
+        width: err_x,
+        height: err_y,
+    };
     ((dx, dy), out)
 }
 
@@ -97,10 +124,22 @@ pub fn set_components(dx: i64, dy: i64) -> VelocityDesc {
     let (vh, ih) = set_packed(dy);
     VelocityDesc {
         travel_angle: trig::normalize_angle(angle),
-        vector: WorldExtent { width: vw, height: vh },
-        fract: WorldExtent { width: remainder(ax), height: remainder(ay) },
-        error: WorldExtent { width: 0, height: 0 },
-        incr: WorldExtent { width: iw, height: ih },
+        vector: WorldExtent {
+            width: vw,
+            height: vh,
+        },
+        fract: WorldExtent {
+            width: remainder(ax),
+            height: remainder(ay),
+        },
+        error: WorldExtent {
+            width: 0,
+            height: 0,
+        },
+        incr: WorldExtent {
+            width: iw,
+            height: ih,
+        },
     }
 }
 

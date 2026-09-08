@@ -5,3 +5,6 @@ edition.workspace = true
 
 [dependencies]
 melee-core = { path = "../melee-core" }
+
+[target.'cfg(target_arch = "nvptx64")'.dependencies]
+libm = "0.2"

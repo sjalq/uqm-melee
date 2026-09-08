@@ -16,7 +16,9 @@ fn main() {
     // Component selection mirrors the Elm bench, which always prints both
     // lines and zeroes the round count of the component it is not measuring.
     // "none" measures process startup alone.
-    let which = std::env::args().nth(1).unwrap_or_else(|| "both".to_string());
+    let which = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "both".to_string());
     let (vel_rounds, mask_rounds) = match which.as_str() {
         "velocity" => (VELOCITY_ROUNDS, 0),
         "mask" => (0, MASK_ROUNDS),
@@ -76,9 +78,7 @@ fn mask_pairs() -> Vec<(&'static Mask, &'static Mask)> {
         ((UrQuan, 7), (Earthling, 13)),
     ]
     .into_iter()
-    .filter_map(|((ka, fa), (kb, fb))| {
-        Some((ship_mask(ka, false, fa)?, ship_mask(kb, false, fb)?))
-    })
+    .filter_map(|((ka, fa), (kb, fb))| Some((ship_mask(ka, false, fa)?, ship_mask(kb, false, fb)?)))
     .collect()
 }
 

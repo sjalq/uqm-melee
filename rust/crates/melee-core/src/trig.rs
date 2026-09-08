@@ -92,7 +92,11 @@ pub fn arctan(delta_x: i64, delta_y: i64) -> i64 {
         list_at(((v1_abs * 32) + (v2_abs / 2)) / v2_abs, &ATANTAB)
     };
     let after_x = if delta_x < 0 { FULL_CIRCLE - raw } else { raw };
-    let after_y = if delta_y > 0 { HALF_CIRCLE - after_x } else { after_x };
+    let after_y = if delta_y > 0 {
+        HALF_CIRCLE - after_x
+    } else {
+        after_x
+    };
     normalize_angle(after_y)
 }
 
@@ -129,7 +133,10 @@ pub fn wrap_delta(d: i64, w: i64) -> i64 {
 
 #[inline]
 pub fn wrap_point(space: WorldExtent, p: WorldPoint) -> WorldPoint {
-    WorldPoint { x: wrap(p.x, space.width), y: wrap(p.y, space.height) }
+    WorldPoint {
+        x: wrap(p.x, space.width),
+        y: wrap(p.y, space.height),
+    }
 }
 
 /// Integer square root, floor. Matches the Elm binary search exactly, including

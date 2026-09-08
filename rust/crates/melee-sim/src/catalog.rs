@@ -44,8 +44,8 @@ pub const ALL_SHIPS: [ShipKind; MELEE_SHIP_COUNT] = {
     use ShipKind::*;
     [
         Androsynth, Arilou, Chenjesu, Chmmr, Druuge, Earthling, Ilwrath, KohrAh, Melnorme,
-        Mmrnmhrm, Mycon, Orz, Pkunk, Shofixti, Slylandro, Spathi, Supox, Syreen, Thraddash,
-        Umgah, UrQuan, Utwig, Vux, Yehat, ZoqFotPik,
+        Mmrnmhrm, Mycon, Orz, Pkunk, Shofixti, Slylandro, Spathi, Supox, Syreen, Thraddash, Umgah,
+        UrQuan, Utwig, Vux, Yehat, ZoqFotPik,
     ]
 };
 
@@ -107,7 +107,7 @@ impl ShipKind {
 }
 
 /// `SHIP_INFO.ship_flags` as individual booleans.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Hash)]
 pub struct Ability {
     pub seeking_weapon: bool,
     pub seeking_special: bool,
@@ -124,7 +124,7 @@ pub struct Ability {
 
 /// Live `CHARACTERISTIC_STUFF`. `energy_regeneration` is signed: the Androsynth
 /// blazer writes -1, which `ship.c` treats as "always apply".
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Hash)]
 pub struct Characteristics {
     pub max_thrust: i64,
     pub thrust_increment: i64,
@@ -139,7 +139,7 @@ pub struct Characteristics {
     pub ship_mass: i64,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Stock {
     pub kind: ShipKind,
     pub cost: i64,
@@ -218,7 +218,7 @@ pub enum ContactKind {
     Tongue,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Guidance {
     Ballistic,
     Tracking { wait: i64, initial_wait: i64 },
@@ -226,7 +226,7 @@ pub enum Guidance {
     HeldBlade,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Animation {
     Directional,
     Frames { count: i64, ticks: i64 },
@@ -234,14 +234,14 @@ pub enum Animation {
     ChargeLevel,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Inheritance {
     Independent,
     InheritVelocity,
 }
 
 /// One launch port, already resolved from `Melee.Arsenal.mounts`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default, Hash)]
 pub struct Mount {
     pub forward: i64,
     pub sideways: i64,
@@ -252,7 +252,7 @@ pub struct Mount {
 /// widest `directions` list is 8). Fixed capacity keeps the spec POD.
 pub const MAX_MOUNTS: usize = 8;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct MissileSpec {
     pub kind: MissileKind,
     pub speed: i64,
@@ -277,7 +277,7 @@ impl MissileSpec {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Weapon {
     Missile(MissileKind),
     Beam(BeamKind),

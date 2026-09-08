@@ -8,7 +8,7 @@ pub const Q_CONST: i64 = 127773;
 pub const R_CONST: i64 = 2836;
 
 /// Invariant: 1 <= seed <= 2147483646.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Seed(pub i64);
 
 fn coerce(n: i64) -> i64 {
