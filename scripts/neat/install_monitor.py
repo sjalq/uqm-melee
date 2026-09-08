@@ -33,9 +33,10 @@ WorkingDirectory={root}
 ExecStart=/usr/bin/python3 {release}/review_loop.py review
 AllowedCPUs=6,7
 CPUQuota=200%
+CPUWeight=10
 MemoryMax=2G
 MemorySwapMax=0
-TimeoutStartSec=1500
+TimeoutStartSec=10800
 KillMode=control-group
 Environment=OPENBLAS_NUM_THREADS=1
 Environment=OMP_NUM_THREADS=1
@@ -56,14 +57,15 @@ Description=Check Melee training progress and failures
 Type=oneshot
 ExecStart=/usr/bin/python3 {release}/review_loop.py health
 AllowedCPUs=6,7
+CPUWeight=10
 MemoryMax=256M
 MemorySwapMax=0
 """)
 (units / 'uqm-health.timer').write_text("""[Unit]
-Description=Check Melee training every 15 minutes
+Description=Check Melee training every 20 minutes
 [Timer]
 OnActiveSec=5
-OnUnitActiveSec=15min
+OnUnitActiveSec=20min
 AccuracySec=1s
 [Install]
 WantedBy=timers.target

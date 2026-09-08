@@ -1,3 +1,11 @@
+## Check-ins and CPU priority (2026-09-09)
+
+Check-ins now run every 20 minutes via uqm-health.timer. Hourly experiments remain enabled. Every check appends to artifacts/neat/reviews/checkins.jsonl; direct research, bottleneck and design findings are journaled in scripts/neat/review-findings.jsonl on codex/training-monitor and in the monitor-v1 release. This side conversation cannot launch sub-agents; these findings were reviewed directly. There is still no automatic LLM research or debate process.
+
+Observed generation medians during the creative trial were 1.019 seconds (329 generations), versus 0.602 seconds afterward (282 generations). Live training now has CPUWeight 100; trial and health units have CPUWeight 10 on the same CPUs 6,7. This prioritizes the live trainer but cannot guarantee zero contention. Trial per-arm timeout is now 3600 seconds and service timeout 10800 seconds to allow lower-priority work to finish. Post-change throughput benefit has not yet been measured. No trainer restart was needed for this update.
+
+Identical policies now share a single Rust audit within each same-seed comparison. Cycle 0 was confirmed to have identical baseline and challenger weights. Audit labels and selection gates are unchanged. Keep the conservative 40-generation screening stage, informed by adaptive allocation literature, without claiming to implement Hyperband. The live dashboard layout and progress charts are unchanged.
+
 ## Hourly experiments, faster feedback (2026-09-09)
 
 Supersedes the 15-minute experiment cadence below: uqm-review.timer now starts new experiments hourly; uqm-health.timer checks progress every 15 minutes. Health checks audit changed champion weights against the previous checked policy (or the run initial policy for the first check), using 360 new paired fights. These checks are diagnostic and do not promote policies. A failed trainer is restarted from checkpoint; an intentionally stopped or paused trainer is not restarted. The dashboard remains on port 8788.

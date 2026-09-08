@@ -177,6 +177,7 @@ systemd-run --user \
   --setenv=OMP_NUM_THREADS=1 \
   --property=AllowedCPUs=6,7 \
   --property=CPUQuota=200% \
+  --property=CPUWeight=100 \
   --property=MemoryMax=4G \
   --property=MemorySwapMax=0 \
   --property=Restart=on-failure \

@@ -148,7 +148,7 @@ reviewDetails model =
                             { title = "Equal experiment lanes", body = [ "Research, creative, radical, one turn each. These are programmed recipes with changing seeds and parameters, not an autonomous LLM reading new papers." ] }
                         , metric "Next scheduled review"
                             (if r.next <= 0 then "pending" else if r.next <= r.now then "due / running" else uptime (r.next - r.now)) False
-                            { title = "Hourly experiments, frequent checks", body = [ "New experiments run hourly, with automated health checks every 15 minutes. Trials get a 40-generation screening checkpoint before the full 160-generation comparison. Only independently confirmed gains deploy." ] }
+                            { title = "Hourly experiments, frequent checks", body = [ "New experiments run hourly, with automated health checks every 20 minutes. Trials get a 40-generation screening checkpoint before the full 160-generation comparison. Only independently confirmed gains deploy." ] }
                         ]
                     , p [ A.style "line-height" "1.5" ] [ text r.hypothesis ]
                     , if r.phase == "baseline" || r.phase == "challenger" then p [ A.style "color" mute ] [ text (r.phase ++ ": generation " ++ String.fromInt r.trialGeneration ++ " / " ++ String.fromInt r.targetGenerations ++ ". Both arms get the same fight budget.") ] else text ""

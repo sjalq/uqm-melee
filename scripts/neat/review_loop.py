@@ -87,7 +87,10 @@ def health_check():
     elif same_run and previous.get('fresh_check'):
         check['fresh_check'] = previous['fresh_check']
     atomic_json(saved_policy, champion)
+    check['generations_since_promotion'] = status['generation'] - status.get('champion', {}).get('generation', status['generation'])
     atomic_json(previous_path, check)
+    with (REVIEWS / 'checkins.jsonl').open('a') as journal:
+        journal.write(json.dumps(check) + '\n')
 
 
 def trial_arguments(lane, history):
@@ -146,11 +149,22 @@ def train_arm(path, initial, hints, generations):
            '--initial', str(path / 'initial.json'), '--evaluator', 'rust', '--rust-worker', str(WORKER),
            '--scoring-version', 'combat-v1', '--control', str(ROOT / 'scripts/neat/hints.json'), '--no-dashboard', '--generations', str(generations)]
     with (path / 'run.log').open('a') as log:
-        subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=600,
+        subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=3600,
                        env={**os.environ, 'NEAT_WORKERS': '2', 'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'})
     rows = [json.loads(line) for line in (path / 'metrics.jsonl').read_text().splitlines()]
     budget = len(read(path / 'baseline.json')['scenarios']) + sum(17 * r['n_train'] + r['n_hold'] for r in rows)
     return read(path / 'best.json'), budget
+
+
+def audit_policies(policies, pool, seeds):
+    unique = {}
+    results = {}
+    for name, policy in policies:
+        key = digest(policy['weights'])
+        if key not in unique:
+            unique[key] = audit(WORKER, policy['weights'], pool, seeds)
+        results[name] = unique[key]
+    return results
 
 
 def audit_passes(results, candidate, original, baseline):
@@ -212,8 +226,7 @@ def review(generations=160, deploy=True):
                 raise ValueError('Unequal screening fight budgets')
             phase('screen')
             screening_seeds = rng.sample(range(300000001, 400000000), 5)
-            screening = {name: audit(WORKER, policy['weights'], config['pool'], screening_seeds)
-                         for name, policy in [('baseline', baseline), ('challenger', candidate)]}
+            screening = audit_policies([('baseline', baseline), ('challenger', candidate)], config['pool'], screening_seeds)
             atomic_json(path / 'screen.json', {'seeds': screening_seeds, **screening})
             state['screen'] = {name: result['wins'] for name, result in screening.items()}
             evidence['screen'] = state['screen']
@@ -237,7 +250,7 @@ def review(generations=160, deploy=True):
             evidence['fights_per_arm'] = budget
             phase('audit')
             seeds = rng.sample(range(100000001, 200000000), 20)
-            results = {name: audit(WORKER, policy['weights'], config['pool'], seeds) for name, policy in [('baseline', baseline), ('challenger', candidate)]}
+            results = audit_policies([('baseline', baseline), ('challenger', candidate)], config['pool'], seeds)
             atomic_json(path / 'audit.json', {'seeds': seeds, **results})
             evidence.update(baseline_wins=results['baseline']['wins'], challenger_wins=results['challenger']['wins'], audit_fights=results['baseline']['fights'])
             passed = audit_passes(results, candidate, original, baseline)
@@ -247,7 +260,7 @@ def review(generations=160, deploy=True):
                 current_run = active_run()
                 current = read(current_run / 'best.json')
                 seeds = rng.sample(range(200000001, 300000000), 20)
-                confirm = {name: audit(WORKER, policy['weights'], config['pool'], seeds) for name, policy in [('baseline', baseline), ('challenger', candidate), ('starting', original), ('live', current)]}
+                confirm = audit_policies([('baseline', baseline), ('challenger', candidate), ('starting', original), ('live', current)], config['pool'], seeds)
                 atomic_json(path / 'confirmation.json', {'seeds': seeds, **confirm})
                 passed = confirmation_passes(confirm, candidate, current)
                 evidence['confirmation_wins'] = {name: value['wins'] for name, value in confirm.items()}

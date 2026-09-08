@@ -9737,7 +9737,7 @@ var $author$project$Neat$Dashboard$reviewDetails = function (model) {
 										false,
 										{
 											body: _List_fromArray(
-												['New experiments run hourly, with automated health checks every 15 minutes. Trials get a 40-generation screening checkpoint before the full 160-generation comparison. Only independently confirmed gains deploy.']),
+												['New experiments run hourly, with automated health checks every 20 minutes. Trials get a 40-generation screening checkpoint before the full 160-generation comparison. Only independently confirmed gains deploy.']),
 											title: 'Hourly experiments, frequent checks'
 										})
 									])),
