@@ -39,6 +39,9 @@ def summary():
              'mode': 'recipe-based experiments; no autonomous LLM research', 'interval_s': 900,
              'live_run': str(run), 'scoring_version': status.get('scoring_version'),
              'trainer_active': subprocess.run(['systemctl', '--user', 'is-active', '--quiet', 'uqm-neat.service']).returncode == 0}
+    if state.get('phase') == 'waiting':
+        state['lane'] = LANES[state.get('cycle', 0) % 3]
+        state['hypothesis'] = 'Next lane: ' + state['lane'] + '. The last comparison and its outcome are recorded below.'
     if subprocess.run(['systemctl', '--user', 'is-failed', '--quiet', 'uqm-review.service']).returncode == 0:
         state['error'] = state.get('error') or 'Review service failed; inspect its journal. The next timer activation will retry.'
     if subprocess.run(['systemctl', '--user', 'is-active', '--quiet', 'uqm-review.timer']).returncode != 0:

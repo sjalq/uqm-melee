@@ -12,7 +12,7 @@ The existing 3-ship pool, Awesome opponent, combat-v1 scoring and game engine ar
 
 Evidence lives in artifacts/neat/reviews/state.json and cycle-NNNNNN/{plan,result,audit,confirmation}.json plus immutable per-arm configs, initial weights, checkpoints and metrics. The timer and monitor are enabled user units and login linger is enabled. Check systemctl --user status uqm-neat uqm-monitor uqm-review.timer and journalctl --user -u uqm-review.service. Stop uqm-review.timer to stop future recipes; stop uqm-review.service as well to interrupt a running trial. Source is on codex/training-monitor in the uqm-melee-monitor worktree; do not silently replace it with the older main-tree dashboard or launcher.
 
-Validation: Elm dashboard compiled; desktop/mobile browser inspection found no horizontal overflow; hover explanations, expandable fights and network diagram worked; pure recipe/gating tests passed; actual Rust smoke trial preserved the live trainer. The UI restart resumed the same live checkpoint. The first full timer-driven cycle was started during deployment.
+Validation: Elm dashboard compiled; desktop/mobile browser inspection found no horizontal overflow; hover explanations, expandable fights and network diagram worked; pure recipe/gating tests passed; actual Rust smoke trial preserved the live trainer. The UI restart resumed the same live checkpoint. The first full timer-driven cycle completed: both arms used 33,174 training fights and tied 107/360 fresh wins; the challenger was rejected. The next creative review was confirmed scheduled for 00:23:37 SAST, exactly 15 minutes after the first activation.
 
 # NEAT melee trainer handoff
 
