@@ -104,9 +104,13 @@ The port is verified against the Elm by differential oracles that must diff
 clean. Compilation proves nothing here.
 
 ```
-bash scripts/oracle/check.sh      # elm <-> rust differential, must be silent-ok
+bash scripts/oracle/check.sh      # elm <-> rust differential, must be all-ok
 bash scripts/oracle/gen.sh        # regenerate the derived Rust tables
 ```
+
+`check.sh` compares by sha256, not by `diff`. This is deliberate: in this
+environment `diff` returned exit 0 for two files that genuinely differed, so a
+diff-based gate can pass while the port is wrong. Keep the hash comparison.
 
 Current state of that check:
 
