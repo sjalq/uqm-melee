@@ -3,3 +3,5 @@ pub mod encode;
 pub mod eval;
 pub mod policy;
 pub mod trace;
+
+pub mod training;

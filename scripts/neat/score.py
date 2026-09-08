@@ -19,7 +19,8 @@ def is_our_win(rec, us: str, budget: int) -> bool:
         ticks_i = int(ticks)
     except (TypeError, ValueError):
         return False
-    return enemy_i == 0 and 0 < ticks_i < budget
+    within_budget = 0 < ticks_i <= budget if rec.get("scoring_version") == "combat-v1" else 0 < ticks_i < budget
+    return enemy_i == 0 and within_budget
 
 
 def scenario_win(rec, budget: int) -> bool:

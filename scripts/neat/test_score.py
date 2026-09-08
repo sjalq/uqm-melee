@@ -36,6 +36,15 @@ class ScenarioScoreTests(unittest.TestCase):
             with self.subTest(record=record):
                 self.assertFalse(scenario_win(record, 1800))
 
+    def test_combat_scoring_counts_a_resolved_last_tick_win(self):
+        record = {"outcome": "completed", "winner": "bottom", "own": 1,
+                  "enemy": 0, "ticks": 1800, "display_ticks": 2136,
+                  "swap": False, "scoring_version": "combat-v1"}
+        self.assertTrue(scenario_win(record, 1800))
+        self.assertFalse(scenario_win({**record, "ticks": 1801}, 1800))
+        self.assertFalse(scenario_win({**record, "outcome": "invalidated"}, 1800))
+        self.assertFalse(scenario_win({**record, "scoring_version": "legacy"}, 1800))
+
     def test_seat_and_pair_scores_preserve_win_priority(self):
         win = {"outcome": "completed", "winner": "bottom", "fitness": 998851}
         self.assertEqual(seat_score(win, "bottom"), 998851)

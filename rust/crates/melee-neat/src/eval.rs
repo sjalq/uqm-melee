@@ -14,6 +14,7 @@ use melee_sim::{
     rate, step,
 };
 
+#[derive(Clone, Copy)]
 pub struct Job {
     pub seed: i64,
     pub ticks: i64,

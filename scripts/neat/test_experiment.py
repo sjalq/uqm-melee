@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from experiment import atomic_json, checked_weights, fork_checkpoint, mutation_indices, noise_vector, tuples
+from experiment import atomic_json, checked_weights, digest, fork_checkpoint, mutation_indices, noise_vector, tuples
 from layout import FITNESS_VERSION, N_WEIGHTS
 
 
@@ -57,6 +57,18 @@ class CheckpointTests(unittest.TestCase):
             with self.subTest(version=invalid.get("fitness_version"), length=len(invalid["weights"])):
                 with self.assertRaises(ValueError):
                     checked_weights(invalid)
+
+    def test_scoring_change_cannot_inherit_old_champion_scores(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = root / "parent"
+            provenance = {"config": {}, "fitness_version": FITNESS_VERSION}
+            weights = {"fitness_version": FITNESS_VERSION, "weights": [0.0] * N_WEIGHTS}
+            atomic_json(parent / "manifest.json", {"provenance": provenance})
+            atomic_json(parent / "checkpoint.json", {**weights, "champion": weights,
+                        "fingerprint": digest(provenance)})
+            with self.assertRaisesRegex(ValueError, "freshly scored"):
+                fork_checkpoint(parent, root / "child", {**provenance, "scoring_version": "combat-v1"})
 
     def test_json_random_state_round_trip_reconstructs_tuples(self):
         source = random.Random(8675309)

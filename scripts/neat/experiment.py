@@ -95,6 +95,8 @@ def fork_checkpoint(parent, destination, provenance):
         raise ValueError("checkpoint fork requires identical search and scenario configuration")
     if manifest["provenance"]["fitness_version"] != provenance["fitness_version"]:
         raise ValueError("checkpoint fork cannot change fitness semantics")
+    if manifest["provenance"].get("scoring_version", "legacy") != provenance.get("scoring_version", "legacy"):
+        raise ValueError("scoring changes require --initial and a freshly scored run, not --resume-from")
     baseline = json.loads((parent / "baseline.json").read_text())
     lineage = {"artifacts": str(parent), "fingerprint": checkpoint["fingerprint"],
                "checkpoint_sha256": digest(checkpoint), "generation": checkpoint["generation"]}

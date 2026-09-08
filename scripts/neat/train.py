@@ -40,6 +40,7 @@ BEST = ART / "best.json"
 WORKER = HERE / "worker.js"
 KERNEL = HERE / "kernel.js"
 EVALUATOR = "elm"
+SCORING_VERSION = "legacy"
 RUST_WORKER = ROOT / "rust" / "target" / "release" / "melee-worker"
 PORT = int(os.environ.get("NEAT_PORT", "8788"))
 WORKERS = int(os.environ.get("NEAT_WORKERS", "2"))
@@ -246,6 +247,8 @@ class KernelPool:
             "them": str(job.get("them") or "Umgah"),
             "foe": str(job.get("foe") or "cyborg"),
         }
+        if SCORING_VERSION != "legacy":
+            payload["scoring"] = SCORING_VERSION
         line_in = json.dumps(payload)
         idx = self.q.get()
         try:
@@ -269,6 +272,8 @@ class KernelPool:
             rec = json.loads(line)
             if rec.get("error") or not math.isfinite(float(rec.get("fitness", float("nan")))):
                 raise RuntimeError(f"invalid worker result: {rec}")
+            if SCORING_VERSION != "legacy" and rec.get("scoring_version") != SCORING_VERSION:
+                raise RuntimeError("worker did not acknowledge requested scoring version")
             rec["swap"] = payload["swap"]
             rec["us_ship"] = payload["us"]
             rec["them"] = payload["them"]
@@ -292,7 +297,7 @@ class KernelPool:
         budget = int(scenarios[0]["ticks"]) if scenarios else 1800
         wins = int(sum(1 for r in recs if scenario_win(r, budget)))
         dual = bool(recs) and all(scenario_win(r, budget) for r in recs)
-        slim = [{k: r.get(k) for k in ("seed", "swap", "us", "them", "foe", "group", "rating", "winner", "outcome", "own", "enemy", "ticks", "fitness", "damage", "hurt", "engage")} for r in recs]
+        slim = [{**{k: r.get(k) for k in ("seed", "swap", "us", "them", "foe", "group", "rating", "winner", "outcome", "own", "enemy", "ticks", "fitness", "damage", "hurt", "engage")}, **{k: r[k] for k in ("scoring_version", "display_ticks") if k in r}} for r in recs]
         return {
             "fitness": cvar_mean(scores),
             "mean": sum(scores) / max(1, len(scores)),
@@ -437,6 +442,8 @@ def run_loop():
     hints = load_hints()
     config = {k: v for k, v in hints.items() if k not in ("pause", "notes")}
     provenance = {"config": config, "source_sha256": source_hashes(HERE, EVALUATOR, RUST_WORKER), "fitness_version": FITNESS_VERSION}
+    if SCORING_VERSION != "legacy":
+        provenance["scoring_version"] = SCORING_VERSION
     manifest_path = ART / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
@@ -476,7 +483,7 @@ def run_loop():
     state.update({"generation": gen, "sigma": hints["sigma"], "pop": hints["pop"],
                   "episode_ticks": hints["episode_ticks"], "notes": hints.get("notes", ""),
                   "pool": hints["pool"], "search": hints["search"], "experiment": str(ART),
-                  "phase": "baseline", "paused": hints["pause"], "evaluator": EVALUATOR})
+                  "phase": "baseline", "paused": hints["pause"], "evaluator": EVALUATOR, "scoring_version": SCORING_VERSION})
     if not NO_DASHBOARD:
         atomic_json(ROOT / "artifacts/neat/active-run.json", {"run": str(ART), "evaluator": EVALUATOR})
     save_status()
@@ -618,7 +625,7 @@ def run_loop():
 
 def main():
     global ART, HALL, HINTS, STATUS, METRICS, BEST, CONTROL, INITIAL, MAX_GENERATIONS, NO_DASHBOARD
-    global EVALUATOR, RUST_WORKER, RESUME_FROM
+    global EVALUATOR, RUST_WORKER, RESUME_FROM, SCORING_VERSION
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifacts", type=Path, default=ART)
     parser.add_argument("--hints", type=Path, default=HINTS)
@@ -627,11 +634,15 @@ def main():
     parser.add_argument("--generations", type=int)
     parser.add_argument("--no-dashboard", action="store_true")
     parser.add_argument("--evaluator", choices=("elm", "rust"), default="elm")
+    parser.add_argument("--scoring-version", choices=("legacy", "combat-v1"), default="legacy")
     parser.add_argument("--rust-worker", type=Path, default=RUST_WORKER)
     parser.add_argument("--resume-from", type=Path, help="fork an exact checkpoint into a new run with identical configuration")
     args = parser.parse_args()
     if args.generations is not None and args.generations < 1:
         parser.error("--generations must be positive")
+    if args.scoring_version != "legacy" and args.evaluator != "rust":
+        parser.error("combat-v1 requires the Rust evaluator")
+    SCORING_VERSION = args.scoring_version
     ART = args.artifacts.resolve()
     HALL, STATUS, METRICS, BEST = ART / "hall", ART / "status.json", ART / "metrics.jsonl", ART / "best.json"
     HINTS = args.hints.resolve()
