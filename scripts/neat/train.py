@@ -348,12 +348,12 @@ class KernelPool:
                 pass
 
 
-def pack(us, them, foe, seeds, group, hints):
+def pack(us, them, foe, seeds, group, hints, swaps=(False, True)):
     ticks = int(hints["episode_ticks"])
     rating = str(hints.get("rating") or "awesome")
     out = []
     for seed in seeds:
-        for swap in (False, True):
+        for swap in swaps:
             out.append(
                 {
                     "us": us,
@@ -385,7 +385,8 @@ def make_train_scenarios(hints, gen):
         pairs = pairs[:12]
     out = []
     for us, them in pairs:
-        out += pack(us, them, "cyborg", seeds, f"{us}-{them}", hints)
+        # Share one seat across candidates, then switch seats next generation.
+        out += pack(us, them, "cyborg", seeds, f"{us}-{them}", hints, swaps=(bool(gen % 2),))
     return out
 
 

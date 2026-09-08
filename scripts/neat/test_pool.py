@@ -42,7 +42,12 @@ hints = {
 hold = make_hold_scenarios(hints)
 train = make_train_scenarios(hints, 0)
 assert len(hold) == 18
-assert len(train) == 18
+assert len(train) == 9
+for gen in range(4):
+    batch = make_train_scenarios(hints, gen)
+    assert len(batch) == 9
+    assert {s["swap"] for s in batch} == {bool(gen % 2)}
+    assert {(s["us"], s["them"]) for s in batch} == set(pool_pairs(START_POOL))
 assert all(s["foe"] == "cyborg" for s in hold + train)
 assert {s["us"] for s in hold} == set(START_POOL)
 assert {s["them"] for s in hold} == set(START_POOL)
