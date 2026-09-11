@@ -6,6 +6,8 @@ module Mario.Dashboard.Gate exposing
     , championVerdict
     , explain
     , explainBroad
+    , explainBroadBoard
+    , explainBroadCells
     , missingReverseSeats
     , overallVerdict
     , seatCoverage
@@ -495,25 +497,6 @@ explainBroad curriculum maybeOverall ships =
                 Nothing ->
                     curriculum.target
 
-        rosterLine =
-            "All "
-                ++ String.fromInt (List.length curriculum.ourRoster)
-                ++ " of our hulls and all "
-                ++ String.fromInt (List.length curriculum.opponentRoster)
-                ++ " opponent hulls are active at once. Nothing is being unlocked stage by stage, so there is no per-matchup gate to pass and no cell is waiting its turn."
-
-        unlockedLine =
-            if curriculum.stageUnlockedExternally then
-                [ "Stage "
-                    ++ String.fromInt curriculum.stage
-                    ++ " was opened by the operator transition, not earned cell by cell. The "
-                    ++ String.fromInt curriculum.totalMatchups
-                    ++ " cells are active, not mastered, and the mastered count below is a diagnostic that gates nothing."
-                ]
-
-            else
-                []
-
         scopeLine =
             "The run is judged on one number: the frozen champion's win rate over a fixed held-out balanced panel in which every hull appears equally often on both sides, and every pair is played in both seats. The target is "
                 ++ Format.percent target
@@ -610,12 +593,80 @@ explainBroad curriculum maybeOverall ships =
                         ++ "\", but the run is still judged on the overall balanced result and still carries its broad provenance. It did not revert to per-matchup gating."
                     ]
     in
-    [ rosterLine ]
-        ++ unlockedLine
-        ++ [ scopeLine, aggregateLine, correlationLine, roundLine ]
+    [ scopeLine, aggregateLine, correlationLine, roundLine ]
         ++ coverageLine
         ++ [ sourceLine ]
         ++ readinessSourceLine
         ++ [ timeoutLine ]
         ++ originLine
         ++ ladderLine
+
+
+{-| What the board is, for the panel whose subject is the board.
+
+Kept out of `explainBroad` on purpose. Three panels on this page could
+each reasonably say "all 25 ships are active", and when all three did,
+the reader got the same eleven paragraphs twice and stopped reading any
+of them. Each fact is now stated once, in the panel it belongs to: the
+gate panel explains the gate, this explains the board, and the
+curriculum panel explains the cells.
+
+-}
+explainBroadBoard : Api.Curriculum -> List String
+explainBroadBoard curriculum =
+    let
+        rosterLine =
+            "All "
+                ++ String.fromInt (List.length curriculum.ourRoster)
+                ++ " of our hulls and all "
+                ++ String.fromInt (List.length curriculum.opponentRoster)
+                ++ " opponent hulls are active at once. Nothing is being unlocked stage by stage, so there is no per-matchup gate to pass and no cell is waiting its turn."
+
+        unlockedLine =
+            if curriculum.stageUnlockedExternally then
+                [ "Stage "
+                    ++ String.fromInt curriculum.stage
+                    ++ " was opened by the operator transition, not earned cell by cell. The "
+                    ++ String.fromInt curriculum.totalMatchups
+                    ++ " cells are active, not mastered, and the mastered count is a diagnostic that gates nothing."
+                ]
+
+            else
+                []
+    in
+    rosterLine :: unlockedLine
+
+
+{-| What the per-cell evidence is for, now that it gates nothing.
+
+The grid and the mastered count are the same numbers a staged run gates
+on, so in broad mode they need saying plainly: they are diagnostics, a
+weak cell blocks nothing, and an unplayed cell is a hole in what is
+known rather than a loss.
+
+-}
+explainBroadCells : Api.Curriculum -> List Matchup -> List String
+explainBroadCells curriculum matchups =
+    let
+        b =
+            analyse curriculum.target matchups
+
+        counted =
+            if b.total == 0 then
+                [ "No per-cell evidence has been published for this board yet." ]
+
+            else
+                [ String.fromInt b.mastered
+                    ++ " of "
+                    ++ String.fromInt b.total
+                    ++ " cells have cleared "
+                    ++ Format.percent curriculum.target
+                    ++ " on their own evidence, and "
+                    ++ String.fromInt b.unseen
+                    ++ " have no gate games at all. In this mode neither number gates anything."
+                ]
+    in
+    counted
+        ++ [ "These cells are diagnostics. The run is judged on one overall balanced result, explained in full on the gate panel above, and no cell here can block or unblock it."
+           , "A cell with no games is unmeasured, not lost. Its absence says where the aggregate has the least evidence behind it, which is exactly what an overall figure cannot show."
+           ]

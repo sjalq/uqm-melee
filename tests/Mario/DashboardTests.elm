@@ -1320,9 +1320,76 @@ broadCopySuite =
                     |> Expect.equal True
         , test "an externally unlocked stage is named as unlocked, not as mastered" <|
             \() ->
-                broadLines
+                broadBoardLines
                     |> List.any (String.contains "not earned cell by cell")
                     |> Expect.equal True
+        , test "the board explanation says the whole roster is active" <|
+            \() ->
+                broadBoardLines
+                    |> List.any (String.contains "are active at once")
+                    |> Expect.equal True
+        , test "the cell explanation says the cells gate nothing" <|
+            \() ->
+                broadCellLines
+                    |> List.any (String.contains "no cell here can block or unblock it")
+                    |> Expect.equal True
+        , test "the cell explanation says an unplayed cell is unmeasured, not lost" <|
+            \() ->
+                broadCellLines
+                    |> List.any (String.contains "unmeasured, not lost")
+                    |> Expect.equal True
+        , test "no sentence is repeated across the three broad explanations" <|
+            \() ->
+                -- Three panels could each reasonably say "all 25 ships are
+                -- active", and when all three did, the page showed the same
+                -- eleven paragraphs twice and nobody read any of them. Each
+                -- fact belongs to exactly one panel.
+                let
+                    all =
+                        broadLines ++ broadBoardLines ++ broadCellLines
+                in
+                Expect.equal (List.length all) (List.length (unique all))
+        , test "the gate explanation no longer describes the board, which is another panel's job" <|
+            \() ->
+                broadLines
+                    |> List.any (\line -> String.contains "are active at once" line || String.contains "not earned cell by cell" line)
+                    |> Expect.equal False
+        , test "detail attached to a tip keeps its id, title and meta" <|
+            \() ->
+                -- The long reasoning lives behind the explanation trigger, so
+                -- a detailed tip has to stay the same tip: a changed id would
+                -- collide with another bubble or orphan its aria-describedby,
+                -- and dropped meta would lose the denominator the contract
+                -- insists every metric states.
+                let
+                    detailed =
+                        Tip.detail Copy.overallGate broadLines
+                in
+                Expect.equal
+                    ( detailed.id, detailed.title, detailed.meta )
+                    ( Copy.overallGate.id, Copy.overallGate.title, Copy.overallGate.meta )
+        , test "detail actually carries the reasoning into the bubble" <|
+            \() ->
+                Tip.detail Copy.overallGate broadLines
+                    |> .body
+                    |> String.contains "not a claim that the champion clears"
+                    |> Expect.equal True
+        , test "an empty detail list leaves the tip exactly as it was" <|
+            \() ->
+                Tip.detail Copy.overallGate []
+                    |> Expect.equal Copy.overallGate
+        , test "the on-screen cell sentence is one line, with the rest behind the tip" <|
+            \() ->
+                -- The panel prints List.take 1 of this and hides the rest, so
+                -- the first entry has to be the one that stands alone.
+                case broadCellLines of
+                    first :: rest ->
+                        Expect.equal
+                            ( String.contains "cell" first, String.endsWith "." first, List.isEmpty rest )
+                            ( True, True, False )
+
+                    [] ->
+                        Expect.fail "the cell explanation should not be empty"
         , test "carried-over provenance names the origin and the evidence that was cleared" <|
             \() ->
                 broadLines
@@ -1429,6 +1496,26 @@ broadLines =
     case decode broadPayload of
         Ok status ->
             Gate.explainBroad status.curriculum status.overall status.shipPerformance
+
+        Err _ ->
+            []
+
+
+broadBoardLines : List String
+broadBoardLines =
+    case decode broadPayload of
+        Ok status ->
+            Gate.explainBroadBoard status.curriculum
+
+        Err _ ->
+            []
+
+
+broadCellLines : List String
+broadCellLines =
+    case decode broadPayload of
+        Ok status ->
+            Gate.explainBroadCells status.curriculum status.matchups
 
         Err _ ->
             []

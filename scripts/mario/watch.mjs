@@ -212,6 +212,15 @@ function run(command, args) {
 // Memory and CPU for one pid, plus whether its command line actually mentions
 // the run we think we are watching. A pid can be recycled, and reporting
 // another process's memory as the trainer's would be worse than reporting none.
+//
+// `ps` formats %cpu through the current locale, so on a machine whose locale
+// uses a comma as the decimal separator the field arrives as "0,3" rather than
+// "0.3". Both separators are accepted here and normalised before the number is
+// parsed, because `Number("0,3")` is NaN and the whole row would otherwise be
+// dropped on the floor on exactly the machines this runs on.
+//
+// The command is matched with [\s\S] rather than . so a command line carrying a
+// newline cannot make the row unparseable either.
 async function sampleProcess(pid, expectedRun) {
   if (!pid) return null;
   const out = await run("ps", ["-o", "rss=,%cpu=,command=", "-p", String(pid)]);
@@ -219,16 +228,20 @@ async function sampleProcess(pid, expectedRun) {
     return { pid, alive: false };
   }
   const line = out.trim();
-  const match = line.match(/^\s*(\d+)\s+([\d.]+)\s+(.*)$/);
+  const match = line.match(/^\s*(\d+)\s+([\d]+[.,]?[\d]*)\s+([\s\S]*)$/);
   if (!match) {
-    return { pid, alive: true };
+    // Say why rather than silently reporting a bare "alive", so a future
+    // formatting surprise is visible in the log instead of looking like the
+    // watcher simply had nothing to add.
+    return { pid, alive: true, unparsed: line.slice(0, 120) };
   }
   const [, rss, cpu, command] = match;
+  const cpuPct = Number(cpu.replace(",", "."));
   return {
     pid,
     alive: true,
     rss_mb: Math.round(Number(rss) / 1024),
-    cpu_pct: Number(cpu),
+    cpu_pct: Number.isFinite(cpuPct) ? cpuPct : null,
     run_matches: expectedRun ? command.includes(expectedRun) : null,
   };
 }

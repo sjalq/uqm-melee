@@ -2,6 +2,7 @@ module Mario.Dashboard.Tip exposing
     ( Align(..)
     , Handlers
     , Tip
+    , detail
     , isOpen
     , tip
     , view
@@ -46,6 +47,27 @@ type alias Tip =
 tip : String -> String -> String -> List ( String, String ) -> Tip
 tip tipId title body meta =
     { id = tipId, title = title, body = body, meta = meta }
+
+
+{-| Attach run-specific detail to a tip without moving it.
+
+The page states each fact once, in one short sentence, and keeps the
+full reasoning behind the explanation trigger that is already next to
+it. A dozen paragraphs printed under a heading pushes the numbers below
+the fold and gets skipped; the same paragraphs one keystroke away get
+read by the person who actually wants them.
+
+The id, title and meta are preserved, so a detailed tip is still the
+same tip: it cannot collide with another bubble or lose its denominator.
+
+-}
+detail : Tip -> List String -> Tip
+detail base lines =
+    if List.isEmpty lines then
+        base
+
+    else
+        { base | body = String.join " " (base.body :: lines) }
 
 
 type Align
