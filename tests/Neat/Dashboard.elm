@@ -77,6 +77,9 @@ type alias Status =
     , nHold : Int
     , pool : List String
     , champion : Champion
+    , experiment : String
+    , phase : String
+    , evaluator : String
     }
 
 
@@ -170,6 +173,7 @@ update msg model =
 
                         Just n ->
                             n.generation /= s.champion.generation
+                                || (Maybe.map .experiment model.status /= Just s.experiment)
             in
             ( { model | status = Just s, err = if s.error == "" then Nothing else Just s.error }
             , if needNet then
@@ -319,6 +323,9 @@ statusDecoder =
         |> P.optional "n_hold" D.int 0
         |> P.optional "pool" (D.list D.string) []
         |> P.optional "champion" championDecoder emptyChampion
+        |> P.optional "experiment" D.string ""
+        |> P.optional "phase" D.string ""
+        |> P.optional "evaluator" D.string "elm"
 
 
 emptyChampion : Champion
@@ -471,7 +478,13 @@ header model =
             Just s ->
                 p [ A.style "color" mute, A.style "margin" "8px 0 0", A.style "font-size" "13px" ]
                     [ text
-                        (uptime s.uptimeS
+                        ((s.experiment |> String.split "/" |> List.reverse |> List.head |> Maybe.withDefault "training")
+                            ++ "  ·  "
+                            ++ s.phase
+                            ++ " | "
+                            ++ s.evaluator
+                            ++ "  ·  "
+                            ++ uptime s.uptimeS
                             ++ "  ·  gen "
                             ++ String.fromInt s.generation
                             ++ "  ·  "
@@ -766,7 +779,7 @@ charts model s =
         ]
         [ chartCard
             "Practice score vs exam score"
-            "Gold wiggles: this generation's practice average (noisy). Mint steps: the saved champion's exam score (only moves when we keep a new genome). Neither line is a win count."
+            "Updates after each completed generation, not after each fight. History starts fresh for each experiment. Gold is the practice average; mint is the saved champion's validation score. Neither line is a win count."
             (scoreChartExplainer s)
             [ { label = "practice average this gen", color = gold, values = List.map .mean hist }
             , { label = "saved exam score", color = mint, values = List.map .best hist }
@@ -802,7 +815,7 @@ chartCard title blurb e series history hover hoverMsg =
         , p [ A.style "color" mute, A.style "font-size" "13px", A.style "margin" "8px 0 12px", A.style "line-height" "1.45" ] [ text blurb ]
         , legend series
         , if List.length history < 2 then
-            p [ A.style "color" mute, A.style "font-size" "13px" ] [ text "Not enough generations to chart yet." ]
+            p [ A.style "color" mute, A.style "font-size" "13px" ] [ text ("Waiting for two completed generations in this experiment. Completed: " ++ String.fromInt (List.length history) ++ ". The evaluation counter advances while the next generation runs.") ]
 
           else
             viewChart series history hover hoverMsg
@@ -1191,8 +1204,8 @@ pageExplainer =
     { title = "What this page is"
     , body =
         [ "We are training one neural net to play Super Melee against the original Awesome cyborg. The net picks a ship, the cyborg picks a ship, they fight in the real engine."
-        , "Hull identity is 5 bits for us and 5 bits for them. A hidden layer of 16 tanh units sits between the sensors and the buttons. Pool is Pkunk, Umgah, Yehat: 9 matchups times 2 seats = 18 exam fights."
-        , "A fourth ship is added only when the saved net wins 80% of those exam fights (15 of 18). We are not there yet."
+        , "Hull identity is 5 bits for us and 5 bits for them. A hidden layer of 16 tanh units sits between the sensors and the buttons. The current experiment uses Pkunk, Umgah and Yehat in both seats across several starting seeds."
+        , "The ship pool stays fixed during this comparison so both experiments face the same challenge."
         , "Ignore leftover v5 numbers and any old 'WIN 509t' jackpot card. The number that matters is Hold record."
         ]
     }
@@ -1202,7 +1215,7 @@ generationExplainer : Status -> Explainer
 generationExplainer s =
     { title = "Generation"
     , body =
-        [ "How many times the trainer has updated the net since this process started. This run is at generation " ++ String.fromInt s.generation ++ "."
+        [ "How many times this experiment has updated the net, including work restored from a checkpoint. This run is at generation " ++ String.fromInt s.generation ++ "."
         , "It is a loop counter, not a win count. Generation 200 with 3 kills is worse than generation 50 with 15 kills."
         ]
     }
@@ -1212,9 +1225,9 @@ holdRecordExplainer : Int -> Int -> Status -> Explainer
 holdRecordExplainer wins n _ =
     { title = "Hold record  (the number to watch)"
     , body =
-        [ "The saved net is tested on a fixed exam of " ++ String.fromInt n ++ " fights. Same ships, same seats, same seed, every time. Right now it has " ++ String.fromInt wins ++ " kills."
+        [ "The saved net is tested on a fixed validation set of " ++ String.fromInt n ++ " fights. Same ships, seats and set of seeds every time. Right now it has " ++ String.fromInt wins ++ " kills."
         , "A kill means: the fight actually finished, our ship won, and the enemy has 0 crew. Timeouts and dying both count as not a kill."
-        , "This is the gate for adding a fourth ship: 80%, which is 15 of 18. Do not treat a rising Hold score as that gate."
+        , "These fights select the champion. A separate set of fresh seeds checks the selected policy after the experiment comparison."
         ]
     }
 
@@ -1225,7 +1238,7 @@ poolExplainer ships s =
     , body =
         [ "Hulls the net must play as and against: " ++ ships ++ "."
         , "Every pair is tested, including mirror matches (Pkunk vs Pkunk) and both seats (our ship on the bottom or the top)."
-        , String.fromInt s.nTrain ++ " practice fights and " ++ String.fromInt s.nHold ++ " exam fights per scoring. Next catalog ship is added only at 80% exam kills."
+        , String.fromInt s.nTrain ++ " practice fights and " ++ String.fromInt s.nHold ++ " validation fights per scoring. The pool stays fixed during the comparison."
         ]
     }
 
@@ -1234,7 +1247,7 @@ holdScoreExplainer : Status -> Explainer
 holdScoreExplainer s =
     { title = "Hold score  (not a win count)"
     , body =
-        [ "A blended number for the 18 exam fights, currently " ++ fmtScore s.bestFitness ++ ". It mixes the average of all 18 with the average of the worst quarter, so one lucky kill cannot hide 17 disasters."
+        [ "A blended number for the validation fights, currently " ++ fmtScore s.bestFitness ++ ". It mixes the average across all fights with the average of the worst quarter."
         , "A real kill is worth about a million minus how long it took. A timeout is a small damage number. A fight we lose outright is that small number minus 3000, so dying is still worse than timing out, but not by 100000. A new champion is kept only if it has more exam kills, or the same kills and a higher score."
         , "Use this to see whether the exam is getting less bad. Use Hold record for whether we are actually winning fights."
         ]

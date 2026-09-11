@@ -1,0 +1,21 @@
+[Unit]
+Description=Focused varied-seed combat curriculum
+
+[Service]
+Type=simple
+WorkingDirectory=/home/schalk/git/uqm-melee
+ExecStart=/usr/bin/python3 /home/schalk/git/uqm-melee/artifacts/neat/releases/focused-v1/scripts/neat/focused_curriculum.py
+Environment=NEAT_WORKERS=2 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
+Restart=on-failure
+RestartSec=30
+KillMode=control-group
+TimeoutStopSec=15
+AllowedCPUs=4,5
+CPUQuota=200%
+CPUWeight=100
+MemoryMax=4G
+MemorySwapMax=0
+TasksMax=64
+
+[Install]
+WantedBy=default.target

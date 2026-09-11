@@ -1,0 +1,36 @@
+{
+  "common": {
+    "sigma": 0.12,
+    "lr": 0.1,
+    "pop": 16,
+    "episode_ticks": 1800,
+    "rating": "awesome",
+    "train_seeds": [1701, 2137, 7],
+    "hold_seeds": [42, 99, 1234],
+    "pool": ["Pkunk", "Umgah", "Yehat"],
+    "expand_at": 0.8,
+    "auto_expand": false,
+    "pause": false
+  },
+  "arms": [
+    {
+      "id": "es-baseline",
+      "search": "es",
+      "lane": "research",
+      "source": "https://arxiv.org/abs/1703.03864",
+      "seed": 20260908,
+      "generations": 14,
+      "hypothesis": "Standard evolution strategies will provide a stable baseline for improving hold-set wins."
+    },
+    {
+      "id": "block-mutations",
+      "search": "block_es",
+      "lane": "creative",
+      "source": null,
+      "seed": 20260908,
+      "generations": 14,
+      "hypothesis": "Mutating coherent parameter blocks will escape plateaus that resist independent Gaussian perturbations."
+    }
+  ],
+  "audit_seeds": [31013, 47017, 59021]
+}

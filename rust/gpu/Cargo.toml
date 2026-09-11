@@ -1,0 +1,23 @@
+[package]
+name = "melee-gpu"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+melee-core = { path = "../crates/melee-core" }
+melee-sim = { path = "../crates/melee-sim" }
+
+[profile.dev]
+debug = "line-tables-only"
+panic = "abort"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

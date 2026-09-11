@@ -5,10 +5,18 @@
   "episode_ticks": 1800,
   "seed": 1701,
   "rating": "awesome",
-  "train_seeds": [1701],
-  "hold_seeds": [42],
-  "pool": ["Pkunk", "Umgah", "Yehat"],
+  "train_seeds": [
+    1701
+  ],
+  "hold_seeds": [
+    42
+  ],
+  "pool": [
+    "Pkunk",
+    "Umgah",
+    "Yehat"
+  ],
   "expand_at": 0.8,
-  "pause": true,
-  "notes": "PAUSED for handoff. v8-bits-hid. Do not expand pool."
+  "pause": false,
+  "notes": "Codex takeover-v1: paired ES/block-ES pilot; settings live in campaign-plan.json; this file controls pause."
 }
