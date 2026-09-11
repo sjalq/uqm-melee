@@ -27,10 +27,13 @@ import Mario.Dashboard.Copy as Copy
 import Mario.Dashboard.Format as Format
 import Mario.Dashboard.Gate as Gate
 import Mario.Dashboard.Heatmap as Heatmap
+import Mario.Dashboard.Scoring as Scoring
 import Mario.Dashboard.Slots as Slots
 import Mario.Dashboard.Tip as Tip
 import Mario.Dashboard.Topology as Topology
 import Test exposing (Test, describe, fuzz, fuzz2, test)
+import Test.Html.Query as Query
+import Test.Html.Selector as Selector
 
 
 suite : Test
@@ -46,6 +49,7 @@ suite =
         , copySuite
         , controlSuite
         , broadSuite
+        , scoringSuite
         ]
 
 
@@ -1802,3 +1806,447 @@ readyBaselinePayload =
   ]
 }
 """
+
+
+-- SCORING
+--
+-- The score is the one number that decides which genomes breed, and the
+-- crew ratio is the easiest figure on the page to misread: it looks like
+-- a percentage, sits beside real percentages, and is neither a win rate
+-- nor a fraction of maximum health. Every test here guards one specific
+-- misreading, plus the one that matters most for the archive: a run that
+-- predates the selector must never be dressed up as a crew-ratio run.
+
+
+scoringSuite : Test
+scoringSuite =
+    describe "scoring rule"
+        [ scoringDecoderSuite
+        , scoringCopySuite
+        , fightLimitSuite
+        , gateSeparationSuite
+        , renderSuite
+        ]
+
+
+crewRatioPayload : String
+crewRatioPayload =
+    """
+{
+  "run_id": "mario-ratio-staged-20260912",
+  "resources": {"workers": 1, "duty_cycle": 0.5, "episode_ticks": 1200, "nice": 10},
+  "scoring": {
+    "fitness": "crew-ratio", "zero_opponent": 1000, "mutual_zero": 1,
+    "speed_bonus": false, "gate": "combat-wins"
+  }
+}
+"""
+
+
+combatPayload : String
+combatPayload =
+    """
+{
+  "run_id": "mario-main-20260911",
+  "resources": {"workers": 1, "duty_cycle": 0.5, "episode_ticks": 1200},
+  "scoring": {
+    "fitness": "combat", "zero_opponent": null, "mutual_zero": null,
+    "speed_bonus": true, "gate": "combat-wins"
+  }
+}
+"""
+
+
+scoringOf : String -> Result String (Maybe Api.Scoring)
+scoringOf json =
+    decode json |> Result.map .scoring
+
+
+scoringDecoderSuite : Test
+scoringDecoderSuite =
+    describe "decoding"
+        [ test "a crew-ratio block decodes with the constants the run declared" <|
+            \() ->
+                Expect.equal (scoringOf crewRatioPayload)
+                    (Ok
+                        (Just
+                            { fitness = Api.CrewRatio { zeroOpponent = Just 1000, mutualZero = Just 1 }
+                            , speedBonus = Just False
+                            , gate = Api.CombatWins
+                            }
+                        )
+                    )
+        , test "a combat block decodes without picking up crew-ratio constants" <|
+            \() ->
+                Expect.equal (scoringOf combatPayload)
+                    (Ok (Just { fitness = Api.Combat, speedBonus = Just True, gate = Api.CombatWins }))
+        , test "an absent block stays absent rather than defaulting to a rule the run never used" <|
+            \() ->
+                Expect.equal (scoringOf """{"run_id":"mario-main-20260911"}""") (Ok Nothing)
+        , test "an absent block reads as the original combat fitness, never as the crew ratio" <|
+            \() ->
+                -- The selector is newer than the runs it can be pointed at,
+                -- so absence has a documented meaning. Printing "crew ratio"
+                -- for an archived run would misdescribe every number under it.
+                Expect.equal
+                    ( Scoring.label Nothing
+                    , String.contains "ratio" (Scoring.formula Nothing)
+                    , String.contains "not reported" (Scoring.formula Nothing)
+                    )
+                    ( "combat", False, True )
+        , test "an unreported constant is not filled in with the documented default" <|
+            \() ->
+                case scoringOf """{"scoring":{"fitness":"crew-ratio","gate":"combat-wins"}}""" of
+                    Ok (Just reported) ->
+                        Expect.equal ( reported.fitness, reported.speedBonus )
+                            ( Api.CrewRatio { zeroOpponent = Nothing, mutualZero = Nothing }, Nothing )
+
+                    _ ->
+                        Expect.fail "expected a crew-ratio block"
+        , test "an unknown fitness is preserved verbatim rather than collapsed into a known rule" <|
+            \() ->
+                case scoringOf """{"scoring":{"fitness":"crew-delta","gate":"combat-wins"}}""" of
+                    Ok (Just reported) ->
+                        Expect.equal reported.fitness (Api.UnknownFitness "crew-delta")
+
+                    _ ->
+                        Expect.fail "expected an unknown fitness"
+        , test "an unknown gate criterion is preserved verbatim, so it is never rephrased as wins" <|
+            \() ->
+                case scoringOf """{"scoring":{"fitness":"crew-ratio","gate":"crew-ratio-above-one"}}""" of
+                    Ok (Just reported) ->
+                        Expect.equal ( reported.gate, Api.gateCriterionLabel reported.gate )
+                            ( Api.UnknownGate "crew-ratio-above-one", "crew-ratio-above-one" )
+
+                    _ ->
+                        Expect.fail "expected an unknown gate"
+        , test "a null scoring block is absence, not an empty rule" <|
+            \() ->
+                Expect.equal (scoringOf """{"scoring":null}""") (Ok Nothing)
+        , test "the episode tick budget decodes, and its absence stays unknown rather than zero" <|
+            \() ->
+                Expect.equal
+                    ( decode crewRatioPayload |> Result.map (.resources >> .episodeTicks)
+                    , decode """{"resources":{"workers":1}}""" |> Result.map (.resources >> .episodeTicks)
+                    )
+                    ( Ok (Just 1200), Ok Nothing )
+        ]
+
+
+crewRatioLines : List String
+crewRatioLines =
+    case decode crewRatioPayload of
+        Ok status ->
+            Scoring.explain status.scoring status.resources
+
+        Err _ ->
+            []
+
+
+saysCrewRatio : String -> Bool
+saysCrewRatio needle =
+    List.any (String.contains needle) crewRatioLines
+
+
+scoringCopySuite : Test
+scoringCopySuite =
+    describe "what the scoring explanation is obliged to say"
+        [ test "it states the formula as a ratio of two starting-crew shares" <|
+            \() ->
+                Expect.equal
+                    ( saysCrewRatio "our surviving crew \u{00F7} our starting crew"
+                    , saysCrewRatio "share of the crew they began with"
+                    )
+                    ( True, True )
+        , test "it says the figure is not a win percentage and not a health fraction" <|
+            \() ->
+                Expect.equal
+                    ( saysCrewRatio "not a win percentage"
+                    , saysCrewRatio "not a fraction of maximum health"
+                    )
+                    ( True, True )
+        , test "it says 1.00 is an even share rather than a win" <|
+            \() ->
+                saysCrewRatio "both sides kept the same share"
+                    |> Expect.equal True
+        , test "it allows a legitimate share above the starting complement" <|
+            \() ->
+                saysCrewRatio "above 100% on either side is legitimate"
+                    |> Expect.equal True
+        , test "it names the reported cap for a wiped-out opponent rather than dividing by nobody" <|
+            \() ->
+                saysCrewRatio "scores 1000"
+                    |> Expect.equal True
+        , test "it says a mutual wipe is even, at the value the run reported" <|
+            \() ->
+                Expect.equal
+                    ( saysCrewRatio "Both crews at zero scores 1"
+                    , saysCrewRatio "a mutual wipe is even"
+                    )
+                    ( True, True )
+        , test "it says losing our whole crew against survivors scores zero" <|
+            \() ->
+                saysCrewRatio "Losing our whole crew while any of theirs survive scores 0."
+                    |> Expect.equal True
+        , test "it says there is no time bonus when the run reports none" <|
+            \() ->
+                saysCrewRatio "no time bonus"
+                    |> Expect.equal True
+        , test "an unreported cap is called unreported instead of printing the documented default" <|
+            \() ->
+                case decode """{"scoring":{"fitness":"crew-ratio","gate":"combat-wins"},"resources":{"episode_ticks":1200}}""" of
+                    Ok status ->
+                        let
+                            lines =
+                                Scoring.explain status.scoring status.resources
+                        in
+                        Expect.equal
+                            ( List.any (String.contains "did not report what that value is") lines
+                            , List.any (String.contains "scores 1000") lines
+                            )
+                            ( True, False )
+
+                    Err error ->
+                        Expect.fail error
+        , test "an archived run with no block is explained as the original rule, not the ratio" <|
+            \() ->
+                case decode """{"resources":{"episode_ticks":1200}}""" of
+                    Ok status ->
+                        let
+                            lines =
+                                Scoring.explain status.scoring status.resources
+                        in
+                        Expect.equal
+                            ( List.any (String.contains "It is not the crew ratio.") lines
+                            , List.any (String.contains "surviving crew") lines
+                            )
+                            ( True, False )
+
+                    Err error ->
+                        Expect.fail error
+        , test "an unrecognised rule is shown verbatim and not interpreted" <|
+            \() ->
+                case decode """{"scoring":{"fitness":"crew-delta"},"resources":{"episode_ticks":1200}}""" of
+                    Ok status ->
+                        Scoring.explain status.scoring status.resources
+                            |> List.any (String.contains "which this dashboard does not recognise")
+                            |> Expect.equal True
+
+                    Err error ->
+                        Expect.fail error
+        , test "the three scoring tips are distinct anchors, so no two bubbles share a DOM id" <|
+            \() ->
+                let
+                    ids =
+                        List.map .id [ Copy.fitnessRule, Copy.fightLimit, Copy.gateCriterion ]
+                in
+                Expect.equal (List.length ids) (List.length (unique ids))
+        , test "the scoring reasoning rides in the tip, keeping its id, title and meta" <|
+            \() ->
+                let
+                    detailed =
+                        Tip.detail Copy.fitnessRule crewRatioLines
+                in
+                Expect.equal
+                    ( detailed.id, detailed.meta, String.contains "not a win percentage" detailed.body )
+                    ( Copy.fitnessRule.id, Copy.fitnessRule.meta, True )
+        ]
+
+
+fightLimitSuite : Test
+fightLimitSuite =
+    describe "the fight deadline"
+        [ test "1200 ticks at 60 a second is the twenty second limit" <|
+            \() ->
+                case decode crewRatioPayload of
+                    Ok status ->
+                        Expect.equal
+                            ( Scoring.fightSeconds status.resources, Scoring.fightLimit status.resources )
+                            ( Just 20, Just "20 s" )
+
+                    Err error ->
+                        Expect.fail error
+        , test "the archived broad run's own budget of 3600 ticks reads as sixty seconds, not twenty" <|
+            \() ->
+                -- Taken from the stopped mario-any-any-20260911 server, which
+                -- reports episode_ticks 3600 and no scoring block at all. The
+                -- new run's twenty seconds is a property of that run, so
+                -- nothing here may hard-code it.
+                case decode """{"run_id":"mario-any-any-20260911","resources":{"workers":1,"duty_cycle":0.5,"episode_ticks":3600,"nice":10}}""" of
+                    Ok status ->
+                        Expect.equal
+                            ( Scoring.fightLimit status.resources, Scoring.label status.scoring )
+                            ( Just "60 s", "combat" )
+
+                    Err error ->
+                        Expect.fail error
+        , test "a fractional budget keeps its decimal rather than rounding to a tidy lie" <|
+            \() ->
+                case decode """{"resources":{"episode_ticks":930}}""" of
+                    Ok status ->
+                        Expect.equal (Scoring.fightLimit status.resources) (Just "15.5 s")
+
+                    Err error ->
+                        Expect.fail error
+        , test "an unreported budget is unknown, never zero seconds" <|
+            \() ->
+                Expect.equal
+                    ( Scoring.fightSeconds Api.empty.resources, Scoring.fightLimit Api.empty.resources )
+                    ( Nothing, Nothing )
+        , test "a nonsense budget of zero ticks is unknown rather than an instant fight" <|
+            \() ->
+                case decode """{"resources":{"episode_ticks":0}}""" of
+                    Ok status ->
+                        Expect.equal (Scoring.fightLimit status.resources) Nothing
+
+                    Err error ->
+                        Expect.fail error
+        , test "the limit is stated as simulated time, not as time the machine spends" <|
+            \() ->
+                Expect.equal
+                    ( saysCrewRatio "cut off at 20 s of simulated time"
+                    , saysCrewRatio "not of machine time"
+                    )
+                    ( True, True )
+        , test "the limit is a cut-off for an unfinished fight, not the moment every fight is scored" <|
+            \() ->
+                -- A resolved fight ends early and is scored there. Calling
+                -- the budget "the deadline the score is read at" would put a
+                -- twenty second clock on fights that were over in four.
+                Expect.equal
+                    ( saysCrewRatio "A fight is scored when it ends."
+                    , saysCrewRatio "One that neither side has finished is cut off"
+                    )
+                    ( True, True )
+        , test "the tile note says the limit only binds a fight nobody finishes, with no time bonus" <|
+            \() ->
+                case decode crewRatioPayload of
+                    Ok status ->
+                        Scoring.limitNote status.scoring
+                            |> Expect.equal "simulated, for a fight nobody finishes, and no time bonus"
+
+                    Err error ->
+                        Expect.fail error
+        , test "a run that reports a speed bonus is not described as having none" <|
+            \() ->
+                case decode combatPayload of
+                    Ok status ->
+                        Scoring.limitNote status.scoring
+                            |> String.contains "no time bonus"
+                            |> Expect.equal False
+
+                    Err error ->
+                        Expect.fail error
+        ]
+
+
+gateSeparationSuite : Test
+gateSeparationSuite =
+    describe "fitness is not the gate"
+        [ test "a crew-ratio run says in one line what breeds and what promotes" <|
+            \() ->
+                case decode crewRatioPayload of
+                    Ok status ->
+                        Scoring.gateNote status.scoring
+                            |> Expect.equal (Just "Breeding ranks on the crew ratio; this gate counts actual combat wins.")
+
+                    Err error ->
+                        Expect.fail error
+        , test "the note repeats whatever gate criterion the engine declares, without rewording it" <|
+            \() ->
+                case decode """{"scoring":{"fitness":"crew-ratio","gate":"crew-fraction-at-deadline"}}""" of
+                    Ok status ->
+                        Scoring.gateNote status.scoring
+                            |> Maybe.withDefault ""
+                            |> String.contains "this gate counts crew-fraction-at-deadline."
+                            |> Expect.equal True
+
+                    Err error ->
+                        Expect.fail error
+        , test "a combat run adds no line, because nothing there invites the confusion" <|
+            \() ->
+                case decode combatPayload of
+                    Ok status ->
+                        Scoring.gateNote status.scoring |> Expect.equal Nothing
+
+                    Err error ->
+                        Expect.fail error
+        , test "an archived run with no block adds no line either" <|
+            \() ->
+                Scoring.gateNote Nothing |> Expect.equal Nothing
+        , test "the gate tip says a best-scoring genome can still fail the gate" <|
+            \() ->
+                String.contains "still fail this gate" Copy.gateCriterion.body
+                    |> Expect.equal True
+        ]
+
+
+{-| The page itself, driven by a decoded status, so the scoring facts
+are proven to reach the screen rather than merely to exist as strings.
+-}
+renderedFrom : String -> Result String (Query.Single Dashboard.Msg)
+renderedFrom json =
+    decode json
+        |> Result.map
+            (\status ->
+                let
+                    ( model, _ ) =
+                        Dashboard.init ()
+                in
+                Dashboard.view { model | status = Just status, requested = True }
+                    |> Query.fromHtml
+            )
+
+
+expectRendered : String -> (Query.Single Dashboard.Msg -> Expect.Expectation) -> Expect.Expectation
+expectRendered json check =
+    case renderedFrom json of
+        Ok page ->
+            check page
+
+        Err error ->
+            Expect.fail error
+
+
+renderSuite : Test
+renderSuite =
+    describe "the page says it on screen"
+        [ test "a crew-ratio run shows the rule and the deadline as their own tiles" <|
+            \() ->
+                expectRendered crewRatioPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Fitness" ]
+                        , Query.has [ Selector.text "crew ratio" ]
+                        , Query.has [ Selector.text "Fight limit" ]
+                        , Query.has [ Selector.text "20 s" ]
+                        , Query.has [ Selector.text "simulated, for a fight nobody finishes, and no time bonus" ]
+                        ]
+                    )
+        , test "the gate panel carries the one line separating breeding from promotion" <|
+            \() ->
+                expectRendered crewRatioPayload
+                    (Query.has
+                        [ Selector.text "Breeding ranks on the crew ratio; this gate counts actual combat wins." ]
+                    )
+        , test "a combat run adds no separating line, so the panel head stays quiet" <|
+            \() ->
+                expectRendered combatPayload
+                    (Query.hasNot [ Selector.text "Breeding ranks on the crew ratio" ])
+        , test "an archived run with no scoring block is never labelled crew ratio" <|
+            \() ->
+                expectRendered """{"run_id":"mario-broad-any-any-20260911","resources":{"episode_ticks":1200}}"""
+                    (Expect.all
+                        [ Query.has [ Selector.text "combat" ]
+                        , Query.hasNot [ Selector.text "crew ratio" ]
+                        , Query.has [ Selector.text "20 s" ]
+                        ]
+                    )
+        , test "a run that reports no tick budget shows the deadline as unmeasured, not as zero seconds" <|
+            \() ->
+                expectRendered """{"run_id":"mario-main-20260911","resources":{"workers":1}}"""
+                    (Expect.all
+                        [ Query.has [ Selector.text "Fight limit" ]
+                        , Query.hasNot [ Selector.text "0 s" ]
+                        ]
+                    )
+        ]

@@ -77,7 +77,13 @@ wilsonLower z wins games =
             margin =
                 z * sqrt (((p * (1 - p)) + (zz / (4 * n))) / n)
         in
-        Just (max 0 ((centre - margin) / denominator))
+        -- The lower limit of a Wilson interval is never above the point
+        -- estimate, but at zero wins the centre and the margin are the
+        -- same quantity and cancel only to within floating point, which
+        -- leaves a bound a few times 10^-18 above an observed rate of
+        -- zero. Clamping to the observed rate states the property the
+        -- arithmetic already has rather than rounding a real result.
+        Just (clamp 0 p ((centre - margin) / denominator))
 
 
 {-| The smallest number of observed wins on a panel of `games` whose
