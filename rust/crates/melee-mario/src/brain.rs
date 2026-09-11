@@ -18,9 +18,10 @@
 
 use crate::genome::{Genome, N_CONTROL, N_INPUT, N_MEMORY, N_OBS};
 use crate::graph::{Activations, Network};
+use melee_core::units::Side;
 use melee_neat::eval::Controller;
 use melee_sim::input::{BattleInput, Turn};
-use melee_core::units::Side;
+use std::sync::Arc;
 
 pub const CONTROL_BASE: usize = N_OBS;
 pub const MEMORY_BASE: usize = N_OBS + N_CONTROL;
@@ -78,16 +79,26 @@ pub fn assemble(
 /// A compiled policy plus the state of one seat. Recurrent graph activations
 /// and the eight explicit memory channels are distinct: the first belongs to
 /// the graph, the second is fed back through inputs `48..=55`.
+///
+/// The compiled [`Network`] is immutable and shared: a genome is compiled once
+/// per generation and every episode on the panel borrows that same graph while
+/// keeping its own [`Activations`] and memory. Compiling per fight would pay
+/// for the strongly-connected-component pass thousands of times over.
 pub struct Brain {
-    pub network: Network,
+    pub network: Arc<Network>,
     state: Activations,
     memory: [f64; N_MEMORY],
     ship: &'static str,
 }
 
 impl Brain {
+    /// Compiles a fresh graph. Prefer [`Brain::new`] with a cached graph inside
+    /// the training loop.
     pub fn compile(genome: &Genome) -> Brain {
-        let network = Network::compile(genome);
+        Brain::new(Arc::new(Network::compile(genome)))
+    }
+
+    pub fn new(network: Arc<Network>) -> Brain {
         let state = Activations::new(&network);
         Brain {
             network,
@@ -124,10 +135,10 @@ pub struct SeatPilot {
 }
 
 impl SeatPilot {
-    pub fn new(seat: Side, genome: &Genome) -> SeatPilot {
+    pub fn new(seat: Side, network: Arc<Network>) -> SeatPilot {
         SeatPilot {
             seat,
-            brain: Brain::compile(genome),
+            brain: Brain::new(network),
         }
     }
 }
@@ -164,10 +175,10 @@ pub struct DuelPilot {
 }
 
 impl DuelPilot {
-    pub fn new(our_seat: Side, ours: &Genome, theirs: &Genome) -> DuelPilot {
+    pub fn new(our_seat: Side, ours: Arc<Network>, theirs: Arc<Network>) -> DuelPilot {
         DuelPilot {
-            ours: Brain::compile(ours),
-            theirs: Brain::compile(theirs),
+            ours: Brain::new(ours),
+            theirs: Brain::new(theirs),
             our_seat,
         }
     }

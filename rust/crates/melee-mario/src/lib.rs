@@ -6,6 +6,18 @@
 //! top of them.
 
 pub mod brain;
+pub mod audit;
+pub mod checkpoint;
+pub mod cli;
+pub mod curriculum;
+pub mod episode;
 pub mod genome;
 pub mod graph;
+pub mod neat;
 pub mod oracle;
+pub mod rng;
+pub mod sampler;
+pub mod server;
+pub mod status;
+pub mod store;
+pub mod trainer;
