@@ -1,11 +1,13 @@
 module Mario.Dashboard.Api exposing
-    ( Champion
+    ( Audit
+    , Champion
     , Checkpoint
     , Curriculum
     , Event
     , Gene
     , Genome
     , HistoryPoint
+    , Ladder(..)
     , Matchup
     , MatchupStatus(..)
     , Network
@@ -15,11 +17,14 @@ module Mario.Dashboard.Api exposing
     , OpponentType(..)
     , Phase(..)
     , Population
+    , Readiness
     , Resources
     , Status
     , decodeNetwork
     , decodeStatus
+    , empty
     , emptyGenome
+    , ladderLabel
     , matchupStatusLabel
     , nextSideLabel
     , nodeKindFromString
@@ -286,6 +291,41 @@ matchupStatusLabel status =
 -- RECORDS
 
 
+{-| How the curriculum is currently expanding. "Climbing" adds ships one
+side at a time up the frozen order; "mixed" plays an assembled roster.
+-}
+type Ladder
+    = Climbing
+    | Mixed
+    | UnknownLadder String
+
+
+ladderFromString : String -> Ladder
+ladderFromString raw =
+    case raw of
+        "climbing" ->
+            Climbing
+
+        "mixed" ->
+            Mixed
+
+        other ->
+            UnknownLadder other
+
+
+ladderLabel : Ladder -> String
+ladderLabel ladder =
+    case ladder of
+        Climbing ->
+            "climbing"
+
+        Mixed ->
+            "mixed"
+
+        UnknownLadder other ->
+            other
+
+
 type alias Curriculum =
     { stage : Int
     , ourRoster : List String
@@ -296,6 +336,34 @@ type alias Curriculum =
     , target : Float
     , masteredMatchups : Int
     , totalMatchups : Int
+    , ladder : Ladder
+    , opponentRevision : Int
+    , opponentFingerprint : Maybe String
+    , selfPlayIsGated : Bool
+    }
+
+
+{-| The predeclared audit panel for the frozen candidate. `panel` is the
+fixed number of games, `maxLosses` the number of losses that ends the
+attempt, `spent` how much of the overall audit budget has gone.
+-}
+type alias Audit =
+    { panel : Int
+    , maxLosses : Int
+    , budget : Int
+    , spent : Int
+    , round : Maybe Int
+    }
+
+
+{-| The cheap screening test that decides when a candidate is worth
+spending an expensive audit panel on.
+-}
+type alias Readiness =
+    { games : Int
+    , period : Int
+    , threshold : Float
+    , lastRate : Maybe Float
     }
 
 
@@ -307,6 +375,8 @@ type alias Champion =
     , lowerBound : Maybe Float
     , nodes : Int
     , connections : Int
+    , hiddenNodes : Int
+    , worstCellLowerBound : Maybe Float
     }
 
 
@@ -353,6 +423,8 @@ type alias Matchup =
     , lowerBound : Maybe Float
     , status : MatchupStatus
     , sampleWeight : Float
+    , trainingGames : Float
+    , trainingWinRate : Maybe Float
     }
 
 
@@ -380,6 +452,10 @@ type alias Status =
     , history : List HistoryPoint
     , matchups : List Matchup
     , events : List Event
+    , audit : Audit
+    , readiness : Readiness
+    , stale : Bool
+    , episodesUnresolved : Int
     }
 
 
@@ -439,6 +515,68 @@ decodeStatus =
         |> optional "history" (Decode.list decodeHistoryPoint) []
         |> optional "matchups" (Decode.list decodeMatchup) []
         |> optional "events" (Decode.list decodeEvent) []
+        |> optional "audit" decodeAudit emptyAudit
+        |> optional "readiness" decodeReadiness emptyReadiness
+        |> optional "stale" Decode.bool False
+        |> optional "episodes_unresolved" Decode.int 0
+
+
+emptyAudit : Audit
+emptyAudit =
+    { panel = 0, maxLosses = 0, budget = 0, spent = 0, round = Nothing }
+
+
+decodeAudit : Decoder Audit
+decodeAudit =
+    Decode.succeed Audit
+        |> optional "panel" Decode.int 0
+        |> optional "max_losses" Decode.int 0
+        |> optional "budget" Decode.int 0
+        |> optional "spent" Decode.int 0
+        |> optional "round" (Decode.nullable Decode.int) Nothing
+
+
+emptyReadiness : Readiness
+emptyReadiness =
+    { games = 0, period = 0, threshold = 0, lastRate = Nothing }
+
+
+decodeReadiness : Decoder Readiness
+decodeReadiness =
+    Decode.succeed Readiness
+        |> optional "games" Decode.int 0
+        |> optional "period" Decode.int 0
+        |> optional "threshold" (safeFloat 0) 0
+        |> optional "last_rate" finiteFloat Nothing
+
+
+{-| The "nothing has been reported yet" status. Decoding `{}` produces
+exactly this, so the view's empty states and this value cannot drift.
+-}
+empty : Status
+empty =
+    { schemaVersion = 1
+    , runId = ""
+    , phase = UnknownPhase "unreported"
+    , message = ""
+    , generation = 0
+    , episodes = 0
+    , elapsedSeconds = 0
+    , episodesPerSecond = 0
+    , updatedAt = ""
+    , curriculum = emptyCurriculum
+    , champion = emptyChampion
+    , population = emptyPopulation
+    , checkpoint = emptyCheckpoint
+    , resources = emptyResources
+    , history = []
+    , matchups = []
+    , events = []
+    , audit = emptyAudit
+    , readiness = emptyReadiness
+    , stale = False
+    , episodesUnresolved = 0
+    }
 
 
 emptyCurriculum : Curriculum
@@ -452,6 +590,10 @@ emptyCurriculum =
     , target = 0.8
     , masteredMatchups = 0
     , totalMatchups = 0
+    , ladder = UnknownLadder "unreported"
+    , opponentRevision = 0
+    , opponentFingerprint = Nothing
+    , selfPlayIsGated = False
     }
 
 
@@ -467,6 +609,10 @@ decodeCurriculum =
         |> optional "target" (safeFloat 0.8) 0.8
         |> optional "mastered_matchups" Decode.int 0
         |> optional "total_matchups" Decode.int 0
+        |> optional "ladder" (Decode.map ladderFromString Decode.string) (UnknownLadder "unreported")
+        |> optional "opponent_revision" Decode.int 0
+        |> optional "opponent_fingerprint" (Decode.nullable Decode.string) Nothing
+        |> optional "self_play_is_gated" Decode.bool False
 
 
 emptyChampion : Champion
@@ -478,6 +624,8 @@ emptyChampion =
     , lowerBound = Nothing
     , nodes = 0
     , connections = 0
+    , hiddenNodes = 0
+    , worstCellLowerBound = Nothing
     }
 
 
@@ -491,6 +639,8 @@ decodeChampion =
         |> optional "lower_bound" finiteFloat Nothing
         |> optional "nodes" Decode.int 0
         |> optional "connections" Decode.int 0
+        |> optional "hidden_nodes" Decode.int 0
+        |> optional "worst_cell_lower_bound" finiteFloat Nothing
 
 
 emptyPopulation : Population
@@ -557,6 +707,8 @@ decodeMatchup =
         |> optional "lower_bound" finiteFloat Nothing
         |> optional "status" (Decode.map statusFromString Decode.string) Unseen
         |> optional "sample_weight" (safeFloat 0) 0
+        |> optional "training_games" (safeFloat 0) 0
+        |> optional "training_win_rate" finiteFloat Nothing
 
 
 decodeEvent : Decoder Event

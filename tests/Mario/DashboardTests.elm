@@ -153,6 +153,48 @@ decoderSuite =
                 Decode.decodeString Api.decodeNetwork networkPayload
                     |> Result.map (\n -> ( n.championId, List.length n.genome.nodes, List.length n.genome.genes ))
                     |> Expect.equal (Ok ( "champ-17", 3, 2 ))
+        , test "the live engine's added fields decode: ladder, opponent revision, audit panel, readiness" <|
+            \() ->
+                case decode livePayload of
+                    Ok status ->
+                        Expect.equal
+                            { ladder = status.curriculum.ladder
+                            , revision = status.curriculum.opponentRevision
+                            , fingerprint = status.curriculum.opponentFingerprint
+                            , selfPlayGated = status.curriculum.selfPlayIsGated
+                            , panel = status.audit.panel
+                            , maxLosses = status.audit.maxLosses
+                            , budget = status.audit.budget
+                            , readinessGames = status.readiness.games
+                            , readinessThreshold = status.readiness.threshold
+                            , stale = status.stale
+                            , hidden = status.champion.hiddenNodes
+                            , trainingRate = List.map .trainingWinRate status.matchups
+                            }
+                            { ladder = Api.Climbing
+                            , revision = 0
+                            , fingerprint = Nothing
+                            , selfPlayGated = False
+                            , panel = 100
+                            , maxLosses = 12
+                            , budget = 200000
+                            , readinessGames = 128
+                            , readinessThreshold = 0.85
+                            , stale = False
+                            , hidden = 114
+                            , trainingRate = [ Just 0.89 ]
+                            }
+
+                    Err error ->
+                        Expect.fail error
+        , test "an unknown ladder phase is preserved verbatim" <|
+            \() ->
+                case decode """{"curriculum":{"ladder":"spiralling"}}""" of
+                    Ok status ->
+                        Expect.equal status.curriculum.ladder (Api.UnknownLadder "spiralling")
+
+                    Err error ->
+                        Expect.fail error
         , test "a gene with no explicit enabled flag defaults to enabled" <|
             \() ->
                 Decode.decodeString Api.decodeNetwork
@@ -188,6 +230,38 @@ fullPayload =
    {"us":"Spathi","them":"Ilwrath","opponent_type":"cyborg","wins":38,"games":40,"win_rate":0.95,"lower_bound":0.84,"status":"mastered","sample_weight":0.05}],
  "events":[{"at":"2026-09-11T10:00:00Z","message":"stage 3 opened"},
            {"at":"2026-09-11T10:14:00Z","message":"audit started for champ-17"}]}
+"""
+
+
+{-| Trimmed from an actual /api/status response of the running trainer
+(run dashboard-smoke-20260911), so the shape under test is the shape the
+engine really sends, including the fields added after the first contract.
+-}
+livePayload : String
+livePayload =
+    """
+{"schema_version":1,"run_id":"dashboard-smoke-20260911","phase":"training","message":"training",
+ "generation":258,"episodes":12384,"elapsed_seconds":204.4,"episodes_per_second":60.6,
+ "updated_at":"2026-09-11T19:41:04Z","stale":false,
+ "curriculum":{"ladder":"climbing","mastered_matchups":0,"next_ship":"Androsynth","next_side":"ours",
+   "opponent_fingerprint":null,"opponent_revision":0,"opponent_roster":["Umgah","Androsynth"],
+   "opponent_types":["cyborg"],"our_roster":["Pkunk"],"self_play_is_gated":false,
+   "stage":1,"target":0.8,"total_matchups":2},
+ "champion":{"connections":314,"hidden_nodes":114,"id":"g4dd02251f9b298ea","lower_bound":null,
+   "nodes":184,"validated_games":0,"validated_wins":0,"win_rate":null,"worst_cell_lower_bound":null},
+ "population":{"mean_connections":293.58,"mean_nodes":170.16,"size":12,"species":2},
+ "checkpoint":{"generation":258,"path":"artifacts/mario/dashboard-smoke-20260911/checkpoint.json",
+   "resumable":true,"saved_at":"2026-09-11T19:41:03Z"},
+ "resources":{"compute_seconds":72.58,"covers":["training","readiness","audit","self_play"],
+   "duty_cycle":0.5,"episode_ticks":3600,"measured_duty":0.355,"nice":10,"workers":1},
+ "audit":{"budget":200000,"max_losses":12,"panel":100,"round":null,"spent":0},
+ "readiness":{"games":128,"last_rate":null,"period":5,"threshold":0.85},
+ "history":[{"episodes":48,"generation":0,"nodes":71,"species":12,"stage":0,
+   "training_win_rate":0.0,"validation_win_rate":null}],
+ "matchups":[{"games":0,"lower_bound":null,"opponent_type":"cyborg","sample_weight":1.697,
+   "status":"learning","them":"Umgah","training_games":10.0,"training_win_rate":0.89,
+   "us":"Pkunk","win_rate":null,"wins":0}],
+ "events":[{"at":"2026-09-11T19:37:40Z","message":"run seeded"}]}
 """
 
 
@@ -288,6 +362,8 @@ matchup us them wins games bound status =
     , lowerBound = bound
     , status = status
     , sampleWeight = 0.1
+    , trainingGames = 0
+    , trainingWinRate = Nothing
     }
 
 
@@ -311,6 +387,29 @@ curriculumFor side ship =
     , target = 0.8
     , masteredMatchups = 1
     , totalMatchups = 4
+    , ladder = Api.Climbing
+    , opponentRevision = 0
+    , opponentFingerprint = Nothing
+    , selfPlayIsGated = False
+    }
+
+
+champion : Int -> Int -> Maybe Float -> Api.Champion
+champion wins games bound =
+    { id = "c"
+    , validatedWins = wins
+    , validatedGames = games
+    , winRate =
+        if games > 0 then
+            Just (toFloat wins / toFloat games)
+
+        else
+            Nothing
+    , lowerBound = bound
+    , nodes = 70
+    , connections = 0
+    , hiddenNodes = 0
+    , worstCellLowerBound = Nothing
     }
 
 
@@ -373,24 +472,63 @@ gateSuite =
                         ]
         , test "no audit games means no verdict rather than a failing score" <|
             \() ->
-                Gate.championVerdict 0.8
-                    { id = "c", validatedWins = 0, validatedGames = 0, winRate = Nothing, lowerBound = Nothing, nodes = 70, connections = 0 }
+                Gate.championVerdict 0.8 (champion 0 0 Nothing)
                     |> Expect.equal Gate.NoEvidence
         , test "a high raw rate with no bound is undecided, never a pass" <|
             \() ->
-                Gate.championVerdict 0.8
-                    { id = "c", validatedWins = 10, validatedGames = 10, winRate = Just 1.0, lowerBound = Nothing, nodes = 70, connections = 0 }
+                Gate.championVerdict 0.8 (champion 10 10 Nothing)
                     |> Expect.equal (Gate.RateOnly 1.0)
         , test "a rate above target with a bound below target is short, not passing" <|
             \() ->
-                Gate.championVerdict 0.8
-                    { id = "c", validatedWins = 9, validatedGames = 10, winRate = Just 0.9, lowerBound = Just 0.59, nodes = 70, connections = 0 }
+                Gate.championVerdict 0.8 (champion 9 10 (Just 0.59))
                     |> Expect.equal (Gate.Short 0.59)
         , test "only a bound at or above target passes" <|
             \() ->
-                Gate.championVerdict 0.8
-                    { id = "c", validatedWins = 190, validatedGames = 200, winRate = Just 0.95, lowerBound = Just 0.8, nodes = 70, connections = 0 }
+                Gate.championVerdict 0.8 (champion 190 200 (Just 0.8))
                     |> Expect.equal (Gate.Passing 0.8)
+        , test "the gate demands 88 observed wins on a panel of 100, not 80" <|
+            \() ->
+                -- The target is a floor on the Wilson bound, not on the raw
+                -- rate. 80 of 100 produces a bound near 71% and fails.
+                Expect.equal
+                    ( Gate.winsNeeded Gate.z95 0.8 100
+                    , Gate.wilsonLower Gate.z95 80 100 |> Maybe.map (\b -> b >= 0.8)
+                    , Gate.wilsonLower Gate.z95 88 100 |> Maybe.map (\b -> b >= 0.8)
+                    )
+                    ( Just 88, Just False, Just True )
+        , test "the win count needed is the smallest one that clears the bound" <|
+            \() ->
+                Gate.wilsonLower Gate.z95 87 100
+                    |> Maybe.map (\b -> b >= 0.8)
+                    |> Expect.equal (Just False)
+        , test "a larger panel needs a lower observed rate, since the bound tightens" <|
+            \() ->
+                let
+                    rateFor n =
+                        Gate.winsNeeded Gate.z95 0.8 n
+                            |> Maybe.map (\w -> toFloat w / toFloat n)
+                in
+                case ( rateFor 100, rateFor 1000 ) of
+                    ( Just small, Just large ) ->
+                        Expect.lessThan small large
+
+                    _ ->
+                        Expect.fail "expected both panels to resolve"
+        , test "an unpublished panel size yields no demand rather than a made-up one" <|
+            \() ->
+                Expect.equal ( Gate.winsNeeded Gate.z95 0.8 0, Gate.wilsonLower Gate.z95 0 0 ) ( Nothing, Nothing )
+        , fuzz2 (Fuzz.intRange 1 200) (Fuzz.intRange 0 200) "the bound never exceeds the observed rate" <|
+            \games rawWins ->
+                let
+                    wins =
+                        min rawWins games
+                in
+                case Gate.wilsonLower Gate.z95 wins games of
+                    Just bound ->
+                        Expect.atMost (toFloat wins / toFloat games) bound
+
+                    Nothing ->
+                        Expect.fail "expected a bound for a non-empty panel"
         , test "the explanation leads with how many cells block, not with an average" <|
             \() ->
                 case Gate.explain 0.8 (curriculumFor Api.AddOpponent (Just "Mycon")) sampleCells of
@@ -798,44 +936,8 @@ controlSuite =
 
 statusWithPhase : Api.Phase -> Api.Status
 statusWithPhase phase =
-    case Decode.decodeString Api.decodeStatus "{}" of
-        Ok status ->
-            { status | phase = phase }
-
-        Err _ ->
-            { schemaVersion = 1
-            , runId = ""
-            , phase = phase
-            , message = ""
-            , generation = 0
-            , episodes = 0
-            , elapsedSeconds = 0
-            , episodesPerSecond = 0
-            , updatedAt = ""
-            , curriculum =
-                { stage = 0
-                , ourRoster = []
-                , opponentRoster = []
-                , opponentTypes = []
-                , nextSide = Api.Complete
-                , nextShip = Nothing
-                , target = 0.8
-                , masteredMatchups = 0
-                , totalMatchups = 0
-                }
-            , champion =
-                { id = ""
-                , validatedWins = 0
-                , validatedGames = 0
-                , winRate = Nothing
-                , lowerBound = Nothing
-                , nodes = 0
-                , connections = 0
-                }
-            , population = { size = 0, species = 0, meanNodes = 0, meanConnections = 0 }
-            , checkpoint = { savedAt = Nothing, generation = 0, resumable = False, path = "" }
-            , resources = { workers = 0, dutyCycle = 0 }
-            , history = []
-            , matchups = []
-            , events = []
-            }
+    let
+        base =
+            Api.empty
+    in
+    { base | phase = phase }
