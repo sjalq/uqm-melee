@@ -496,8 +496,43 @@ evaluationSuite =
                 outputsOf genome blankStep
                     |> List.all (\v -> v > -1.0000001 && v < 1.0000001 && not (isNaN v))
                     |> Expect.equal True
-        , fuzz valueFuzzer "the sigmoid is the MarI/O one" <|
+        , fuzz valueFuzzer "the sigmoid agrees with the written MarI/O formula" <|
             \x -> Expect.within (Expect.Absolute 1.0e-12) (2 / (1 + e ^ (-4.9 * x)) - 1) (Genome.sigmoid x)
+        , fuzz (Fuzz.floatRange -1.0e-5 1.0e-5) "near zero the sigmoid is the tanh series, which keeps the sign the formula throws away" <|
+            \x ->
+                let
+                    u =
+                        2.45 * x
+                in
+                if abs x < Genome.taylorThreshold then
+                    -- Bit for bit, because the series is the part of the
+                    -- contract that has to reproduce across runtimes exactly.
+                    Expect.equal True (u - u * u * u / 3 == Genome.sigmoid x)
+
+                else
+                    Expect.pass
+        , test "the two branches agree where they meet" <|
+            \() ->
+                let
+                    x =
+                        Genome.taylorThreshold
+
+                    u =
+                        2.45 * x
+                in
+                -- At the threshold itself sigmoid takes the exponential branch,
+                -- so this compares the two formulations at the same input.
+                Expect.within (Expect.Absolute 1.0e-15) (u - u * u * u / 3) (Genome.sigmoid x)
+        , test "a sum an ulp of the exponential could not resolve still carries its sign" <|
+            \() ->
+                -- The written formula answers 0 here on at least one runtime,
+                -- which would silently turn a left turn into no turn.
+                Expect.equal [ True, True ]
+                    [ Genome.sigmoid 1.1102230246251565e-16 > 0
+                    , Genome.sigmoid -1.1102230246251565e-16 < 0
+                    ]
+        , fuzz (Fuzz.floatRange -2 2) "the sigmoid is odd" <|
+            \x -> Expect.within (Expect.Absolute 1.0e-15) (negate (Genome.sigmoid x)) (Genome.sigmoid -x)
         , test "the sigmoid of zero is exactly zero" <|
             \() -> Expect.equal 0 (Genome.sigmoid 0)
         , test "a non finite accumulator saturates the way the Rust runtime saturates" <|

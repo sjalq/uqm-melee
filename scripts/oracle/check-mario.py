@@ -489,7 +489,7 @@ def self_consistency(elm, rng, cases):
     return failures
 
 
-def parity_claim(elm_only, failures, ties):
+def parity_claim(elm_only, failures, ties, epsilon):
     """Exactly what this run does and does not establish."""
     if elm_only:
         return "none: --elm-only exercises the Elm oracle alone and says nothing about Rust"
@@ -499,12 +499,13 @@ def parity_claim(elm_only, failures, ties):
         "Rust melee-mario reproduces the Elm oracle on every checked record: "
         "identical control decisions, memory within tolerance, identical rejections"
     )
-    if ties:
-        claim += (
-            f"; {len(ties)} record(s) held a control parked within the decision epsilon of zero, "
-            "where the two exponential implementations round differently and no sign agreement exists"
-        )
-    return claim
+    if epsilon <= 0.0:
+        return "STRICT. " + claim
+    return (
+        f"NOT STRICT: control sign disagreements were forgiven below a magnitude of {epsilon}, "
+        f"and {len(ties)} record(s) actually used that allowance. "
+        "Rerun with --decision-epsilon 0 for the contractual claim. " + claim
+    )
 
 
 def timing(samples):
@@ -535,10 +536,12 @@ def main():
     parser.add_argument("--seed", type=int, default=20260911, help="generator seed (default: %(default)s)")
     parser.add_argument("--tolerance", type=float, default=1e-9,
                         help="absolute output tolerance (default: %(default)s)")
-    parser.add_argument("--decision-epsilon", type=float, default=1e-12,
-                        help="control magnitude below which a sign disagreement is reported as a "
-                             "boundary tie instead of a failure, because the last unit in the last "
-                             "place of the exponential decides it (default: %(default)s)")
+    parser.add_argument("--decision-epsilon", type=float, default=0.0,
+                        help="DIAGNOSTIC ONLY. Control magnitude below which a sign disagreement is "
+                             "downgraded from a failure to a reported boundary tie. The default of 0 "
+                             "is the contract: control decisions must match exactly. Any non-zero "
+                             "value makes the run non-strict and the parity claim says so "
+                             "(default: %(default)s)")
     parser.add_argument("--elm-only", action="store_true",
                         help="run the Elm oracle alone; proves nothing about the Rust port")
     parser.add_argument("--report", type=Path, help="write a JSON report here")
@@ -643,7 +646,8 @@ def main():
         "largest_absolute_difference": worst_overall,
         "seed": args.seed,
         "elm_only": args.elm_only,
-        "parity_claim": parity_claim(args.elm_only, failures, ties),
+        "strict": args.decision_epsilon <= 0.0,
+        "parity_claim": parity_claim(args.elm_only, failures, ties, args.decision_epsilon),
         "bundle_sha256": hashlib.sha256(args.bundle.read_bytes()).hexdigest(),
         "rust_sha256": None if args.elm_only else hashlib.sha256(args.rust.read_bytes()).hexdigest(),
         "timing": {name: timing(values) for name, values in times.items()},
