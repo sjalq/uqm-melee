@@ -187,6 +187,23 @@ decoderSuite =
 
                     Err error ->
                         Expect.fail error
+        , test "the regression block decodes when present" <|
+            \() ->
+                case decode """{"regression":{"active":true,"budget":4000,"last_failed":2,"last_swept":41,"rehearsing":3,"sweeping":false}}""" of
+                    Ok status ->
+                        Expect.equal status.regression
+                            (Just { active = True, sweeping = False, rehearsing = 3, lastSwept = 41, lastFailed = 2, budget = 4000 })
+
+                    Err error ->
+                        Expect.fail error
+        , test "an engine that does not report regression leaves it absent, not zeroed" <|
+            \() ->
+                case decode livePayload of
+                    Ok status ->
+                        Expect.equal status.regression Nothing
+
+                    Err error ->
+                        Expect.fail error
         , test "an unknown ladder phase is preserved verbatim" <|
             \() ->
                 case decode """{"curriculum":{"ladder":"spiralling"}}""" of
@@ -514,6 +531,17 @@ gateSuite =
 
                     _ ->
                         Expect.fail "expected both panels to resolve"
+        , test "the loss cap is survivable: 12 losses on a panel of 100 still leave exactly 88 winnable" <|
+            \() ->
+                -- The engine reports max_losses 12 for a panel of 100.
+                -- 100 - 88 = 12, so the cap itself still permits a pass and
+                -- it is the 13th loss that makes the target unreachable.
+                case Gate.winsNeeded Gate.z95 0.8 100 of
+                    Just wins ->
+                        Expect.equal ( 100 - wins, 100 - (12 + 1) < wins ) ( 12, True )
+
+                    Nothing ->
+                        Expect.fail "expected a demand for a panel of 100"
         , test "an unpublished panel size yields no demand rather than a made-up one" <|
             \() ->
                 Expect.equal ( Gate.winsNeeded Gate.z95 0.8 0, Gate.wilsonLower Gate.z95 0 0 ) ( Nothing, Nothing )
@@ -543,6 +571,19 @@ gateSuite =
                     |> String.join " "
                     |> String.contains "Mycon"
                     |> Expect.equal True
+        , test "a cell with no audit games is never called never played" <|
+            \() ->
+                -- A cell can carry tens of thousands of training episodes
+                -- and still have no audit evidence. Calling that "never
+                -- played" misdescribes the run.
+                let
+                    prose =
+                        Gate.explain 0.8 (curriculumFor Api.AddOpponent (Just "Mycon")) sampleCells
+                            |> String.join " "
+                in
+                Expect.equal
+                    ( String.contains "never played" prose, String.contains "no audit games" prose )
+                    ( False, True )
         , test "a fully mastered stage says so and stops blaming cells" <|
             \() ->
                 let

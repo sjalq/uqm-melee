@@ -24,6 +24,7 @@ module Mario.Dashboard.Copy exposing
     , observedNeeded
     , opponentRevision
     , readiness
+    , regression
     , matchupCoverage
     , meanConnections
     , meanNodes
@@ -87,6 +88,7 @@ allTips =
     , auditPanel
     , observedNeeded
     , readiness
+    , regression
     , worstCell
     , unresolved
     , generation
@@ -353,7 +355,7 @@ auditPanel : Tip
 auditPanel =
     t "audit-panel"
         "Audit panel"
-        "The predeclared, fixed-size panel a frozen candidate is judged on, and the loss count that ends the attempt early. The size is fixed before the audit starts and the panel does not overlap the confirmation panel, so evidence cannot be extended until it happens to look good. Repeated peeking at a panel of convenient size is how a lucky candidate gets promoted."
+        "The predeclared, fixed-size panel a frozen candidate is judged on, and the number of losses it can absorb and still reach the target. Those losses are survivable: on a panel of 100 needing 88 wins, 12 losses still leave exactly 88 winnable, and it is the next loss after the cap that makes the target arithmetically unreachable and ends the attempt. The panel size is fixed before the audit starts and does not overlap the confirmation panel, so evidence cannot be extended until it happens to look good."
         [ ( "Denominator", "Games in the predeclared panel." )
         , ( "Window", "Per audit attempt, for the current frozen candidate." )
         , ( "Source", "Run configuration, fixed for the run. Budget is the total audit spend allowed." )
@@ -368,6 +370,17 @@ observedNeeded =
         [ ( "Denominator", "The predeclared audit panel size." )
         , ( "Window", "Per audit attempt." )
         , ( "Source", "Computed by the dashboard as the inverse of the Wilson bound at 95% confidence, z = 1.96. The trainer publishes the bound itself; this is the smallest win count that reaches it." )
+        ]
+
+
+regression : Tip
+regression =
+    t "regression"
+        "Regression rehearsal"
+        "Periodic re-checking of cells that already passed the gate, so that progress at a later stage cannot quietly break an earlier one. A sweep that finds failed cells means mastery was lost and those cells are back in contention, which is exactly the kind of silent backsliding an aggregate win rate would hide."
+        [ ( "Denominator", "Previously mastered cells re-checked in the last sweep." )
+        , ( "Window", "The most recent sweep, not the whole run." )
+        , ( "Source", "Audit-style rehearsal play, separate from the current stage's gate evidence." )
         ]
 
 

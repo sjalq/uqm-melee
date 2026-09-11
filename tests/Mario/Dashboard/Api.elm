@@ -18,6 +18,7 @@ module Mario.Dashboard.Api exposing
     , Phase(..)
     , Population
     , Readiness
+    , Regression
     , Resources
     , Status
     , decodeNetwork
@@ -344,8 +345,10 @@ type alias Curriculum =
 
 
 {-| The predeclared audit panel for the frozen candidate. `panel` is the
-fixed number of games, `maxLosses` the number of losses that ends the
-attempt, `spent` how much of the overall audit budget has gone.
+fixed number of games, `maxLosses` the number of losses the attempt can
+absorb and still reach the target (so the cap is survivable and the next
+loss after it ends the attempt), `spent` how much of the overall audit
+budget has gone.
 -}
 type alias Audit =
     { panel : Int
@@ -353,6 +356,20 @@ type alias Audit =
     , budget : Int
     , spent : Int
     , round : Maybe Int
+    }
+
+
+{-| Rehearsal of already-mastered cells, so a later stage cannot quietly
+break an earlier one. Absent entirely on an engine that does not run it,
+which is why the status carries a `Maybe`.
+-}
+type alias Regression =
+    { active : Bool
+    , sweeping : Bool
+    , rehearsing : Int
+    , lastSwept : Int
+    , lastFailed : Int
+    , budget : Int
     }
 
 
@@ -456,6 +473,7 @@ type alias Status =
     , readiness : Readiness
     , stale : Bool
     , episodesUnresolved : Int
+    , regression : Maybe Regression
     }
 
 
@@ -519,6 +537,18 @@ decodeStatus =
         |> optional "readiness" decodeReadiness emptyReadiness
         |> optional "stale" Decode.bool False
         |> optional "episodes_unresolved" Decode.int 0
+        |> optional "regression" (Decode.map Just decodeRegression) Nothing
+
+
+decodeRegression : Decoder Regression
+decodeRegression =
+    Decode.succeed Regression
+        |> optional "active" Decode.bool False
+        |> optional "sweeping" Decode.bool False
+        |> optional "rehearsing" Decode.int 0
+        |> optional "last_swept" Decode.int 0
+        |> optional "last_failed" Decode.int 0
+        |> optional "budget" Decode.int 0
 
 
 emptyAudit : Audit
@@ -576,6 +606,7 @@ empty =
     , readiness = emptyReadiness
     , stale = False
     , episodesUnresolved = 0
+    , regression = Nothing
     }
 
 

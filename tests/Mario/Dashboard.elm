@@ -1152,7 +1152,10 @@ viewChampionGate tips model status =
 
                             else
                                 Nothing
-                        , sub = "ends early at " ++ String.fromInt status.audit.maxLosses ++ " losses"
+                        , sub =
+                            String.fromInt status.audit.maxLosses
+                                ++ " losses allowed, abandoned on the "
+                                ++ ordinal (status.audit.maxLosses + 1)
                         , accent = ""
                         }
                     , viewMetric tips
@@ -1206,12 +1209,44 @@ demandLine status =
                 ++ Format.percent1 (toFloat wins / toFloat panelSize)
                 ++ "), not "
                 ++ String.fromInt (ceiling (target * toFloat panelSize))
-                ++ ". The attempt also ends early at "
+                ++ ". That leaves "
                 ++ String.fromInt status.audit.maxLosses
-                ++ " losses."
+                ++ " losses to spare, so the attempt survives "
+                ++ String.fromInt status.audit.maxLosses
+                ++ " and is abandoned on the "
+                ++ ordinal (status.audit.maxLosses + 1)
+                ++ ", the point at which the target became unreachable."
 
         Nothing ->
             "No audit panel size has been published yet, so the observed win count the gate demands cannot be stated."
+
+
+{-| The loss cap is the number of losses an attempt can absorb and still
+reach the target, so the cap itself is survivable and the abort happens
+on the next one.
+-}
+ordinal : Int -> String
+ordinal n =
+    let
+        suffix =
+            if modBy 100 n >= 11 && modBy 100 n <= 13 then
+                "th"
+
+            else
+                case modBy 10 n of
+                    1 ->
+                        "st"
+
+                    2 ->
+                        "nd"
+
+                    3 ->
+                        "rd"
+
+                    _ ->
+                        "th"
+    in
+    String.fromInt n ++ suffix
 
 
 
@@ -1408,10 +1443,10 @@ viewCurriculum tips status =
                 )
             ]
         , dl [ class "deflist", Attr.style "margin-top" "16px" ]
-            [ dt [] [ Tip.view tips Tip.AlignStart Copy.ladderPhase [ text "Ladder" ] ]
-            , dd [] [ text (Api.ladderLabel curriculum.ladder) ]
-            , dt [] [ Tip.view tips Tip.AlignStart Copy.opponentRevision [ text "Opponent rev" ] ]
-            , dd []
+            ([ dt [] [ Tip.view tips Tip.AlignStart Copy.ladderPhase [ text "Ladder" ] ]
+             , dd [] [ text (Api.ladderLabel curriculum.ladder) ]
+             , dt [] [ Tip.view tips Tip.AlignStart Copy.opponentRevision [ text "Opponent rev" ] ]
+             , dd []
                 [ text
                     ("r"
                         ++ String.fromInt curriculum.opponentRevision
@@ -1424,8 +1459,8 @@ viewCurriculum tips status =
                            )
                     )
                 ]
-            , dt [] [ Tip.view tips Tip.AlignStart Copy.readiness [ text "Readiness" ] ]
-            , dd []
+             , dt [] [ Tip.view tips Tip.AlignStart Copy.readiness [ text "Readiness" ] ]
+             , dd []
                 [ text
                     (case status.readiness.lastRate of
                         Just rate ->
@@ -1444,8 +1479,56 @@ viewCurriculum tips status =
                                 ++ Format.percent status.readiness.threshold
                     )
                 ]
-            ]
+             ]
+                ++ regressionRow tips status
+            )
         ]
+
+
+{-| One row, and only when the trainer actually reports the block. An
+engine that does not run regression rehearsal should not grow an empty
+placeholder for it.
+-}
+regressionRow : Tip.Handlers Msg -> Api.Status -> List (Html Msg)
+regressionRow tips status =
+    case status.regression of
+        Nothing ->
+            []
+
+        Just regression ->
+            let
+                phaseText =
+                    if regression.sweeping then
+                        "sweeping now"
+
+                    else if regression.rehearsing > 0 then
+                        "rehearsing " ++ String.fromInt regression.rehearsing ++ " cells"
+
+                    else if regression.active then
+                        "armed"
+
+                    else
+                        "idle"
+
+                resultText =
+                    if regression.lastSwept <= 0 then
+                        "no sweep yet"
+
+                    else if regression.lastFailed > 0 then
+                        "last sweep at generation "
+                            ++ String.fromInt regression.lastSwept
+                            ++ " lost "
+                            ++ String.fromInt regression.lastFailed
+                            ++ " previously mastered cells"
+
+                    else
+                        "last sweep at generation "
+                            ++ String.fromInt regression.lastSwept
+                            ++ " held every mastered cell"
+            in
+            [ dt [] [ Tip.view tips Tip.AlignStart Copy.regression [ text "Regression" ] ]
+            , dd [] [ text (phaseText ++ " \u{00B7} " ++ resultText) ]
+            ]
 
 
 rosterChips : List String -> List (Html Msg)
@@ -1495,6 +1578,16 @@ viewWeakCell target matchup =
         [ div [ class "alloc-name" ]
             [ span [ class "who" ] [ text ("our " ++ matchup.us ++ " vs their " ++ matchup.them) ]
             , span [ class "chip" ] [ text (Api.matchupStatusLabel matchup.status) ]
+
+            -- A cell with no audit evidence has usually still been played
+            -- hard in training. Showing that here stops the bar reading as
+            -- an untouched matchup.
+            , if matchup.trainingGames > 0 then
+                span [ class "chip" ]
+                    [ text (Format.decimal 0 matchup.trainingGames ++ " training") ]
+
+              else
+                text ""
             ]
         , div [ class "alloc-row" ]
             [ div [ class "alloc-bar" ]
@@ -1512,7 +1605,7 @@ viewWeakCell target matchup =
                             Format.percent1 value
 
                         Nothing ->
-                            "no games"
+                            "no audit"
                     )
                 ]
             ]
