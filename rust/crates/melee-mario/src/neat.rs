@@ -643,6 +643,22 @@ impl Population {
     /// Re-enters every species' saved incumbent genome and clears all scores.
     /// Call this immediately before evaluating a new panel: afterwards every
     /// number in the population comes from that one panel.
+    /// Forgets every fitness number without touching a single genome, weight,
+    /// mutation rate, species or innovation. Used when the panel those numbers
+    /// were measured on is abandoned: a score from one distribution must never
+    /// be compared against a score from another, and the genomes themselves
+    /// are exactly what a scope change is meant to carry across.
+    pub fn clear_fitness(&mut self) {
+        for species in self.species.iter_mut() {
+            for member in species.members.iter_mut() {
+                member.fitness = None;
+            }
+            if let Some(incumbent) = species.incumbent.as_mut() {
+                incumbent.fitness = None;
+            }
+        }
+    }
+
     pub fn open_panel(&mut self) {
         for species in self.species.iter_mut() {
             species.restore_incumbent();

@@ -109,7 +109,7 @@ impl Round {
         matches!(self, Round::Audit | Round::Confirm)
     }
 
-    fn parse(raw: &str) -> Option<Round> {
+    pub fn parse(raw: &str) -> Option<Round> {
         match raw {
             "audit" => Some(Round::Audit),
             "confirm" => Some(Round::Confirm),

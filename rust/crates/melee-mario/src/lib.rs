@@ -7,6 +7,7 @@
 
 pub mod brain;
 pub mod audit;
+pub mod broad;
 pub mod checkpoint;
 pub mod cli;
 pub mod curriculum;

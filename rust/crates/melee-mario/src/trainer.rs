@@ -16,6 +16,7 @@
 //!     promotion, never inside a generation or an audit.
 
 use crate::audit::{AuditConfig, Gate, Progress, Round, Tally};
+use crate::broad::{self, BroadConfig, Evaluation, Overall, Source};
 use crate::curriculum::{self, Cell, Opponent};
 use crate::episode::{self, Rival, Task};
 use crate::genome::Genome;
@@ -41,6 +42,10 @@ pub struct Config {
     pub neat: NeatConfig,
     pub sampler: SamplerConfig,
     pub audit: AuditConfig,
+    /// Settings for [`Ladder::Broad`]. Present in every configuration so a
+    /// staged run can be forked into a broad one without a schema change, and
+    /// inert while the ladder is anything else.
+    pub broad: BroadConfig,
     /// Fraction of wall time the evaluator is allowed to compute.
     pub duty: f64,
     pub readiness_games: usize,
@@ -56,7 +61,7 @@ impl Config {
         json!({"version": ENGINE_VERSION, "run_id": self.run_id, "salt": self.salt.to_string(),
                "ticks": self.ticks, "rating": rating_name(self.rating),
                "neat": self.neat.to_json(), "sampler": self.sampler.to_json(),
-               "audit": self.audit.to_json(), "duty": self.duty,
+               "audit": self.audit.to_json(), "broad": self.broad.to_json(), "duty": self.duty,
                "readiness_games": self.readiness_games,
                "readiness_threshold": self.readiness_threshold,
                "readiness_period": self.readiness_period,
@@ -84,6 +89,12 @@ impl Config {
             neat: NeatConfig::from_json(value.get("neat")?)?,
             sampler: SamplerConfig::from_json(value.get("sampler")?)?,
             audit: AuditConfig::from_json(value.get("audit")?)?,
+            // Checkpoints written before broad mode existed have no settings
+            // for it; the defaults describe a run that has never used it.
+            broad: match value.get("broad") {
+                None => BroadConfig::default(),
+                Some(other) => BroadConfig::from_json(other)?,
+            },
             duty,
             readiness_games: value
                 .get("readiness_games")?
@@ -150,6 +161,12 @@ pub enum Ladder {
     /// The cyborg board keeps being probed and swept so that a policy drifting
     /// towards beating only its own reflection is caught.
     Mixed,
+    /// Every ordered cyborg matchup is ACTIVE at once, and the graded question
+    /// is the aggregate win rate over a balanced any-versus-any distribution
+    /// rather than 625 separate per-cell bounds. The full roster here is
+    /// unlocked by an operator transition, not earned cell by cell, so nothing
+    /// in this phase may be read as per-matchup mastery.
+    Broad,
 }
 
 impl Ladder {
@@ -157,6 +174,7 @@ impl Ladder {
         match self {
             Ladder::Climbing => "climbing",
             Ladder::Mixed => "mixed",
+            Ladder::Broad => "broad",
         }
     }
 
@@ -164,8 +182,52 @@ impl Ladder {
         match raw {
             "climbing" => Some(Ladder::Climbing),
             "mixed" => Some(Ladder::Mixed),
+            "broad" => Some(Ladder::Broad),
             _ => None,
         }
+    }
+
+    /// What the run is graded on. Broad mode, and anything a broad run later
+    /// becomes, is graded on the balanced aggregate; the staged ladder is
+    /// graded cell by cell.
+    pub fn evaluation_scope(self, from_broad: bool) -> &'static str {
+        if self == Ladder::Broad || from_broad {
+            "overall-balanced"
+        } else {
+            "per-cell-ladder"
+        }
+    }
+}
+
+/// Where a run came from when it was forked into a different scope.
+///
+/// Kept for the life of the run, including after a broad run goes on to the
+/// mixed phase: the provenance of a policy's roster is not something a later
+/// phase gets to forget.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Origin {
+    pub run_id: String,
+    pub generation: u32,
+    /// Build fingerprint of the evaluator that produced the SOURCE checkpoint.
+    /// Recorded rather than enforced, because the fork is the one place a
+    /// fingerprint change is explicitly accepted.
+    pub fingerprint: String,
+    pub reason: String,
+}
+
+impl Origin {
+    pub fn to_json(&self) -> Value {
+        json!({"run_id": self.run_id, "generation": self.generation,
+               "fingerprint": self.fingerprint, "reason": self.reason})
+    }
+
+    pub fn from_json(value: &Value) -> Option<Origin> {
+        Some(Origin {
+            run_id: value.get("run_id")?.as_str()?.to_string(),
+            generation: value.get("generation")?.as_u64()? as u32,
+            fingerprint: value.get("fingerprint")?.as_str()?.to_string(),
+            reason: value.get("reason")?.as_str()?.to_string(),
+        })
     }
 }
 
@@ -184,6 +246,12 @@ pub enum Mode {
     },
     Auditing {
         gate: Gate,
+    },
+    /// One round of the broad aggregate gate on a balanced held-out panel.
+    /// Distinct from [`Mode::Auditing`] because it measures a different thing:
+    /// one number over a distribution, not 625 numbers over 625 cells.
+    Overall {
+        gate: Overall,
     },
 }
 
@@ -230,6 +298,28 @@ pub struct Trainer {
     pub stats: SamplerStats,
     pub panel: Option<Panel>,
     pub mode: Mode,
+    /// Set when this run was forked out of another one into a different scope.
+    /// Never cleared afterwards.
+    pub origin: Option<Origin>,
+    /// How far the broad coverage rotation has walked. Monotonic, and the only
+    /// state that schedule needs to resume exactly.
+    pub coverage_cursor: u64,
+    /// The most recent balanced readiness probe. Diagnostic only.
+    pub broad_ready: Option<Evaluation>,
+    /// The most recent broad audit round for the CURRENT champion.
+    pub broad_audit: Option<Evaluation>,
+    /// The most recent broad confirmation round for the CURRENT champion.
+    pub broad_confirm: Option<Evaluation>,
+    /// The confirmation round that actually cleared the aggregate target,
+    /// carrying the fingerprint of the champion that cleared it. Unlike the
+    /// three above it survives a later promotion, because it is a fact about
+    /// one named policy rather than evidence about the current one; the status
+    /// document only reports the gate as passed while that fingerprint is
+    /// still the champion.
+    pub broad_gate: Option<Evaluation>,
+    /// Which of the three drives the per-hull diagnostics table, so a cheap
+    /// readiness probe is never displayed as gate evidence.
+    pub broad_shown: Option<Source>,
     pub episodes: u64,
     /// Episodes that ended without a victory: the tick ceiling, or the
     /// evaluator's Selecting phase (see `episode`). Counted and reported
@@ -297,6 +387,13 @@ impl Trainer {
             stats: SamplerStats::default(),
             panel: None,
             mode: Mode::Training,
+            origin: None,
+            coverage_cursor: 0,
+            broad_ready: None,
+            broad_audit: None,
+            broad_confirm: None,
+            broad_gate: None,
+            broad_shown: None,
             episodes: 0,
             unresolved: 0,
             elapsed: 0.0,
@@ -399,6 +496,7 @@ impl Trainer {
                 wins,
             } => self.step_probe(attempt, champion, tasks, cursor, wins),
             Mode::Auditing { gate } => self.step_audit(gate),
+            Mode::Overall { gate } => self.step_overall(gate),
         }
     }
 
@@ -475,17 +573,32 @@ impl Trainer {
         let generation = self.population.generation;
         self.stats.admit(&cyborg, generation);
         self.stats.admit(&model, generation);
-        let panel = sampler::draw(
-            &self.config.sampler,
-            &mut self.stats,
-            &mut self.sampling,
-            self.config.salt,
-            generation,
-            self.config.ticks,
-            &cyborg,
-            &model,
-            &self.priority,
-        );
+        // Broad mode draws its own panel: a balanced coverage rotation plus a
+        // bounded adaptive remainder over the whole board, rather than the
+        // ladder's weakness-and-novelty mix over one stage's cells.
+        let panel = if self.ladder == Ladder::Broad {
+            let tasks = broad::draw(
+                &self.config.broad,
+                &mut self.stats,
+                &mut self.sampling,
+                self.config.salt,
+                self.config.ticks,
+                &mut self.coverage_cursor,
+            );
+            Panel::of(tasks)
+        } else {
+            sampler::draw(
+                &self.config.sampler,
+                &mut self.stats,
+                &mut self.sampling,
+                self.config.salt,
+                generation,
+                self.config.ticks,
+                &cyborg,
+                &model,
+                &self.priority,
+            )
+        };
         self.panel = Some(panel);
         self.last_training_wins = None;
     }
@@ -556,7 +669,18 @@ impl Trainer {
         self.champion = Some(genome.clone());
         self.evidence.clear();
         self.priority.clear();
-        if matches!(self.mode, Mode::Auditing { .. } | Mode::Probing { .. }) {
+        // Every measurement in flight described the policy being replaced.
+        // `broad_gate` is deliberately NOT cleared: it names the champion that
+        // cleared the aggregate target, and the status document reports the
+        // gate as passed only while that name is still the champion.
+        self.broad_ready = None;
+        self.broad_audit = None;
+        self.broad_confirm = None;
+        self.broad_shown = None;
+        if matches!(
+            self.mode,
+            Mode::Auditing { .. } | Mode::Probing { .. } | Mode::Overall { .. }
+        ) {
             self.mode = Mode::Training;
         }
         if self.ladder == Ladder::Mixed {
@@ -582,19 +706,36 @@ impl Trainer {
             && self.population.generation % self.config.readiness_period == 0
     }
 
-    fn begin_probe(&mut self) {
+    /// Opens a readiness probe on the current champion. Public so a scope
+    /// transition can take a baseline reading of the policy it inherited
+    /// before the first generation of the new distribution is trained.
+    pub fn begin_probe(&mut self) {
         let Some(champion) = self.champion.as_ref().map(Genome::fingerprint) else {
             return;
         };
-        let cells = self.cyborg_cells();
         let attempt = self.audit_attempt;
-        let tasks = sampler::readiness_probe(
-            self.config.salt,
-            attempt,
-            self.config.readiness_games,
-            self.config.ticks,
-            &cells,
-        );
+        let tasks = if self.ladder == Ladder::Broad {
+            // Broad probes the same balanced any-versus-any distribution the
+            // gate is graded on, so the cheap reading and the expensive one
+            // are answers to the same question.
+            self.broad_ready = Some(Evaluation::open(Source::Ready, champion.clone()));
+            self.broad_shown = Some(Source::Ready);
+            broad::readiness_panel(
+                self.config.salt,
+                attempt,
+                self.config.readiness_games,
+                self.config.ticks,
+            )
+        } else {
+            let cells = self.cyborg_cells();
+            sampler::readiness_probe(
+                self.config.salt,
+                attempt,
+                self.config.readiness_games,
+                self.config.ticks,
+                &cells,
+            )
+        };
         self.mode = Mode::Probing {
             attempt,
             champion,
@@ -634,6 +775,25 @@ impl Trainer {
                     ));
                     self.begin_gate(Round::Audit);
                 }
+                // Broad and strong enough on the balanced distribution: spend
+                // the held-out rounds. The probe itself proves nothing.
+                (true, Ladder::Broad, true) => {
+                    self.note(format!(
+                        "balanced readiness {:.1}% over {cursor} probe games against Awesome \
+                         cyborgs: opening an overall audit",
+                        rate * 100.0
+                    ));
+                    self.begin_overall(Round::Audit);
+                }
+                (true, Ladder::Broad, false) => {
+                    self.note(format!(
+                        "balanced readiness {:.1}% over {cursor} probe games, below the {:.0}% \
+                         trigger: continuing to train (diagnostic only, not gate evidence)",
+                        rate * 100.0,
+                        self.config.readiness_threshold * 100.0
+                    ));
+                    self.mode = Mode::Training;
+                }
                 // Mixed and slipping against the original opponents: sweep.
                 (true, Ladder::Mixed, false) => {
                     self.note(format!(
@@ -655,8 +815,16 @@ impl Trainer {
         let mut played = 0;
         let mut won = wins;
         for task in &tasks[cursor..batch] {
-            won += self.play(task, &network).won as u32;
+            let outcome = self.play(task, &network);
+            won += outcome.won as u32;
             played += 1;
+            // Per-hull readiness diagnostics accumulate in step with the
+            // cursor, so a resume mid-probe keeps the two consistent.
+            if let Some(reading) = self.broad_ready.as_mut() {
+                if reading.champion == champion {
+                    reading.record(task.cell, outcome.won);
+                }
+            }
         }
         self.mode = Mode::Probing {
             attempt,
@@ -880,6 +1048,153 @@ impl Trainer {
         }
     }
 
+    /// Opens one round of the broad aggregate gate on a fresh balanced
+    /// held-out panel. The audit and confirmation rounds draw from different
+    /// seed partitions, so the confirmation is genuinely disjoint evidence and
+    /// not a replay of the audit.
+    fn begin_overall(&mut self, round: Round) {
+        let Some(champion) = self.champion.as_ref().map(Genome::fingerprint) else {
+            self.mode = Mode::Training;
+            return;
+        };
+        let config = self.config.broad;
+        let stream = match round {
+            Round::Confirm => StreamTag::Confirm,
+            _ => StreamTag::Audit,
+        };
+        let tasks = broad::balanced_panel(
+            stream,
+            self.config.salt,
+            self.audit_attempt,
+            config.pairs,
+            self.config.ticks,
+        );
+        self.broad_shown = Source::of_round(round);
+        self.mode = Mode::Overall {
+            gate: Overall::open(self.audit_attempt, round, config.target, champion, tasks),
+        };
+    }
+
+    fn step_overall(&mut self, mut gate: Overall) -> Unit {
+        let Some(genome) = self.champion.clone() else {
+            self.mode = Mode::Training;
+            return Unit {
+                episodes: 0,
+                boundary: true,
+            };
+        };
+        // The candidate is frozen for the whole attempt. If it moved, the
+        // evidence describes a policy that no longer exists.
+        if genome.fingerprint() != gate.evaluation.champion {
+            self.note("overall round abandoned: the candidate changed".into());
+            self.mode = Mode::Training;
+            return Unit {
+                episodes: 0,
+                boundary: true,
+            };
+        }
+        if gate.progress() != broad::Progress::Running {
+            return self.finish_overall(gate);
+        }
+        let network = self.compiled(&genome);
+        let mut played = 0u64;
+        for _ in 0..8 {
+            let Some(task) = gate.next_task() else {
+                break;
+            };
+            let outcome = self.play(&task, &network);
+            gate.record(outcome.won);
+            played += 1;
+            if gate.progress() != broad::Progress::Running {
+                break;
+            }
+        }
+        if gate.progress() == broad::Progress::Running {
+            self.mode = Mode::Overall { gate };
+            return Unit {
+                episodes: played,
+                boundary: false,
+            };
+        }
+        let mut unit = self.finish_overall(gate);
+        unit.episodes += played;
+        unit
+    }
+
+    fn finish_overall(&mut self, gate: Overall) -> Unit {
+        let passed = gate.progress() == broad::Progress::Passed;
+        let tally = gate.evaluation.tally();
+        let champion = gate.evaluation.champion.clone();
+        let rate = tally.rate().unwrap_or(0.0) * 100.0;
+        let bound = tally.lower_bound().unwrap_or(0.0) * 100.0;
+        let target = self.config.broad.target * 100.0;
+        let round = gate.round;
+        if round == Round::Confirm {
+            self.broad_confirm = Some(gate.evaluation.clone());
+        } else {
+            self.broad_audit = Some(gate.evaluation.clone());
+        }
+        if !passed {
+            self.audit_attempt += 1;
+            self.note(format!(
+                "overall {} round failed for {champion}: {}/{} = {rate:.1}% on the balanced \
+                 held-out panel, lower bound {bound:.1}% against a {target:.0}% target",
+                round.as_str(),
+                tally.wins,
+                tally.games
+            ));
+            self.mode = Mode::Training;
+            return Unit {
+                episodes: 0,
+                boundary: true,
+            };
+        }
+        if round != Round::Confirm {
+            self.note(format!(
+                "overall audit passed for {champion}: {}/{} = {rate:.1}%, lower bound \
+                 {bound:.1}%; confirming on a disjoint balanced panel",
+                tally.wins, tally.games
+            ));
+            self.begin_overall(Round::Confirm);
+            return Unit {
+                episodes: 0,
+                boundary: true,
+            };
+        }
+        self.pass_overall(gate.evaluation, tally, rate, bound);
+        Unit {
+            episodes: 0,
+            boundary: true,
+        }
+    }
+
+    /// Both held-out rounds cleared the aggregate target.
+    ///
+    /// The run goes on to the existing mixed phase, with its frozen self-play
+    /// opponent and every one of its regression safeguards, and keeps its broad
+    /// provenance: `origin` survives, the scope stays "overall-balanced", and
+    /// `evidence` is deliberately left alone, so a run that never audited a
+    /// single cell cannot arrive in the mixed phase claiming 625 mastered
+    /// matchups.
+    fn pass_overall(&mut self, evidence: Evaluation, tally: Tally, rate: f64, bound: f64) {
+        let champion = evidence.champion.clone();
+        self.broad_gate = Some(evidence);
+        self.audit_attempt += 1;
+        self.priority.clear();
+        self.ladder = Ladder::Mixed;
+        self.frozen_opponent = self.champion.clone();
+        self.opponent_revision += 1;
+        self.note(format!(
+            "overall balanced gate passed by {champion}: {}/{} = {rate:.1}%, lower bound \
+             {bound:.1}% over a balanced any-versus-any panel. This is an AGGREGATE result \
+             over the whole distribution, not a claim that every matchup is mastered. \
+             Entering the mixed phase with frozen opponent revision {} alongside continued \
+             Awesome cyborg rehearsal.",
+            tally.wins, tally.games, self.opponent_revision
+        ));
+        self.mode = Mode::Training;
+    }
+
     fn advance_stage(&mut self, champion: &str) {
         self.audit_attempt += 1;
         self.priority.clear();
@@ -909,7 +1224,7 @@ impl Trainer {
     pub fn phase(&self) -> &'static str {
         match self.mode {
             Mode::Training | Mode::Probing { .. } => "training",
-            Mode::Auditing { .. } => "auditing",
+            Mode::Auditing { .. } | Mode::Overall { .. } => "auditing",
         }
     }
 
@@ -917,8 +1232,132 @@ impl Trainer {
     pub fn round(&self) -> Option<Round> {
         match &self.mode {
             Mode::Auditing { gate } => Some(gate.round),
+            Mode::Overall { gate } => Some(gate.round),
             _ => None,
         }
+    }
+
+    /// Whether this run's scope was set by an operator transition rather than
+    /// earned stage by stage. Sticky: a broad run that reaches the mixed phase
+    /// is still a broad-origin run.
+    pub fn from_broad(&self) -> bool {
+        self.ladder == Ladder::Broad || self.origin.is_some()
+    }
+
+    /// Forks this run's scope to any-versus-any against the Awesome cyborg.
+    ///
+    /// What CARRIES ACROSS is everything the policy actually is: every genome
+    /// and weight, every per-genome mutation rate, the species structure, the
+    /// innovation counter, the champion and its rates, both RNG streams
+    /// verbatim, the sampler's decayed per-cell statistics, the episode and
+    /// timing totals, and the whole history and event log.
+    ///
+    /// What is DROPPED is everything that was a measurement of the old scope.
+    /// Every fitness number was measured on a panel this run is abandoning, and
+    /// all gate evidence was collected on a one-cell board; carrying either
+    /// into a 625-cell distribution would compare numbers that answer different
+    /// questions. The abandonment is recorded as an event rather than performed
+    /// quietly, and the transition writes a history row at the new stage so the
+    /// scope change is visible in the chart instead of appearing as a jump.
+    ///
+    /// The full roster is unlocked here by an operator, NOT earned: `stage`
+    /// becomes the final stage so every hull is active, and `evidence` is left
+    /// empty so nothing reports 625 mastered matchups.
+    ///
+    /// Refuses a run graded against anything but the Awesome cyborg. Broad mode
+    /// reports its aggregate as a win rate "against the Awesome cyborg", and a
+    /// run carrying a weaker rating would keep producing that label while
+    /// fighting a weaker opponent. The caller either fixes the rating
+    /// explicitly, which is recorded, or the fork does not happen.
+    pub fn broaden(&mut self, run_id: &str, reason: &str) -> Result<(), String> {
+        if self.config.rating != CyborgRating::AwesomeCyborg {
+            return Err(format!(
+                "this run is graded against the {} cyborg, but broad mode's aggregate is \
+                 defined against the Awesome cyborg. Pass --rating awesome to change it \
+                 explicitly, which is recorded with the transition, or fork a run that is \
+                 already on Awesome.",
+                rating_name(self.config.rating)
+            ));
+        }
+        let origin = Origin {
+            run_id: self.config.run_id.clone(),
+            generation: self.population.generation,
+            fingerprint: self.evaluator.clone(),
+            reason: reason.to_string(),
+        };
+        let from_stage = self.stage;
+        let dropped_cells = self.evidence.len();
+        let abandoned = self.panel.as_ref().map_or(0, |panel| panel.tasks.len());
+        let in_flight = match &self.mode {
+            Mode::Training => "none",
+            Mode::Probing { .. } => "a readiness probe",
+            Mode::Auditing { .. } => "an audit round",
+            Mode::Overall { .. } => "an overall round",
+        };
+
+        self.config.run_id = run_id.to_string();
+        // Broad mode reads its panel size from its own settings; keeping the
+        // staged sampler in step means a later mixed phase does not silently
+        // shrink the panel back to the ladder's size.
+        self.config.sampler.panel = self.config.broad.panel;
+        self.stage = curriculum::FINAL_STAGE;
+        self.ladder = Ladder::Broad;
+        self.evidence.clear();
+        self.priority.clear();
+        self.panel = None;
+        self.mode = Mode::Training;
+        self.population.clear_fitness();
+        self.last_training_wins = None;
+        self.last_validation = None;
+        self.regression_swept = 0;
+        self.regression_failed = 0;
+        self.broad_ready = None;
+        self.broad_audit = None;
+        self.broad_confirm = None;
+        self.broad_gate = None;
+        self.broad_shown = None;
+        self.coverage_cursor = 0;
+        // A fresh attempt counter, so the new run's held-out panels are drawn
+        // at different trial indices from any the source used. Different
+        // indices, not provably different seeds: within one stream
+        // `episode_seed` hashes into a finite pool and a repeat is possible.
+        // The guarantee that matters is the stream partitioning, which is what
+        // keeps held-out fights out of training.
+        self.audit_attempt += 1;
+        self.evaluator = build_fingerprint();
+        self.origin = Some(origin.clone());
+        self.history.push_back(HistoryRow {
+            generation: self.population.generation,
+            stage: self.stage,
+            training_win_rate: None,
+            validation_win_rate: None,
+            species: self.population.species.len(),
+            nodes: self.champion.as_ref().map_or(0, |g| g.nodes.len()),
+            episodes: self.episodes,
+        });
+        while self.history.len() > MAX_HISTORY {
+            self.history.pop_front();
+        }
+        self.note(format!(
+            "scope changed to any-versus-any: {reason}. Forked from run {} at generation {} \
+             (evaluator {}), stage {from_stage} became stage {} so all {} ordered Awesome \
+             cyborg matchups are ACTIVE. The full roster was unlocked by this transition, \
+             not earned: {dropped_cells} cell(s) of gate evidence were discarded and NOTHING \
+             is mastered. {in_flight} and a panel of {abandoned} fight(s) were abandoned \
+             deliberately, and every fitness score with them, because they measured the old \
+             distribution. Genomes, weights, mutation rates, species, the innovation counter, \
+             the champion and both RNG streams carry across untouched.",
+            origin.run_id,
+            origin.generation,
+            origin.fingerprint,
+            self.stage,
+            curriculum::cells(self.stage).len()
+        ));
+        // A baseline reading of the inherited policy on the new distribution,
+        // taken before the first broad generation rather than five generations
+        // in. Diagnostic: it reports what was inherited, it gates nothing.
+        self.begin_probe();
+        Ok(())
     }
 
     pub fn mastered(&self) -> usize {

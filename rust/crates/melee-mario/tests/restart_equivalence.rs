@@ -10,6 +10,7 @@
 //!   cargo test -j 2 -p melee-mario --test restart_equivalence -- --test-threads=2
 
 use melee_mario::audit::AuditConfig;
+use melee_mario::broad::BroadConfig;
 use melee_mario::neat::NeatConfig;
 use melee_mario::sampler::SamplerConfig;
 use melee_mario::trainer::{Config, Trainer};
@@ -40,6 +41,12 @@ fn config(run: &str) -> Config {
             budget: 40,
             max_failures: 1,
             target: 0.80,
+        },
+        broad: BroadConfig {
+            panel: 4,
+            // One matching, so a held-out round is fifty games.
+            pairs: 25,
+            ..BroadConfig::default()
         },
         duty: 1.0,
         readiness_games: 4,

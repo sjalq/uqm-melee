@@ -10,7 +10,9 @@
 //!     "measured, and it was zero".
 
 use crate::audit::{wilson_lower, Round, Tally};
+use crate::broad::{self, Evaluation, Source};
 use crate::curriculum::{self, Cell, Opponent};
+use crate::genome::Genome;
 use crate::sampler::{self, CellStat};
 use crate::trainer::{iso8601, Ladder, Mode, Trainer};
 use serde_json::{json, Value};
@@ -78,8 +80,80 @@ impl Trainer {
     fn auditing_now(&self) -> Option<(Round, u32, u32)> {
         match &self.mode {
             Mode::Auditing { gate } => Some((gate.round, gate.spent, gate.config.budget)),
+            Mode::Overall { gate } => Some((
+                gate.round,
+                gate.evaluation.games,
+                gate.tasks.len() as u32,
+            )),
             _ => None,
         }
+    }
+
+    /// The balanced evaluation the per-hull diagnostics table should show: the
+    /// round in flight if there is one, otherwise whichever finished reading
+    /// `broad_shown` names. All of them belong to the current champion.
+    fn shown_evaluation(&self) -> Option<&Evaluation> {
+        if let Mode::Overall { gate } = &self.mode {
+            return Some(&gate.evaluation);
+        }
+        match self.broad_shown? {
+            Source::Ready => self.broad_ready.as_ref(),
+            Source::Audit => self.broad_audit.as_ref(),
+            Source::Confirm => self.broad_confirm.as_ref(),
+        }
+    }
+
+    /// The `overall` object. Null outside broad mode and outside anything a
+    /// broad run later became, because there is no balanced aggregate to report.
+    fn overall_json(&self) -> Value {
+        if !self.from_broad() {
+            return Value::Null;
+        }
+        let config = self.config.broad;
+        let champion = self.champion.as_ref().map(Genome::fingerprint);
+        let live = match &self.mode {
+            Mode::Overall { gate } => Some(gate),
+            _ => None,
+        };
+        // The headline numbers describe the round in flight, or the most recent
+        // finished one, never a pool of several.
+        let current = live.map(|gate| &gate.evaluation).or(self
+            .broad_confirm
+            .as_ref()
+            .or(self.broad_audit.as_ref()));
+        let tally = current.map(Evaluation::tally).unwrap_or_default();
+        let summary = |reading: Option<&Evaluation>| match reading {
+            None => json!({"wins": 0, "games": 0, "win_rate": Value::Null,
+                           "lower_bound": Value::Null, "passed": false}),
+            Some(reading) => {
+                let tally = reading.tally();
+                json!({"wins": tally.wins, "games": tally.games,
+                       "win_rate": number(tally.rate()),
+                       "lower_bound": number(tally.lower_bound()),
+                       "passed": tally.lower_bound()
+                           .is_some_and(|bound| bound > config.target)})
+            }
+        };
+        // "Passed" means the CURRENT champion cleared both rounds. A gate
+        // cleared by an earlier champion is reported by name, not inherited.
+        let cleared_by = self.broad_gate.as_ref().map(|e| e.champion.clone());
+        json!({
+            "scope": "balanced-any-any",
+            "target": config.target,
+            "panel": config.games(),
+            "pairs": config.pairs,
+            "round": live.map(|gate| gate.round.as_str()),
+            "wins": tally.wins,
+            "games": tally.games,
+            "win_rate": number(tally.rate()),
+            "lower_bound": number(tally.lower_bound()),
+            "champion_id": champion.clone().unwrap_or_default(),
+            "passed": cleared_by.is_some() && cleared_by == champion,
+            "passed_by": cleared_by,
+            "audit": summary(self.broad_audit.as_ref()),
+            "confirm": summary(self.broad_confirm.as_ref()),
+            "attempt": self.audit_attempt
+        })
     }
 
     pub fn status(&self, phase: Phase, message: &str, checkpoint: &str, stale: bool) -> Value {
@@ -135,11 +209,28 @@ impl Trainer {
                 "our_roster": curriculum::roster_names(&curriculum::ours(), mine),
                 "opponent_roster": curriculum::roster_names(&curriculum::theirs(), yours),
                 "opponent_types": opponent_types,
-                "next_side": if self.ladder == Ladder::Mixed { "complete" } else { next_side },
-                "next_ship": next_ship.map(|s| s.name()),
+                "next_side": if self.ladder == Ladder::Climbing { next_side } else { "complete" },
+                "next_ship": if self.ladder == Ladder::Climbing {
+                    next_ship.map(|s| s.name())
+                } else {
+                    None
+                },
                 "target": target,
+                // In broad mode this is a DIAGNOSTIC count of cells that happen
+                // to have cleared a per-cell bound, and it gates nothing: the
+                // graded question there is the balanced aggregate below.
                 "mastered_matchups": mastered,
                 "total_matchups": active.len(),
+                // Extensions: what the run is graded on, how it got its roster,
+                // and where it came from if it was forked.
+                "evaluation_scope": self.ladder.evaluation_scope(self.from_broad()),
+                // True when the full roster was unlocked by an operator
+                // transition rather than earned stage by stage.
+                "stage_unlocked_externally": self.origin.is_some(),
+                "transition_reason": self.origin.as_ref().map(|o| o.reason.clone()),
+                "origin_run_id": self.origin.as_ref().map(|o| o.run_id.clone()),
+                "origin_generation": self.origin.as_ref().map(|o| o.generation),
+                "origin_fingerprint": self.origin.as_ref().map(|o| o.fingerprint.clone()),
                 // Extensions: the ladder phase and the frozen opponent it plays.
                 "ladder": self.ladder.as_str(),
                 "opponent_revision": self.opponent_revision,
@@ -206,10 +297,10 @@ impl Trainer {
                 "last_rate": number(self.last_validation),
                 "period": self.config.readiness_period,
                 // What the probe means depends on the phase, so say which.
-                "purpose": if self.ladder == Ladder::Mixed {
-                    "cyborg regression alarm"
-                } else {
-                    "audit readiness"
+                "purpose": match self.ladder {
+                    Ladder::Mixed => "cyborg regression alarm",
+                    Ladder::Broad => "broad balanced readiness",
+                    Ladder::Climbing => "audit readiness",
                 }
             },
             "regression": {
@@ -232,6 +323,28 @@ impl Trainer {
                 "nodes": row.nodes,
                 "episodes": row.episodes
             })).collect::<Vec<_>>(),
+            // Broad mode's aggregate gate. Null for a staged run, which has no
+            // balanced aggregate to report.
+            "overall": self.overall_json(),
+            // Per-hull blind-spot diagnostics from the balanced evaluation
+            // currently being shown. `wins` is always OUR policy's wins:
+            // side "ours" groups by the hull it piloted, side "opponent" by the
+            // hull it faced. Empty outside broad mode.
+            "ship_performance": match self.shown_evaluation() {
+                Some(reading) => Value::Array(broad::ship_rows(reading)),
+                None => Value::Array(Vec::new()),
+            },
+            // How the broad training panel is built. `coverage` is the SHARE of
+            // the panel reserved for the balanced rotation, not how much of the
+            // board has been seen. Null for a staged run.
+            "sampler": if self.ladder == Ladder::Broad {
+                json!({"panel": self.config.broad.panel,
+                       "coverage": self.config.broad.coverage,
+                       "cursor": self.coverage_cursor,
+                       "tour": self.coverage_cursor / broad::BOARD as u64})
+            } else {
+                Value::Null
+            },
             "matchups": self.matchups(&evidence, &active, &models, target),
             "events": self.events.iter().rev().map(|e| json!({
                 "at": e.at, "message": e.message
