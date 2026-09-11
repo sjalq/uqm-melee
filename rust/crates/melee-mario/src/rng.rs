@@ -11,8 +11,9 @@
 //!
 //! The partition is what makes withholding real. The legal seeds are
 //! `1 ..= 2147483646`; writing a seed as `value + 1`, each tag owns one residue
-//! class of `value` modulo four. Two seeds from different tags therefore differ
-//! in `(seed - 1) % 4` and CANNOT be equal, whatever the hash does. Hashing
+//! class of `value` modulo the number of tags. Two seeds from different tags
+//! therefore differ in `(seed - 1) % ALL_STREAMS.len()` and CANNOT be equal,
+//! whatever the hash does. Hashing
 //! merely chooses which member of the tag's own class to use, so the training
 //! sampler cannot reach an audit seed even by accident, and a resumed run
 //! reproduces the identical seed for the identical slot.
@@ -34,13 +35,17 @@ pub enum StreamTag {
     Audit,
     /// The disjoint panel that must also pass before a promotion.
     Confirm,
+    /// Mixed-phase regression sweeps against the original cyborgs. Separate so
+    /// a sweep can never reuse, or be mistaken for, gate evidence.
+    Regression,
 }
 
-pub const ALL_STREAMS: [StreamTag; 4] = [
+pub const ALL_STREAMS: [StreamTag; 5] = [
     StreamTag::Train,
     StreamTag::Ready,
     StreamTag::Audit,
     StreamTag::Confirm,
+    StreamTag::Regression,
 ];
 
 impl StreamTag {
@@ -52,6 +57,7 @@ impl StreamTag {
             StreamTag::Ready => 1,
             StreamTag::Audit => 2,
             StreamTag::Confirm => 3,
+            StreamTag::Regression => 4,
         }
     }
 
@@ -61,6 +67,7 @@ impl StreamTag {
             StreamTag::Ready => "ready",
             StreamTag::Audit => "audit",
             StreamTag::Confirm => "confirm",
+            StreamTag::Regression => "regression",
         }
     }
 }
@@ -174,8 +181,9 @@ pub fn episode_seed(stream: StreamTag, salt: u64, cell: u64, seat: u64, index: u
         mix ^= word.wrapping_mul(0x9e37_79b9_7f4a_7c15);
         mix = split_mix(&mut mix);
     }
-    // Members of this class are residue, residue + 4, residue + 8, ... below
-    // MAX_SEED, counted exactly so the result can never leave the legal range.
+    // Members of this class are residue, residue + streams, residue + 2 *
+    // streams, ... below MAX_SEED, counted exactly so the result can never
+    // leave the legal range.
     let members = (MAX_SEED - residue).div_ceil(streams);
     let value = residue + streams * (mix % members);
     debug_assert!(value < MAX_SEED);

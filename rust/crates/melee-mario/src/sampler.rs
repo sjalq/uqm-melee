@@ -34,6 +34,10 @@ pub struct SamplerConfig {
     /// is mastered. The rest stays on cyborgs, which is what detects a
     /// regression against the original opponents.
     pub model_share: f64,
+    /// Extra weight given to a cell that an audit or a regression sweep just
+    /// failed. This is how a failure turns into rehearsal rather than into a
+    /// number on a dashboard.
+    pub focus: f64,
 }
 
 impl Default for SamplerConfig {
@@ -46,6 +50,7 @@ impl Default for SamplerConfig {
             novelty_span: 20,
             decay: 0.90,
             model_share: 0.5,
+            focus: 8.0,
         }
     }
 }
@@ -54,7 +59,7 @@ impl SamplerConfig {
     pub fn to_json(self) -> Value {
         json!({"panel": self.panel, "floor": self.floor, "weakness": self.weakness,
                "novelty": self.novelty, "novelty_span": self.novelty_span,
-               "decay": self.decay, "model_share": self.model_share})
+               "decay": self.decay, "model_share": self.model_share, "focus": self.focus})
     }
 
     pub fn from_json(value: &Value) -> Option<SamplerConfig> {
@@ -71,6 +76,11 @@ impl SamplerConfig {
             novelty_span: value.get("novelty_span")?.as_u64()? as u32,
             decay: number("decay")?,
             model_share: number("model_share")?,
+            // Older checkpoints predate focus; zero reproduces their behaviour.
+            focus: match value.get("focus") {
+                None => 0.0,
+                Some(other) => other.as_f64().filter(|n| n.is_finite() && *n >= 0.0)?,
+            },
         })
     }
 }
@@ -157,12 +167,14 @@ impl SamplerStats {
     }
 }
 
-/// How badly a cell wants attention this generation.
-pub fn weight(config: &SamplerConfig, stat: &CellStat, generation: u32) -> f64 {
+/// How badly a cell wants attention this generation. `focused` marks a cell
+/// that the most recent audit or regression sweep could not clear.
+pub fn weight(config: &SamplerConfig, stat: &CellStat, generation: u32, focused: bool) -> f64 {
     let fresh = generation.saturating_sub(stat.added) < config.novelty_span;
     config.floor
         + config.weakness * (1.0 - stat.smoothed())
         + if fresh { config.novelty } else { 0.0 }
+        + if focused { config.focus } else { 0.0 }
 }
 
 /// The panel every member of the generation is scored on.
@@ -237,6 +249,7 @@ pub fn draw(
     ticks: i64,
     cyborg: &[Cell],
     model: &[Cell],
+    focus: &[Cell],
 ) -> Panel {
     let mut tasks = Vec::with_capacity(config.panel);
     let model_slots = if model.is_empty() {
@@ -252,7 +265,7 @@ pub fn draw(
             cyborg
         };
         let pool = if pool.is_empty() { cyborg } else { pool };
-        let Some(cell) = pick(config, stats, rng, generation, pool) else {
+        let Some(cell) = pick(config, stats, rng, generation, pool, focus) else {
             break;
         };
         let swap = slot % 2 == 1;
@@ -283,6 +296,7 @@ fn pick(
     rng: &mut Stream,
     generation: u32,
     pool: &[Cell],
+    focus: &[Cell],
 ) -> Option<Cell> {
     if pool.is_empty() {
         return None;
@@ -294,6 +308,7 @@ fn pick(
                 config,
                 stats.cells.get(cell).unwrap_or(&CellStat::default()),
                 generation,
+                focus.contains(cell),
             )
         })
         .collect();
@@ -364,7 +379,7 @@ mod tests {
         let mut seen: BTreeSet<i64> = BTreeSet::new();
         for generation in 0..30 {
             let panel = draw(
-                &config, &mut stats, &mut rng, 11, generation, 3600, &active, &[],
+                &config, &mut stats, &mut rng, 11, generation, 3600, &active, &[], &[],
             );
             assert_eq!(panel.tasks.len(), 24);
             assert!(panel.tasks.iter().any(|t| t.swap));
@@ -389,8 +404,8 @@ mod tests {
         }
         let config = SamplerConfig::default();
         let generation = config.novelty_span + 5;
-        let strong_weight = weight(&config, &stats.cells[&active[0]], generation);
-        let weak_weight = weight(&config, &stats.cells[&weak], generation);
+        let strong_weight = weight(&config, &stats.cells[&active[0]], generation, false);
+        let weak_weight = weight(&config, &stats.cells[&weak], generation, false);
         assert!(weak_weight > strong_weight * 2.0);
 
         // But a mastered cell still keeps a rehearsal floor above zero.
@@ -408,6 +423,7 @@ mod tests {
             generation,
             3600,
             &active,
+            &[],
             &[],
         );
         let drawn = panel.tasks.iter().filter(|t| t.cell == weak).count();
@@ -429,7 +445,7 @@ mod tests {
             ..SamplerConfig::default()
         };
         let panel = draw(
-            &config, &mut stats, &mut rng, 2, 0, 3600, &cyborg, &model,
+            &config, &mut stats, &mut rng, 2, 0, 3600, &cyborg, &model, &[],
         );
         let models = panel
             .tasks
@@ -454,6 +470,7 @@ mod tests {
             3600,
             &active,
             &[],
+            &[],
         );
         panel.cursor = 17;
         let saved = panel.to_json();
@@ -466,6 +483,46 @@ mod tests {
         assert!(
             Panel::from_json(&tampered).is_none(),
             "an edited panel must not keep its identity"
+        );
+    }
+
+    #[test]
+    fn a_failed_cell_is_rehearsed_harder_than_the_rest() {
+        let active = cells(8);
+        let mut stats = stats_for(&active);
+        // Everything looks equally healthy, so only the focus can separate them.
+        for cell in &active {
+            for _ in 0..40 {
+                stats.record(*cell, true, 1.0);
+            }
+        }
+        let config = SamplerConfig {
+            panel: 400,
+            ..SamplerConfig::default()
+        };
+        let generation = config.novelty_span + 5;
+        let failed = vec![active[5]];
+        assert!(
+            weight(&config, &stats.cells[&failed[0]], generation, true)
+                > weight(&config, &stats.cells[&failed[0]], generation, false) * 3.0
+        );
+        let mut rng = Stream::seeded(17);
+        let panel = draw(
+            &config,
+            &mut stats,
+            &mut rng,
+            3,
+            generation,
+            3600,
+            &active,
+            &[],
+            &failed,
+        );
+        let focused = panel.tasks.iter().filter(|t| t.cell == failed[0]).count();
+        let fair = panel.tasks.len() / active.len();
+        assert!(
+            focused > fair * 2,
+            "failed cell drawn {focused}, fair share {fair}"
         );
     }
 
@@ -506,6 +563,7 @@ mod tests {
                 generation,
                 3600,
                 &active,
+                &[],
                 &[],
             );
             train.extend(panel.tasks.iter().map(|t| t.seed));

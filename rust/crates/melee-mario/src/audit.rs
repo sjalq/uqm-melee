@@ -84,8 +84,15 @@ impl Tally {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Round {
+    /// The gate's first fixed panel.
     Audit,
+    /// The disjoint panel that must also pass before a stage is promoted.
     Confirm,
+    /// A bounded cyborg-only sweep run during the mixed phase. It promotes
+    /// nothing and gates nothing; its only job is to notice that a policy which
+    /// has been training against a frozen copy of itself has started losing to
+    /// the original Awesome cyborgs again.
+    Regression,
 }
 
 impl Round {
@@ -93,13 +100,20 @@ impl Round {
         match self {
             Round::Audit => "audit",
             Round::Confirm => "confirm",
+            Round::Regression => "regression",
         }
+    }
+
+    /// Whether passing this round can move the curriculum forward.
+    pub fn promotes(self) -> bool {
+        matches!(self, Round::Audit | Round::Confirm)
     }
 
     fn parse(raw: &str) -> Option<Round> {
         match raw {
             "audit" => Some(Round::Audit),
             "confirm" => Some(Round::Confirm),
+            "regression" => Some(Round::Regression),
             _ => None,
         }
     }

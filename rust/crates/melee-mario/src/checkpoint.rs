@@ -10,7 +10,7 @@ use crate::audit::{Gate, Tally};
 use crate::curriculum::{self, Cell};
 use crate::episode::Task;
 use crate::genome::Genome;
-use crate::neat::Population;
+use crate::neat::{MutationRates, Population};
 use crate::rng::Stream;
 use crate::sampler::{Panel, SamplerStats};
 use crate::trainer::{Config, Event, HistoryRow, Ladder, Mode, Trainer, ENGINE_VERSION};
@@ -130,17 +130,21 @@ impl Trainer {
             "opponent_revision": self.opponent_revision,
             "frozen_opponent": self.frozen_opponent.as_ref().map(Genome::to_json),
             "champion": self.champion.as_ref().map(Genome::to_json),
+            "champion_rates": self.champion_rates.to_json(),
             "evidence": evidence,
             "priority": self.priority.iter().map(|c| c.encode()).collect::<Vec<_>>(),
             "stats": self.stats.to_json(),
             "panel": self.panel.as_ref().map(Panel::to_json),
             "mode": mode_json(&self.mode),
             "episodes": self.episodes,
+            "unresolved": self.unresolved,
             "elapsed_seconds": self.elapsed,
             "compute_seconds": self.compute,
             "audit_attempt": self.audit_attempt,
             "last_validation": self.last_validation,
             "last_training_wins": self.last_training_wins,
+            "regression_swept": self.regression_swept,
+            "regression_failed": self.regression_failed,
             "history": self.history.iter().map(history_json).collect::<Vec<_>>(),
             "events": self.events.iter()
                 .map(|e| json!({"at": e.at, "message": e.message})).collect::<Vec<_>>(),
@@ -224,6 +228,34 @@ fn decode(value: &Value) -> Option<Trainer> {
     if ladder == Ladder::Mixed && frozen_opponent.is_none() {
         return None;
     }
+    let champion = genome("champion")?;
+    let opponent_revision = value.get("opponent_revision")?.as_u64()? as u32;
+    let mode = mode_from_json(value.get("mode")?)?;
+    // The evidence map is checked against the active board above, but a gate or
+    // probe caught mid-flight carries its OWN idea of which candidate, stage and
+    // opponent revision it is measuring. If any of those disagree with the run
+    // being resumed, the in-flight evidence describes something else and the
+    // checkpoint is not resumable.
+    let fingerprint = champion.as_ref().map(Genome::fingerprint);
+    match &mode {
+        Mode::Training => {}
+        Mode::Probing {
+            champion: measured, ..
+        } => {
+            if fingerprint.as_deref() != Some(measured.as_str()) {
+                return None;
+            }
+        }
+        Mode::Auditing { gate } => {
+            if fingerprint.as_deref() != Some(gate.champion.as_str())
+                || gate.stage != stage
+                || gate.opponent_revision != opponent_revision
+                || !gate.order.iter().all(|cell| active.contains(cell))
+            {
+                return None;
+            }
+        }
+    }
     Some(Trainer {
         evaluator: value
             .get("evaluator")
@@ -235,15 +267,20 @@ fn decode(value: &Value) -> Option<Trainer> {
         population,
         stage,
         ladder,
-        opponent_revision: value.get("opponent_revision")?.as_u64()? as u32,
+        opponent_revision,
         frozen_opponent,
-        champion: genome("champion")?,
+        champion,
+        champion_rates: match value.get("champion_rates") {
+            None | Some(Value::Null) => config.neat.seed_rates,
+            Some(other) => MutationRates::from_json(other)?,
+        },
         evidence,
         priority,
         stats: SamplerStats::from_json(value.get("stats")?)?,
         panel,
-        mode: mode_from_json(value.get("mode")?)?,
+        mode,
         episodes: value.get("episodes")?.as_u64()?,
+        unresolved: value.get("unresolved").and_then(Value::as_u64).unwrap_or(0),
         elapsed: value
             .get("elapsed_seconds")?
             .as_f64()
@@ -257,6 +294,15 @@ fn decode(value: &Value) -> Option<Trainer> {
             None | Some(Value::Null) => None,
             Some(other) => Some(other.as_f64().filter(|n| n.is_finite())?),
         },
+        nice: 0,
+        regression_swept: value
+            .get("regression_swept")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        regression_failed: value
+            .get("regression_failed")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
         last_training_wins: match value.get("last_training_wins") {
             None | Some(Value::Null) => None,
             Some(other) => Some(other.as_f64().filter(|n| n.is_finite())?),

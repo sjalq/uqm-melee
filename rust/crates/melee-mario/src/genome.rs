@@ -514,6 +514,58 @@ mod tests {
     }
 
     #[test]
+    fn every_evolved_weight_survives_a_checkpoint_round_trip_bit_for_bit() {
+        // A weight that needs seventeen significant digits only round trips if
+        // the JSON parser is correctly rounded. Without that, decoding a
+        // checkpoint can move a weight by one unit in the last place, which
+        // changes the fingerprint, which throws away the gate evidence that
+        // fingerprint is keyed to and makes a resume a different run.
+        use crate::rng::Stream;
+        let mut rng = Stream::seeded(0xfeed);
+        let mut genome = Genome::minimal();
+        genome.nodes.push(Node {
+            id: 70,
+            kind: NodeKind::Hidden,
+        });
+        for innovation in 1..500u32 {
+            let from = innovation % 57;
+            genome.genes.push(Gene {
+                innovation,
+                from,
+                to: 57 + (innovation % 13),
+                weight: rng.signed() * 2.0,
+                enabled: innovation % 7 != 0,
+            });
+        }
+        // Include the exact values that expose a fast, incorrectly rounded
+        // parser, each one a different neighbour of minus one.
+        for (at, awkward) in [-0.9999999999999999_f64, 0.1, 1e-300, 2.2250738585072014e-308]
+            .into_iter()
+            .enumerate()
+        {
+            genome.genes[at].weight = awkward;
+        }
+        let genome = genome.validate().unwrap();
+
+        let text = serde_json::to_string(&genome.to_json()).unwrap();
+        let back = Genome::parse(&text).expect("a genome must survive JSON");
+        assert_eq!(back.genes.len(), genome.genes.len());
+        for (before, after) in genome.genes.iter().zip(&back.genes) {
+            assert_eq!(
+                before.weight.to_bits(),
+                after.weight.to_bits(),
+                "weight {} came back as {} ({} vs {} bits)",
+                before.weight,
+                after.weight,
+                before.weight.to_bits(),
+                after.weight.to_bits()
+            );
+        }
+        assert_eq!(back.fingerprint(), genome.fingerprint());
+        assert_eq!(back, genome);
+    }
+
+    #[test]
     fn fingerprint_separates_weight_changes_but_ignores_storage_order() {
         let a = seeded(vec![
             Gene {

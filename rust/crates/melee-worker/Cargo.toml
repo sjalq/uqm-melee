@@ -8,5 +8,9 @@ melee-core = { path = "../melee-core" }
 melee-sim = { path = "../melee-sim" }
 melee-neat = { path = "../melee-neat" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip makes decimal-to-f64 parsing correctly rounded. Without it a
+# weight needing seventeen significant digits can come back one unit in the last
+# place away from what was written, which changes a genome fingerprint and makes
+# a resumed run a different run.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 rayon = "1"

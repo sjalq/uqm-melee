@@ -72,12 +72,12 @@ impl MutationRates {
         }
     }
 
-    fn to_json(self) -> Value {
+    pub fn to_json(self) -> Value {
         json!({"weight": self.weight, "link": self.link, "bias": self.bias, "node": self.node,
                "enable": self.enable, "disable": self.disable, "step": self.step})
     }
 
-    fn from_json(value: &Value) -> Option<MutationRates> {
+    pub fn from_json(value: &Value) -> Option<MutationRates> {
         let number = |key: &str| value.get(key)?.as_f64().filter(|n| n.is_finite());
         Some(MutationRates {
             weight: number("weight")?,
@@ -484,11 +484,13 @@ pub fn same_species(config: &NeatConfig, a: &Genome, b: &Genome) -> bool {
 #[derive(Clone, Debug)]
 pub struct Species {
     pub members: Vec<Individual>,
-    /// The historical best GENOME of this species, kept as structure rather
-    /// than as a number. It is re-entered into the species and rescored on
-    /// whatever panel is current, which is what makes the staleness test a
-    /// paired same-panel comparison instead of a cross-panel one.
-    pub incumbent: Option<Genome>,
+    /// The historical best member of this species, kept as STRUCTURE rather
+    /// than as a number: its genome and the mutation rates that genome had
+    /// drifted to. It is re-entered into the species and rescored on whatever
+    /// panel is current, which is what makes the staleness test a paired
+    /// same-panel comparison instead of a cross-panel one. Its own fitness is
+    /// never carried across a panel.
+    pub incumbent: Option<Individual>,
     pub staleness: u32,
     /// Filled in during each generation turnover; purely derived.
     pub average_rank: f64,
@@ -497,7 +499,10 @@ pub struct Species {
 impl Species {
     fn new(first: Individual) -> Species {
         Species {
-            incumbent: Some(first.genome.clone()),
+            incumbent: Some(Individual {
+                fitness: None,
+                ..first.clone()
+            }),
             members: vec![first],
             staleness: 0,
             average_rank: 0.0,
@@ -517,13 +522,16 @@ impl Species {
         self.best().and_then(|m| m.fitness)
     }
 
-    /// Puts the saved incumbent genome back into the species so the next panel
-    /// scores it alongside everyone else. Cheap: usually it is already there.
-    fn restore_incumbent(&mut self, rates: MutationRates) {
+    /// Puts the saved incumbent back into the species so the next panel scores
+    /// it alongside everyone else. Cheap: usually it is already there. Its
+    /// drifted mutation rates come back with it, because those rates are part
+    /// of what the search found and reseeding them would quietly undo the
+    /// per-genome rate adaptation the algorithm depends on.
+    fn restore_incumbent(&mut self) {
         let Some(incumbent) = self.incumbent.clone() else {
             return;
         };
-        let fingerprint = incumbent.fingerprint();
+        let fingerprint = incumbent.genome.fingerprint();
         if self
             .members
             .iter()
@@ -532,15 +540,14 @@ impl Species {
             return;
         }
         self.members.push(Individual {
-            genome: incumbent,
-            rates,
             fitness: None,
+            ..incumbent
         });
     }
 
     /// The incumbent's score on the current panel, if it was measured.
     fn incumbent_score(&self) -> Option<f64> {
-        let fingerprint = self.incumbent.as_ref()?.fingerprint();
+        let fingerprint = self.incumbent.as_ref()?.genome.fingerprint();
         self.members
             .iter()
             .find(|m| m.genome.fingerprint() == fingerprint)?
@@ -549,7 +556,7 @@ impl Species {
 
     fn to_json(&self) -> Value {
         json!({"members": self.members.iter().map(Individual::to_json).collect::<Vec<_>>(),
-               "incumbent": self.incumbent.as_ref().map(Genome::to_json),
+               "incumbent": self.incumbent.as_ref().map(Individual::to_json),
                "staleness": self.staleness})
     }
 
@@ -567,7 +574,7 @@ impl Species {
             members,
             incumbent: match value.get("incumbent") {
                 None | Some(Value::Null) => None,
-                Some(other) => Some(Genome::from_json(other).ok()?),
+                Some(other) => Some(Individual::from_json(other)?),
             },
             staleness: value.get("staleness")?.as_u64()? as u32,
             average_rank: 0.0,
@@ -637,9 +644,8 @@ impl Population {
     /// Call this immediately before evaluating a new panel: afterwards every
     /// number in the population comes from that one panel.
     pub fn open_panel(&mut self) {
-        let rates = self.config.seed_rates;
         for species in self.species.iter_mut() {
-            species.restore_incumbent(rates);
+            species.restore_incumbent();
             for member in species.members.iter_mut() {
                 member.fitness = None;
             }
@@ -652,19 +658,24 @@ impl Population {
     /// nothing is compared with a number from an earlier panel.
     pub fn advance(&mut self, rng: &mut Stream) {
         for species in self.species.iter_mut() {
-            let Some(best) = species.best().map(|m| (m.genome.clone(), m.score())) else {
+            let Some(best) = species.best().map(|m| (m.clone(), m.score())) else {
                 // Nothing measurable this panel: neither progress nor decay.
                 continue;
+            };
+            // The new baseline keeps the winner's drifted rates, not the seed.
+            let adopt = Individual {
+                fitness: None,
+                ..best.0
             };
             match species.incumbent_score() {
                 None => {
                     // No comparable baseline on this panel, so adopt today's
                     // best as the baseline rather than inventing a comparison.
-                    species.incumbent = Some(best.0);
+                    species.incumbent = Some(adopt);
                     species.staleness = 0;
                 }
                 Some(baseline) if best.1 > baseline => {
-                    species.incumbent = Some(best.0);
+                    species.incumbent = Some(adopt);
                     species.staleness = 0;
                 }
                 Some(_) => species.staleness += 1,
@@ -813,8 +824,10 @@ impl Population {
     }
 
     /// Guarantees the incumbent champion is present, so the next generation can
-    /// rescore it on the new panel and the comparison stays paired.
-    pub fn ensure_elite(&mut self, champion: &Genome) {
+    /// rescore it on the new panel and the comparison stays paired. Its drifted
+    /// mutation rates come with it; reseeding them would throw away the search
+    /// intensity the champion arrived at.
+    pub fn ensure_elite(&mut self, champion: &Genome, rates: MutationRates) {
         let fingerprint = champion.fingerprint();
         if self
             .members()
@@ -822,7 +835,6 @@ impl Population {
         {
             return;
         }
-        let rates = self.config.seed_rates;
         self.place(Individual {
             genome: champion.clone(),
             rates,
@@ -997,7 +1009,10 @@ mod tests {
             inflation += 1000.0;
             let mut species_index = 0.0;
             for species in population.species.iter_mut() {
-                let incumbent = species.incumbent.as_ref().map(Genome::fingerprint);
+                let incumbent = species
+                    .incumbent
+                    .as_ref()
+                    .map(|i| i.genome.fingerprint());
                 species_index += 1.0;
                 for member in species.members.iter_mut() {
                     // The incumbent is the best thing on this panel, always.
@@ -1015,6 +1030,73 @@ mod tests {
             population.species.iter().any(|s| s.staleness > 0),
             "a species that never improved on a shared panel must go stale"
         );
+    }
+
+    #[test]
+    fn an_incumbent_keeps_the_mutation_rates_it_drifted_to() {
+        // Per-genome rate drift is part of what the search finds. Re-entering a
+        // saved incumbent with the seed rates would silently undo it every
+        // generation, which is not the published algorithm.
+        let mut rng = Stream::seeded(67);
+        let config = NeatConfig {
+            population: 12,
+            ..NeatConfig::default()
+        };
+        let mut population = Population::seed(config, &mut rng);
+        // Drive the rates well away from the seed values.
+        for member in population.members_mut() {
+            for _ in 0..30 {
+                member.rates.drift(&mut rng);
+            }
+        }
+        let seeded = config.seed_rates;
+        assert!(population.members().all(|m| m.rates != seeded));
+
+        for _ in 0..6 {
+            population.open_panel();
+            let mut score = 0.0;
+            for member in population.members_mut() {
+                score += 1.0;
+                member.fitness = Some(score);
+            }
+            population.advance(&mut rng);
+            population.open_panel();
+            for species in &population.species {
+                let incumbent = species.incumbent.as_ref().expect("a baseline exists");
+                assert_ne!(
+                    incumbent.rates, seeded,
+                    "the incumbent was reseeded to the default rates"
+                );
+                // Its genome is back in the species to be rescored, which is
+                // what makes the staleness comparison a paired one.
+                assert!(
+                    species
+                        .members
+                        .iter()
+                        .any(|m| m.genome.fingerprint() == incumbent.genome.fingerprint()),
+                    "the incumbent was not re-entered for rescoring"
+                );
+            }
+        }
+
+        // And when it genuinely has to be re-inserted, it arrives with its own
+        // rates rather than with the seed defaults.
+        let species = &mut population.species[0];
+        let incumbent = species.incumbent.clone().unwrap();
+        species.members.clear();
+        species.members.push(Individual {
+            genome: Genome::minimal(),
+            rates: seeded,
+            fitness: None,
+        });
+        species.restore_incumbent();
+        let back = species
+            .members
+            .iter()
+            .find(|m| m.genome.fingerprint() == incumbent.genome.fingerprint())
+            .expect("the incumbent was re-inserted");
+        assert_eq!(back.rates, incumbent.rates);
+        assert!(back.fitness.is_none(), "a restored baseline is unmeasured");
     }
 
     #[test]
@@ -1075,11 +1157,13 @@ mod tests {
             ..NeatConfig::default()
         };
         let mut population = Population::seed(config, &mut rng);
-        let champion = population.members().next().unwrap().genome.clone();
+        let first = population.members().next().unwrap().clone();
         population.species.clear();
-        population.ensure_elite(&champion);
+        population.ensure_elite(&first.genome, first.rates);
         assert_eq!(population.size(), 1);
-        population.ensure_elite(&champion);
+        population.ensure_elite(&first.genome, first.rates);
         assert_eq!(population.size(), 1, "no duplicate elite");
+        // The rates that came back are the champion's, not the seed defaults.
+        assert_eq!(population.members().next().unwrap().rates, first.rates);
     }
 }
