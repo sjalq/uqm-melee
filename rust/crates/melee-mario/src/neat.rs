@@ -1048,6 +1048,136 @@ mod tests {
         );
     }
 
+    /// Scores a whole population from a per-member function, so the same
+    /// ORDERING can be replayed under two different number lines.
+    fn score_every_member(population: &mut Population, of: impl Fn(usize) -> f64) {
+        for (at, member) in population.members_mut().enumerate() {
+            member.fitness = Some(of(at));
+        }
+    }
+
+    /// A compact description of everything selection produced: how the species
+    /// came out, how big each is, and which genomes survived in which.
+    fn shape(population: &Population) -> Vec<Vec<String>> {
+        population
+            .species
+            .iter()
+            .map(|s| s.members.iter().map(|m| m.genome.fingerprint()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn an_all_negative_panel_selects_exactly_as_the_same_order_of_positives_does() {
+        // The no-damage penalty can make EVERY member of a panel score -1000,
+        // and a run can sit there for generations. Offspring allocation is
+        // share-of-global-RANK, not share-of-fitness, so it must be invariant
+        // under any strictly increasing transform of the scores: shifting a
+        // panel far below zero may not change who breeds, who survives as an
+        // elite, or how the species come out.
+        let config = NeatConfig {
+            population: 40,
+            stale_species: 4,
+            ..NeatConfig::default()
+        };
+        // Same seed for both, so the only difference is the number line.
+        let mut positive = Population::seed(config, &mut Stream::seeded(97));
+        let mut negative = Population::seed(config, &mut Stream::seeded(97));
+        assert_eq!(shape(&positive), shape(&negative), "same seed, same start");
+
+        for generation in 0..6 {
+            positive.open_panel();
+            negative.open_panel();
+            // A strictly increasing map of the other: every score negative,
+            // every score well below the worst positive one, and the gap
+            // between neighbours wildly different. Only the ORDER is shared.
+            let base = |at: usize| (at % 7) as f64 + generation as f64;
+            score_every_member(&mut positive, base);
+            score_every_member(&mut negative, |at| base(at) * 3.0 - 1000.0);
+
+            assert!(
+                negative.members().all(|m| m.score() < 0.0),
+                "the whole panel is meant to be negative"
+            );
+            assert_eq!(
+                positive.best().map(|m| m.genome.fingerprint()),
+                negative.best().map(|m| m.genome.fingerprint()),
+                "the best member must not depend on the number line"
+            );
+
+            let mut evolving = Stream::seeded(31);
+            positive.advance(&mut evolving);
+            let mut evolving = Stream::seeded(31);
+            negative.advance(&mut evolving);
+
+            assert_eq!(
+                shape(&positive),
+                shape(&negative),
+                "an all-negative panel selected differently at generation {generation}"
+            );
+            assert_eq!(positive.size(), negative.size());
+            // The population must actually refill rather than collapsing to
+            // the elites, which is what a fitness-proportional share would do
+            // when every share is negative.
+            assert_eq!(negative.size(), config.population);
+        }
+    }
+
+    #[test]
+    fn a_measured_negative_member_still_outranks_an_unmeasured_one() {
+        // `score()` stands in NEG_INFINITY for a member this panel has not
+        // reached yet. A real -1000 has to beat that, or a penalised member
+        // would be culled as though it had never been evaluated.
+        let mut rng = Stream::seeded(101);
+        let config = NeatConfig {
+            population: 6,
+            ..NeatConfig::default()
+        };
+        let mut population = Population::seed(config, &mut rng);
+        population.open_panel();
+        let measured = population
+            .members()
+            .next()
+            .map(|m| m.genome.fingerprint())
+            .expect("a seeded population has members");
+        for member in population.members_mut() {
+            if member.genome.fingerprint() == measured {
+                member.fitness = Some(-1000.0);
+            }
+        }
+        assert_eq!(
+            population.best().map(|m| m.genome.fingerprint()),
+            Some(measured),
+            "the only measured member must be the best, however negative"
+        );
+        assert!(population.best().unwrap().score() < 0.0);
+    }
+
+    #[test]
+    fn a_champion_is_promotable_out_of_an_entirely_negative_panel() {
+        // Champion replacement is a paired comparison of two scores on one
+        // panel. Nothing in it may assume a positive number, or a run under
+        // the penalty could never promote anybody at all.
+        let mut rng = Stream::seeded(103);
+        let config = NeatConfig {
+            population: 10,
+            ..NeatConfig::default()
+        };
+        let mut population = Population::seed(config, &mut rng);
+        population.open_panel();
+        score_every_member(&mut population, |at| -1000.0 + at as f64);
+        let best = population.best().expect("a scored panel has a best member");
+        assert!(best.score() < 0.0);
+        // The strongest member of an all-negative panel is still strictly
+        // better than the rest of it, which is all a promotion needs.
+        let others: Vec<f64> = population
+            .members()
+            .map(|m| m.score())
+            .filter(|s| *s != best.score())
+            .collect();
+        assert!(!others.is_empty());
+        assert!(others.iter().all(|s| *s < best.score()));
+    }
+
     #[test]
     fn an_incumbent_keeps_the_mutation_rates_it_drifted_to() {
         // Per-genome rate drift is part of what the search finds. Re-entering a

@@ -24,7 +24,7 @@ fn config(run: &str) -> Config {
         salt: 0x5eed_1234,
         // These tests are about scope, not about scoring, so they keep the
         // default scorer every existing run was trained under.
-        scoring: melee_mario::episode::Scoring::default(),
+        scoring: melee_mario::episode::ScoringConfig::default(),
         ticks: 420,
         rating: CyborgRating::AwesomeCyborg,
         neat: NeatConfig {

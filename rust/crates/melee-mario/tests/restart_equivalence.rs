@@ -11,7 +11,7 @@
 
 use melee_mario::audit::AuditConfig;
 use melee_mario::broad::BroadConfig;
-use melee_mario::episode::Scoring;
+use melee_mario::episode::{GateCriterion, Scoring, ScoringConfig};
 use melee_mario::neat::NeatConfig;
 use melee_mario::sampler::SamplerConfig;
 use melee_mario::trainer::{Config, Trainer};
@@ -21,12 +21,29 @@ use serde_json::Value;
 /// A run small enough to finish quickly and large enough to exercise panels,
 /// species turnover, champion replacement, readiness probes and an audit.
 fn config(run: &str) -> Config {
-    scored_config(run, Scoring::default())
+    scored_config(run, ScoringConfig::default())
 }
 
-/// The same run under a named scorer, so resume equivalence can be checked for
+/// The same run under named settings, so resume equivalence can be checked for
 /// each of them on the real simulator rather than only for the default.
-fn scored_config(run: &str, scoring: Scoring) -> Config {
+///
+/// The crew-ratio scorer with otherwise legacy settings: the combat-wins gate
+/// and no penalty, so a test that names it is testing the SCORER alone.
+fn ratio() -> ScoringConfig {
+    ScoringConfig::of(Scoring::CrewRatio)
+}
+
+/// The crew-ratio scorer gated on crew leads and penalising a fight that did
+/// the enemy no net harm: every one of the three settings away from legacy.
+fn staged() -> ScoringConfig {
+    ScoringConfig {
+        fitness: Scoring::CrewRatio,
+        gate: GateCriterion::CrewLead,
+        no_damage_penalty: 1000.0,
+    }
+}
+
+fn scored_config(run: &str, scoring: ScoringConfig) -> Config {
     Config {
         scoring,
         run_id: run.to_string(),
@@ -211,14 +228,14 @@ fn the_real_loop_reaches_an_audit_and_the_status_document_stays_well_formed() {
 fn a_crew_ratio_run_resumes_identically_on_the_real_simulator() {
     // Same shape as the default-scorer test above, on real fights, so the new
     // scorer is shown to be as reproducible across a stop as the old one.
-    let mut straight = Trainer::fresh(scored_config("ratio", Scoring::CrewRatio));
+    let mut straight = Trainer::fresh(scored_config("ratio", ratio()));
     run_units(&mut straight, 60);
 
-    let mut stitched = Trainer::fresh(scored_config("ratio", Scoring::CrewRatio));
+    let mut stitched = Trainer::fresh(scored_config("ratio", ratio()));
     run_units(&mut stitched, 20);
     let saved = stitched.to_json();
     let mut stitched = Trainer::from_json(&saved).expect("checkpoint must restore");
-    assert_eq!(stitched.config.scoring, Scoring::CrewRatio);
+    assert_eq!(stitched.config.scoring, ratio());
     run_units(&mut stitched, 40);
 
     assert_eq!(
@@ -236,8 +253,8 @@ fn a_crew_ratio_run_resumes_identically_on_the_real_simulator() {
 
 #[test]
 fn the_scorer_actually_changes_the_trajectory_and_keeps_every_number_finite() {
-    let mut combat = Trainer::fresh(scored_config("split", Scoring::Combat));
-    let mut ratio = Trainer::fresh(scored_config("split", Scoring::CrewRatio));
+    let mut combat = Trainer::fresh(scored_config("split", ScoringConfig::default()));
+    let mut ratio = Trainer::fresh(scored_config("split", ratio()));
     run_units(&mut combat, 60);
     run_units(&mut ratio, 60);
 
@@ -277,27 +294,337 @@ fn the_scorer_actually_changes_the_trajectory_and_keeps_every_number_finite() {
 
 #[test]
 fn a_configuration_round_trips_its_scorer_and_a_legacy_one_reads_as_combat() {
-    for scoring in [Scoring::Combat, Scoring::CrewRatio] {
+    for scoring in [ScoringConfig::default(), ratio()] {
         let document = scored_config("saved", scoring).to_json();
-        assert_eq!(document["scoring"]["fitness"], scoring.as_str());
+        assert_eq!(document["scoring"]["fitness"], scoring.fitness.as_str());
         let back = Config::from_json(&document).expect("a written config must decode");
         assert_eq!(back.scoring, scoring);
     }
 
     // A configuration written before the selector existed has no block at all,
     // and must decode as the exact scorer it was in fact trained under.
-    let mut legacy = scored_config("legacy", Scoring::CrewRatio).to_json();
+    let mut legacy = scored_config("legacy", ratio()).to_json();
     legacy.as_object_mut().unwrap().remove("scoring");
     let back = Config::from_json(&legacy).expect("a legacy config must still decode");
-    assert_eq!(back.scoring, Scoring::Combat);
+    assert_eq!(back.scoring, ScoringConfig::default());
 
     // A block naming a scorer this build does not have is refused outright.
-    let mut unknown = scored_config("unknown", Scoring::Combat).to_json();
+    let mut unknown = scored_config("unknown", ScoringConfig::default()).to_json();
     unknown["scoring"]["fitness"] = Value::String("kills".into());
     assert!(Config::from_json(&unknown).is_none());
 
     // So is one whose metadata contradicts the scorer it names.
-    let mut lying = scored_config("lying", Scoring::CrewRatio).to_json();
+    let mut lying = scored_config("lying", ratio()).to_json();
     lying["scoring"]["speed_bonus"] = Value::Bool(true);
     assert!(Config::from_json(&lying).is_none());
+}
+
+// ===========================================================================
+// The gate criterion, the no-damage penalty, and the factual combat counter.
+//
+// Every test below drives the real simulator through the same `Trainer::step`
+// loop the supervisor runs. None of them injects an outcome or shortens a
+// fight.
+// ===========================================================================
+
+/// Walks a whole status document and fails on any non-finite number. Negative
+/// fitness is expected under the penalty; infinity and NaN never are.
+fn every_number_is_finite(document: &Value) {
+    let mut stack = vec![document];
+    while let Some(node) = stack.pop() {
+        match node {
+            Value::Number(n) => assert!(n.as_f64().is_some_and(f64::is_finite), "non-finite {n}"),
+            Value::Array(items) => stack.extend(items.iter()),
+            Value::Object(fields) => stack.extend(fields.values()),
+            _ => {}
+        }
+    }
+}
+
+fn status_of(trainer: &Trainer) -> Value {
+    trainer.status(
+        melee_mario::status::Phase::Training,
+        "test",
+        "checkpoint.json",
+        false,
+    )
+}
+
+#[test]
+fn the_gate_criterion_is_carried_through_config_and_reported_to_the_dashboard() {
+    let document = scored_config("gated", staged()).to_json();
+    assert_eq!(document["scoring"]["fitness"], "crew-ratio");
+    assert_eq!(document["scoring"]["gate"], "crew-lead");
+    assert_eq!(document["scoring"]["no_damage_penalty"], 1000.0);
+    let back = Config::from_json(&document).expect("a written config must decode");
+    assert_eq!(back.scoring, staged());
+
+    // A legacy configuration, with the scorer block but neither of the newer
+    // settings inside it, still reads back as the exact legacy behaviour.
+    let mut older = scored_config("older", ratio()).to_json();
+    let block = older["scoring"].as_object_mut().unwrap();
+    block.remove("gate");
+    block.remove("no_damage_penalty");
+    let back = Config::from_json(&older).expect("an older config must still decode");
+    assert_eq!(back.scoring.gate, GateCriterion::CombatWins);
+    assert_eq!(back.scoring.no_damage_penalty, 0.0);
+    assert_eq!(back.scoring.fitness, Scoring::CrewRatio);
+}
+
+#[test]
+fn a_contradictory_or_unhonourable_configuration_is_refused() {
+    for (field, bad) in [
+        ("gate", Value::String("crew_lead".into())),
+        ("gate", Value::String("kills".into())),
+        ("gate", Value::Null),
+        ("no_damage_penalty", Value::from(-1.0)),
+        ("no_damage_penalty", Value::from(1e308)),
+        ("no_damage_penalty", Value::String("1000".into())),
+        ("no_damage_penalty", Value::Null),
+        // A fact about the scorer that disagrees with the scorer named.
+        ("speed_bonus", Value::Bool(true)),
+    ] {
+        let mut document = scored_config("bad", staged()).to_json();
+        document["scoring"][field] = bad.clone();
+        assert!(
+            Config::from_json(&document).is_none(),
+            "scoring.{field} = {bad} should have been refused"
+        );
+    }
+}
+
+#[test]
+fn the_gate_criterion_really_changes_which_fights_count_as_successes() {
+    // Identical run id, salt, seeds and fights. The ONLY difference is what
+    // counts as a success, so any difference in the recorded rates is the
+    // criterion doing its job rather than a different trajectory.
+    let gated_on_wins = ScoringConfig {
+        fitness: Scoring::CrewRatio,
+        gate: GateCriterion::CombatWins,
+        no_damage_penalty: 0.0,
+    };
+    let gated_on_leads = ScoringConfig {
+        gate: GateCriterion::CrewLead,
+        ..gated_on_wins
+    };
+    let mut wins = Trainer::fresh(scored_config("criterion", gated_on_wins));
+    let mut leads = Trainer::fresh(scored_config("criterion", gated_on_leads));
+    run_units(&mut wins, 60);
+    run_units(&mut leads, 60);
+
+    // The scorer is the same in both, so the SAME fights happen in the same
+    // order; only the bookkeeping over them differs.
+    assert_eq!(wins.episodes, leads.episodes);
+    assert!(wins.episodes > 100, "expected real fights");
+    assert_eq!(
+        wins.combat_wins, leads.combat_wins,
+        "the factual combat-win count must not depend on the gate criterion"
+    );
+    assert_eq!(wins.unresolved, leads.unresolved);
+    assert_ne!(
+        trajectory(&wins.to_json()),
+        trajectory(&leads.to_json()),
+        "the gate criterion made no difference to anything it counts"
+    );
+
+    let document = status_of(&leads);
+    assert_eq!(document["scoring"]["gate"], "crew-lead");
+    every_number_is_finite(&document);
+}
+
+#[test]
+fn crew_lead_successes_are_never_published_as_combat_wins() {
+    let mut trainer = Trainer::fresh(scored_config("honest", staged()));
+    run_units(&mut trainer, 80);
+    let document = status_of(&trainer);
+
+    // The factual counter is exact for a fresh run, and is the only number
+    // here that may be called a combat win.
+    assert_eq!(document["scoring"]["gate"], "crew-lead");
+    assert_eq!(document["episodes_combat_counted_since"], 0);
+    assert_eq!(document["episodes_combat_wins"], trainer.combat_wins);
+    assert_eq!(document["episodes_combat_wins_all_time"], trainer.combat_wins);
+    assert_eq!(document["episodes_unresolved"], trainer.unresolved);
+
+    // A combat win is a subset of the episodes, and every episode that was not
+    // resolved cannot have been one.
+    assert!(trainer.combat_wins <= trainer.episodes - trainer.unresolved);
+    every_number_is_finite(&document);
+}
+
+#[test]
+fn a_gated_and_penalised_run_resumes_identically_on_the_real_simulator() {
+    // The exact settings the staged run uses, across a real checkpoint decode.
+    let mut straight = Trainer::fresh(scored_config("staged", staged()));
+    run_units(&mut straight, 60);
+
+    let mut stitched = Trainer::fresh(scored_config("staged", staged()));
+    run_units(&mut stitched, 20);
+    let saved = stitched.to_json();
+    let mut stitched = Trainer::from_json(&saved).expect("checkpoint must restore");
+    assert_eq!(stitched.config.scoring, staged());
+    run_units(&mut stitched, 40);
+
+    assert_eq!(
+        trajectory(&straight.to_json()),
+        trajectory(&stitched.to_json()),
+        "a gated and penalised run diverged after the restart point"
+    );
+    assert!(straight.episodes > 100, "expected real fights");
+    assert!(straight.population.generation >= 2, "expected generations");
+    assert_eq!(straight.combat_wins, stitched.combat_wins);
+    assert_eq!(straight.combat_counted_since, 0);
+    every_number_is_finite(&status_of(&straight));
+}
+
+#[test]
+fn the_penalty_really_reaches_fitness_and_leaves_every_number_finite() {
+    let unpenalised = ScoringConfig {
+        fitness: Scoring::CrewRatio,
+        gate: GateCriterion::CrewLead,
+        no_damage_penalty: 0.0,
+    };
+    let penalised = ScoringConfig {
+        no_damage_penalty: 1000.0,
+        ..unpenalised
+    };
+    let mut off = Trainer::fresh(scored_config("penalty", unpenalised));
+    let mut on = Trainer::fresh(scored_config("penalty", penalised));
+    run_units(&mut off, 60);
+    run_units(&mut on, 60);
+
+    assert_ne!(
+        trajectory(&off.to_json()),
+        trajectory(&on.to_json()),
+        "the penalty made no difference to selection at all"
+    );
+    // A run whose panels can score -1000 must still round-trip and still
+    // publish finite numbers everywhere.
+    let saved = on.to_json();
+    let back = Trainer::from_json(&saved).expect("a penalised run must restore");
+    assert_eq!(trajectory(&back.to_json()), trajectory(&saved));
+    every_number_is_finite(&status_of(&on));
+    every_number_is_finite(&saved);
+}
+
+#[test]
+fn a_legacy_checkpoint_without_the_combat_counter_reports_no_all_time_figure() {
+    let mut trainer = Trainer::fresh(config("legacy-counter"));
+    run_units(&mut trainer, 40);
+    let mut saved = trainer.to_json();
+    let episodes = saved["episodes"].as_u64().unwrap();
+    assert!(episodes > 0, "expected real fights");
+
+    // Exactly what a checkpoint written before the counter existed looks like.
+    let object = saved.as_object_mut().unwrap();
+    object.remove("combat_wins");
+    object.remove("combat_counted_since");
+
+    let restored = Trainer::from_json(&saved).expect("a legacy checkpoint must still restore");
+    // The window opens HERE rather than claiming the missing history was zero
+    // victories, and no all-time figure is published for it.
+    assert_eq!(restored.combat_wins, 0);
+    assert_eq!(restored.combat_counted_since, episodes);
+    let document = status_of(&restored);
+    assert_eq!(document["episodes_combat_wins"], 0);
+    assert_eq!(document["episodes_combat_counted_since"], episodes);
+    assert_eq!(document["episodes_combat_wins_all_time"], Value::Null);
+}
+
+#[test]
+fn a_malformed_combat_counter_is_refused_rather_than_read_as_a_known_zero() {
+    let mut trainer = Trainer::fresh(config("corrupt-counter"));
+    run_units(&mut trainer, 40);
+    let good = trainer.to_json();
+    let episodes = good["episodes"].as_u64().unwrap();
+    assert!(episodes > 2, "expected real fights");
+
+    // The honest checkpoint restores, so every rejection below is about the
+    // tampering and not about the rest of the document.
+    assert!(Trainer::from_json(&good).is_ok());
+
+    let strip = |field: &str| {
+        let mut document = good.clone();
+        document.as_object_mut().unwrap().remove(field);
+        document
+    };
+    let set = |field: &str, value: Value| {
+        let mut document = good.clone();
+        document[field] = value;
+        document
+    };
+
+    for (why, bad) in [
+        // Half a pair says nothing about the other half.
+        ("wins present without its window", strip("combat_counted_since")),
+        ("window present without its wins", strip("combat_wins")),
+        // A null is not a count, and neither is a string or a fraction.
+        ("null wins", set("combat_wins", Value::Null)),
+        ("null window", set("combat_counted_since", Value::Null)),
+        ("string wins", set("combat_wins", Value::String("3".into()))),
+        ("fractional wins", set("combat_wins", Value::from(1.5))),
+        // as_u64 refuses a negative, which is what makes this a rejection
+        // rather than a silent wrap to an enormous positive.
+        ("negative wins", set("combat_wins", Value::from(-1))),
+        ("negative window", set("combat_counted_since", Value::from(-1))),
+        // A window that opens after the run ended describes no episodes.
+        ("window past the end", set("combat_counted_since", Value::from(episodes + 1))),
+        // More victories than the window can hold.
+        ("more wins than episodes", set("combat_wins", Value::from(episodes + 1))),
+    ] {
+        assert!(
+            Trainer::from_json(&bad).is_err(),
+            "{why} should have been refused"
+        );
+    }
+
+    // More victories than the run has resolved fights to give them. The bound
+    // holds whatever window the count covers, so it is checked both ways.
+    for since in [0, 1] {
+        let mut overclaimed = good.clone();
+        overclaimed["combat_counted_since"] = Value::from(since);
+        overclaimed["combat_wins"] = Value::from(episodes - since);
+        // One more unresolved fight than the window leaves room for, so the
+        // claim exceeds the resolved bound in both cases rather than only the
+        // whole-run one.
+        overclaimed["unresolved"] = Value::from(since + 1);
+        assert!(
+            Trainer::from_json(&overclaimed).is_err(),
+            "more victories than resolved fights should have been refused \
+             for a window opening at {since}"
+        );
+    }
+
+    // Counts near the top of the range. Every bound is a subtraction from the
+    // episode total rather than a sum of two decoded counts, so none of these
+    // can wrap into looking reasonable.
+    for (why, wins, since, unresolved) in [
+        ("max wins", u64::MAX, 0, 0),
+        ("max window", 0, u64::MAX, 0),
+        ("both at max", u64::MAX, u64::MAX, 0),
+        ("max unresolved", 0, 0, u64::MAX),
+        // The pair that a sum would wrap to zero and wave through.
+        ("wins and unresolved summing past the range", u64::MAX, 0, 1),
+        ("wins and window summing past the range", u64::MAX, 1, 0),
+    ] {
+        let mut tampered = good.clone();
+        tampered["combat_wins"] = Value::from(wins);
+        tampered["combat_counted_since"] = Value::from(since);
+        tampered["unresolved"] = Value::from(unresolved);
+        assert!(
+            Trainer::from_json(&tampered).is_err(),
+            "{why} should have been refused"
+        );
+    }
+
+    // And the boundary case that is merely unusual, not impossible, is kept:
+    // a window covering the whole run with every resolved fight won.
+    let mut perfect = good.clone();
+    perfect["combat_counted_since"] = Value::from(0);
+    perfect["unresolved"] = Value::from(0);
+    perfect["combat_wins"] = Value::from(episodes);
+    assert_eq!(perfect["episodes"].as_u64(), Some(episodes));
+    let back = Trainer::from_json(&perfect).expect("a perfect record is possible, not malformed");
+    assert_eq!(back.combat_wins, episodes);
+    assert_eq!(back.combat_counted_since, 0);
 }

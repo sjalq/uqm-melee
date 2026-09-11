@@ -9,7 +9,7 @@
 
 use crate::audit::AuditConfig;
 use crate::broad::BroadConfig;
-use crate::episode::{Scoring, DEFAULT_TICKS};
+use crate::episode::{GateCriterion, Scoring, ScoringConfig, DEFAULT_TICKS};
 use crate::neat::NeatConfig;
 use crate::sampler::SamplerConfig;
 use crate::server::{self, Control, Shared};
@@ -114,8 +114,38 @@ TRAINING OPTIONS
                                          out while we still have crew scores
                                          1000, a mutual wipeout scores 1, and
                                          being wiped out ourselves scores 0.
-                           This selects; it does NOT gate. Stage promotion still
-                           counts actual won-and-resolved fights either way.
+                           This selects; it does NOT gate. What opens a gate is
+                           --gate, which is a separate choice.
+  --gate <name>            What a stage gate, an audit, a confirmation, a
+                           regression sweep, the readiness probe and the
+                           sampler's own weakness statistics all COUNT as a
+                           success. Default combat-wins, which is what every
+                           existing run was gated on and the meaning of a
+                           configuration that names none.
+                             combat-wins  an actual won-and-resolved fight. A
+                                          timeout is not a win and never opens
+                                          a gate.
+                             crew-lead    we ended STRICTLY ahead on surviving
+                                          fraction of STARTING crew, compared
+                                          as an exact integer cross product.
+                                          Every tie fails, a mutual wipeout
+                                          included. A fight that hit the tick
+                                          ceiling while we were ahead IS a
+                                          success, which is the whole
+                                          difference from counting victories.
+                           Under crew-lead every win-named rate this run
+                           reports counts LEADS, not wins. The factual combat
+                           victory count is published separately and is never
+                           affected by this flag.
+  --no-damage-penalty <m>  Score a fight that left the enemy no worse off at
+                           -m instead of whatever the scorer would have said.
+                           Default 0, which switches the penalty off entirely
+                           and is what every existing run means. Leaving them
+                           no worse off is an ENDPOINT comparison, their final
+                           crew against their starting crew, not an
+                           attribution of damage:
+                           crew we did kill and they then regained counts as no
+                           net loss. Independent of --fitness and of --gate.
   --audit-panel <n>        Fights per matchup per audit round. Default 100.
   --audit-budget <n>       Fights one audit attempt may spend. Default 200000.
   --readiness-games <n>    Fights in the cheap probe that decides whether an
@@ -207,7 +237,7 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
             sampler: SamplerConfig::default(),
             audit: AuditConfig::default(),
             broad: BroadConfig::default(),
-            scoring: Scoring::default(),
+            scoring: ScoringConfig::default(),
             duty: 0.5,
             readiness_games: 128,
             readiness_threshold: 0.85,
@@ -258,8 +288,18 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
                     .ok_or("--rating must be standard, good or awesome")?;
             }
             "--fitness" => {
-                options.config.scoring = Scoring::parse(next.ok_or("--fitness needs a name")?)
-                    .ok_or("--fitness must be combat or crew-ratio")?;
+                options.config.scoring.fitness =
+                    Scoring::parse(next.ok_or("--fitness needs a name")?)
+                        .ok_or("--fitness must be combat or crew-ratio")?;
+            }
+            "--gate" => {
+                options.config.scoring.gate =
+                    GateCriterion::parse(next.ok_or("--gate needs a name")?)
+                        .ok_or("--gate must be combat-wins or crew-lead")?;
+            }
+            "--no-damage-penalty" => {
+                options.config.scoring.no_damage_penalty =
+                    parse_value(next, "--no-damage-penalty")?
             }
             "--audit-panel" => options.config.audit.panel = parse_value(next, "--audit-panel")?,
             "--audit-budget" => options.config.audit.budget = parse_value(next, "--audit-budget")?,
@@ -294,6 +334,14 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
     }
     if options.config.audit.panel == 0 {
         return Err("--audit-panel must be positive".into());
+    }
+    // A negative magnitude would REWARD leaving the enemy untouched, which is
+    // the opposite of what the flag means, so it is refused rather than
+    // clamped into something the operator did not ask for.
+    if !ScoringConfig::valid_penalty(options.config.scoring.no_damage_penalty) {
+        return Err("--no-damage-penalty must be a finite magnitude of 0 or more; \
+                    0 switches the penalty off"
+            .into());
     }
     if options.config.broad.panel == 0 {
         return Err("--broad-panel must be positive".into());
@@ -330,6 +378,26 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
                     .into(),
             );
         }
+        // Same reason, for the same kind of number. A fork carries the source's
+        // gate evidence and fitness history forward; re-gating or re-penalising
+        // it mid-fork would leave the operator believing every stored success
+        // count and score meant the new thing when they still mean the old one.
+        if options.given.iter().any(|flag| flag == "--gate") {
+            return Err(
+                "broaden does not take --gate: a fork inherits the source run's gate criterion, \
+                 and successes counted under one criterion are not the same measurement as \
+                 successes counted under another. Start a new run to change what opens a gate"
+                    .into(),
+            );
+        }
+        if options.given.iter().any(|flag| flag == "--no-damage-penalty") {
+            return Err(
+                "broaden does not take --no-damage-penalty: a fork inherits the source run's \
+                 penalty, and fitness recorded with one penalty is not comparable with fitness \
+                 recorded under another. Start a new run to change it"
+                    .into(),
+            );
+        }
         if options.allow_rebuild {
             return Err(
                 "broaden does not take --allow-rebuild: it records the source evaluator as                  provenance, and the fingerprint guard still applies to resuming the new run"
@@ -361,7 +429,7 @@ const PUBLISH_EVERY: Duration = Duration::from_secs(1);
 /// Options that belong to a RUN rather than to one session of it. Changing any
 /// of them would change the trajectory, so a resume keeps the stored value and
 /// says so instead of quietly obeying the command line.
-const RUN_OWNED_FLAGS: [&str; 10] = [
+const RUN_OWNED_FLAGS: [&str; 12] = [
     "--population",
     "--panel",
     "--ticks",
@@ -369,6 +437,13 @@ const RUN_OWNED_FLAGS: [&str; 10] = [
     // What a run is ranked by cannot change mid-run: fitness is comparable
     // only within one scorer, so a resume would be comparing two things.
     "--fitness",
+    // Nor what it is GATED on. Gate evidence, sampler statistics and the whole
+    // history of success rates were all counted under one criterion; resuming
+    // under another would pool two different measurements into one number.
+    "--gate",
+    // Nor the penalty, for the same reason as the scorer: it changes what
+    // every fitness number already stored in the run means.
+    "--no-damage-penalty",
     "--seed",
     "--audit-panel",
     "--audit-budget",
@@ -1031,21 +1106,21 @@ mod tests {
         // Typing nothing must leave every existing run's meaning alone.
         assert_eq!(
             parse(&args(&["start"])).unwrap().config.scoring,
-            Scoring::Combat
+            ScoringConfig::default()
         );
         assert_eq!(
             parse(&args(&["start", "--fitness", "crew-ratio"]))
                 .unwrap()
                 .config
                 .scoring,
-            Scoring::CrewRatio
+            ScoringConfig::of(Scoring::CrewRatio)
         );
         assert_eq!(
             parse(&args(&["start", "--fitness", "combat"]))
                 .unwrap()
                 .config
                 .scoring,
-            Scoring::Combat
+            ScoringConfig::default()
         );
         for bad in ["crew_ratio", "ratio", "crew", "kills", ""] {
             assert!(parse(&args(&["start", "--fitness", bad])).is_err(), "{bad}");
@@ -1086,6 +1161,131 @@ mod tests {
         assert!(HELP.contains("--fitness"));
         assert!(HELP.contains(Scoring::Combat.as_str()));
         assert!(HELP.contains(Scoring::CrewRatio.as_str()));
+        // So does the gate criterion, which changes what every SUCCESS number
+        // in the run means, and the penalty.
+        assert!(HELP.contains("--gate"));
+        assert!(HELP.contains(GateCriterion::CombatWins.as_str()));
+        assert!(HELP.contains(GateCriterion::CrewLead.as_str()));
+        assert!(HELP.contains("--no-damage-penalty"));
+    }
+
+    #[test]
+    fn the_gate_defaults_to_combat_wins_and_rejects_anything_it_does_not_implement() {
+        // Typing nothing must leave every existing run's meaning alone.
+        assert_eq!(
+            parse(&args(&["start"])).unwrap().config.scoring.gate,
+            GateCriterion::CombatWins
+        );
+        assert_eq!(
+            parse(&args(&["start", "--gate", "crew-lead"]))
+                .unwrap()
+                .config
+                .scoring
+                .gate,
+            GateCriterion::CrewLead
+        );
+        // And it is genuinely independent of the scorer, in both directions.
+        let crossed = parse(&args(&["start", "--fitness", "combat", "--gate", "crew-lead"]))
+            .unwrap()
+            .config
+            .scoring;
+        assert_eq!(crossed.fitness, Scoring::Combat);
+        assert_eq!(crossed.gate, GateCriterion::CrewLead);
+
+        for bad in ["crew_lead", "crew", "lead", "wins", "combat", ""] {
+            assert!(parse(&args(&["start", "--gate", bad])).is_err(), "{bad}");
+        }
+        assert!(parse(&args(&["start", "--gate"])).is_err());
+
+        // It describes the run, not the session, so a resume reports it as
+        // stored rather than obeying it, and a fork inherits it.
+        assert!(RUN_OWNED_FLAGS.contains(&"--gate"));
+        assert!(parse(&args(&[
+            "broaden", "--from", "a", "--run", "b", "--gate", "crew-lead"
+        ]))
+        .is_err());
+    }
+
+    #[test]
+    fn the_penalty_defaults_to_off_and_refuses_a_magnitude_it_cannot_honour() {
+        assert_eq!(
+            parse(&args(&["start"]))
+                .unwrap()
+                .config
+                .scoring
+                .no_damage_penalty,
+            0.0
+        );
+        assert!(!parse(&args(&["start"]))
+            .unwrap()
+            .config
+            .scoring
+            .penalises_no_damage());
+        let armed = parse(&args(&["start", "--no-damage-penalty", "1000"]))
+            .unwrap()
+            .config
+            .scoring;
+        assert_eq!(armed.no_damage_penalty, 1000.0);
+        assert!(armed.penalises_no_damage());
+        // Explicit zero is the same as absent: off, not a penalty of nothing.
+        let zero = parse(&args(&["start", "--no-damage-penalty", "0"]))
+            .unwrap()
+            .config
+            .scoring;
+        assert_eq!(zero, ScoringConfig::default());
+
+        // A negative magnitude would REWARD leaving the enemy untouched, and
+        // an unbounded one would overflow a summed panel.
+        for bad in ["-1", "-1000", "1e308", "inf", "nan", "lots", ""] {
+            assert!(
+                parse(&args(&["start", "--no-damage-penalty", bad])).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(parse(&args(&["start", "--no-damage-penalty"])).is_err());
+
+        assert!(RUN_OWNED_FLAGS.contains(&"--no-damage-penalty"));
+        assert!(parse(&args(&[
+            "broaden",
+            "--from",
+            "a",
+            "--run",
+            "b",
+            "--no-damage-penalty",
+            "1000"
+        ]))
+        .is_err());
+    }
+
+    #[test]
+    fn the_staged_run_the_operator_asked_for_parses_into_exactly_those_settings() {
+        // The combination the fresh staged run is launched with. If this ever
+        // stops meaning what it says, the run is training on something else.
+        let parsed = parse(&args(&[
+            "start",
+            "--fitness",
+            "crew-ratio",
+            "--gate",
+            "crew-lead",
+            "--no-damage-penalty",
+            "1000",
+        ]))
+        .unwrap()
+        .config
+        .scoring;
+        assert_eq!(
+            parsed,
+            ScoringConfig {
+                fitness: Scoring::CrewRatio,
+                gate: GateCriterion::CrewLead,
+                no_damage_penalty: 1000.0,
+            }
+        );
+        // And it survives a round trip through the run's own configuration.
+        assert_eq!(
+            ScoringConfig::from_json(Some(&parsed.to_json())),
+            Some(parsed)
+        );
     }
 
     #[test]

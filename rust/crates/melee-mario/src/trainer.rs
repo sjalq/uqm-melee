@@ -18,7 +18,7 @@
 use crate::audit::{AuditConfig, Gate, Progress, Round, Tally};
 use crate::broad::{self, BroadConfig, Evaluation, Overall, Source};
 use crate::curriculum::{self, Cell, Opponent};
-use crate::episode::{self, Rival, Scoring, Task};
+use crate::episode::{self, Rival, ScoringConfig, Task};
 use crate::genome::Genome;
 use crate::graph::Network;
 use crate::neat::{MutationRates, NeatConfig, Population};
@@ -42,10 +42,11 @@ pub struct Config {
     pub neat: NeatConfig,
     pub sampler: SamplerConfig,
     pub audit: AuditConfig,
-    /// Which scorer ranks the population. A per-run choice, recorded in the
+    /// What ranks the population, what opens a gate and what a fight that
+    /// did the enemy no net harm is worth. A per-run choice, recorded in the
     /// run's configuration so that a checkpoint always says what its fitness
-    /// numbers mean. It does NOT change what the stage gate counts.
-    pub scoring: Scoring,
+    /// numbers and its success counts mean.
+    pub scoring: ScoringConfig,
     /// Settings for [`Ladder::Broad`]. Present in every configuration so a
     /// staged run can be forked into a broad one without a schema change, and
     /// inert while the ladder is anything else.
@@ -101,10 +102,12 @@ impl Config {
                 Some(other) => BroadConfig::from_json(other)?,
             },
             // A configuration written before the selector existed names no
-            // scorer, and every such run was trained under the combat scorer.
-            // A block that IS present but names something unknown is rejected
-            // rather than silently read as the default.
-            scoring: Scoring::from_json(value.get("scoring"))?,
+            // scorer, gate criterion or penalty, and every such run was trained
+            // under the combat scorer and gated on actual wins with no penalty.
+            // A block that IS present but names something unknown, or whose
+            // penalty this build cannot honour, is rejected rather than
+            // silently read as the default.
+            scoring: ScoringConfig::from_json(value.get("scoring"))?,
             duty,
             readiness_games: value
                 .get("readiness_games")?
@@ -172,8 +175,9 @@ pub enum Ladder {
     /// towards beating only its own reflection is caught.
     Mixed,
     /// Every ordered cyborg matchup is ACTIVE at once, and the graded question
-    /// is the aggregate win rate over a balanced any-versus-any distribution
-    /// rather than 625 separate per-cell bounds. The full roster here is
+    /// is the aggregate SUCCESS rate, under whatever criterion the run is
+    /// gated on, over a balanced any-versus-any distribution rather than 625
+    /// separate per-cell bounds. The full roster here is
     /// unlocked by an operator transition, not earned cell by cell, so nothing
     /// in this phase may be read as per-matchup mastery.
     Broad,
@@ -336,6 +340,19 @@ pub struct Trainer {
     /// rather than quietly folded into losses, because the honest reading is
     /// "no result", not "a loss".
     pub unresolved: u64,
+    /// Actual won-and-resolved fights, counted whatever the configured gate
+    /// criterion is. Under `crew-lead` every other success count in the run
+    /// means something else, so this is the only number that may be called a
+    /// combat win. See [`Trainer::combat_counted_since`] for the window it
+    /// covers: the pair is meaningless apart.
+    pub combat_wins: u64,
+    /// The episode total at which `combat_wins` began counting. Zero for a
+    /// fresh run, so its count is exact and covers all time. A checkpoint
+    /// written before this counter existed carries no history for it, and a
+    /// resume of one starts the window at whatever episode total it arrived
+    /// with rather than pretending the missing history was zero wins; the
+    /// status document then reports no all-time figure at all.
+    pub combat_counted_since: u64,
     /// Wall-clock seconds spent inside the run loop, work and governor rest
     /// together, accumulated across every resume.
     pub elapsed: f64,
@@ -344,8 +361,9 @@ pub struct Trainer {
     pub compute: f64,
     pub audit_attempt: u64,
     pub last_validation: Option<f64>,
-    /// The champion's win rate on the panel currently being evaluated. Derived
-    /// from the live panel, so it is rebuilt rather than restored.
+    /// The champion's SUCCESS rate on the panel currently being evaluated,
+    /// under the run's configured gate criterion rather than always its wins.
+    /// Derived from the live panel, so it is rebuilt rather than restored.
     pub last_training_wins: Option<f64>,
     /// Result of the most recent mixed-phase regression sweep, for honest
     /// reporting. Both are zero before the first sweep.
@@ -406,6 +424,8 @@ impl Trainer {
             broad_shown: None,
             episodes: 0,
             unresolved: 0,
+            combat_wins: 0,
+            combat_counted_since: 0,
             elapsed: 0.0,
             compute: 0.0,
             audit_attempt: 0,
@@ -489,8 +509,14 @@ impl Trainer {
                 None => episode::run(task, network, Rival::Cyborg(self.config.rating)),
             },
         };
+        // The single choke point every episode passes through, whichever
+        // work path asked for it: training, an extra species or incumbent
+        // evaluation, a readiness probe, an audit, a confirmation, a
+        // regression sweep or a broad round. Counting here is what makes each
+        // episode count exactly once.
         self.episodes += 1;
         self.unresolved += !outcome.resolved as u64;
+        self.combat_wins += outcome.won as u64;
         outcome
     }
 
@@ -546,6 +572,7 @@ impl Trainer {
         // to find where the policy we actually gate on is still weak. Before a
         // champion exists the first member stands in for it.
         let record = champion.map_or(cursor == 0, |c| c == fingerprint);
+        let gate = self.config.scoring.gate;
         let mut total = 0.0;
         let mut wins = 0u32;
         for task in &tasks {
@@ -554,10 +581,14 @@ impl Trainer {
             // with another, this member, the rescored incumbent and the
             // species references drawn from them, comes from one definition.
             total += outcome.score(self.config.scoring, ticks);
-            wins += outcome.won as u32;
+            // The run's configured gate criterion, for the same reason: the
+            // sampler must chase weakness in the thing the run is actually
+            // graded on. Under `crew-lead` these are LEAD successes, not
+            // combat wins; `self.combat_wins` keeps the factual count.
+            wins += outcome.succeeded(gate) as u32;
             if record {
                 self.stats
-                    .record(task.cell, outcome.won, self.config.sampler.decay);
+                    .record(task.cell, outcome.succeeded(gate), self.config.sampler.decay);
             }
         }
         let fitness = total / tasks.len().max(1) as f64;
@@ -710,6 +741,19 @@ impl Trainer {
         }
     }
 
+    /// What this run COUNTS, in words, for the event log.
+    ///
+    /// Every rate the trainer notes is a rate of these, so a log line that
+    /// names them cannot later be read as a win rate by someone who did not
+    /// check the configuration. Under `crew-lead` these are not victories and
+    /// saying "wins" would claim kills that did not happen.
+    fn successes(&self) -> &'static str {
+        match self.config.scoring.gate.successes_are_combat_wins() {
+            true => "won fights",
+            false => "crew leads",
+        }
+    }
+
     /// A probe runs in BOTH phases. While climbing it decides whether an
     /// expensive gate is worth opening; in the mixed phase it is a regression
     /// alarm on the original Awesome cyborgs, which the frozen self-play
@@ -782,9 +826,10 @@ impl Trainer {
                 // Climbing and strong enough: spend the audit.
                 (true, Ladder::Climbing, true) => {
                     self.note(format!(
-                        "readiness {:.1}% over {cursor} probe games against cyborgs: \
+                        "readiness {:.1}% {} over {cursor} probe games against cyborgs: \
                          opening an audit",
-                        rate * 100.0
+                        rate * 100.0,
+                        self.successes()
                     ));
                     self.begin_gate(Round::Audit);
                 }
@@ -792,17 +837,20 @@ impl Trainer {
                 // the held-out rounds. The probe itself proves nothing.
                 (true, Ladder::Broad, true) => {
                     self.note(format!(
-                        "balanced readiness {:.1}% over {cursor} probe games against Awesome \
-                         cyborgs: opening an overall audit",
-                        rate * 100.0
+                        "balanced readiness {:.1}% {} over {cursor} probe games against \
+                         Awesome cyborgs: opening an overall audit",
+                        rate * 100.0,
+                        self.successes()
                     ));
                     self.begin_overall(Round::Audit);
                 }
                 (true, Ladder::Broad, false) => {
                     self.note(format!(
-                        "balanced readiness {:.1}% over {cursor} probe games, below the {:.0}% \
-                         trigger: continuing to train (diagnostic only, not gate evidence)",
+                        "balanced readiness {:.1}% {} over {cursor} probe games, below the \
+                         {:.0}% trigger: continuing to train (diagnostic only, not gate \
+                         evidence)",
                         rate * 100.0,
+                        self.successes(),
                         self.config.readiness_threshold * 100.0
                     ));
                     self.mode = Mode::Training;
@@ -810,9 +858,10 @@ impl Trainer {
                 // Mixed and slipping against the original opponents: sweep.
                 (true, Ladder::Mixed, false) => {
                     self.note(format!(
-                        "cyborg rehearsal fell to {:.1}% over {cursor} probe games: \
+                        "cyborg rehearsal fell to {:.1}% {} over {cursor} probe games: \
                          opening a bounded regression sweep",
-                        rate * 100.0
+                        rate * 100.0,
+                        self.successes()
                     ));
                     self.begin_gate(Round::Regression);
                 }
@@ -827,15 +876,19 @@ impl Trainer {
         let batch = tasks.len().min(cursor + 8);
         let mut played = 0;
         let mut won = wins;
+        let gate = self.config.scoring.gate;
         for task in &tasks[cursor..batch] {
             let outcome = self.play(task, &network);
-            won += outcome.won as u32;
+            // The readiness probe decides whether to spend an audit, so it has
+            // to ask the same question the audit will.
+            let success = outcome.succeeded(gate);
+            won += success as u32;
             played += 1;
             // Per-hull readiness diagnostics accumulate in step with the
             // cursor, so a resume mid-probe keeps the two consistent.
             if let Some(reading) = self.broad_ready.as_mut() {
                 if reading.champion == champion {
-                    reading.record(task.cell, outcome.won);
+                    reading.record(task.cell, success);
                 }
             }
         }
@@ -931,6 +984,7 @@ impl Trainer {
         };
         let attempt = self.audit_attempt;
         let ticks = self.config.ticks;
+        let criterion = self.config.scoring.gate;
         let mut played = 0u64;
         for _ in 0..8 {
             let Some((cell, slot)) = gate.next_task() else {
@@ -950,7 +1004,10 @@ impl Trainer {
                 ticks,
             };
             let outcome = self.play(&task, &network);
-            gate.record(cell, outcome.won);
+            // Audits, confirmations and regression sweeps all count successes
+            // under the run's configured criterion, so the evidence that opens
+            // a stage means the same thing the population was selected on.
+            gate.record(cell, outcome.succeeded(criterion));
             played += 1;
             if gate.progress() != Progress::Running {
                 break;
@@ -1110,13 +1167,14 @@ impl Trainer {
             return self.finish_overall(gate);
         }
         let network = self.compiled(&genome);
+        let criterion = self.config.scoring.gate;
         let mut played = 0u64;
         for _ in 0..8 {
             let Some(task) = gate.next_task() else {
                 break;
             };
             let outcome = self.play(&task, &network);
-            gate.record(outcome.won);
+            gate.record(outcome.succeeded(criterion));
             played += 1;
             if gate.progress() != broad::Progress::Running {
                 break;
@@ -1150,11 +1208,13 @@ impl Trainer {
         if !passed {
             self.audit_attempt += 1;
             self.note(format!(
-                "overall {} round failed for {champion}: {}/{} = {rate:.1}% on the balanced \
-                 held-out panel, lower bound {bound:.1}% against a {target:.0}% target",
+                "overall {} round failed for {champion}: {}/{} {} = {rate:.1}% on the \
+                 balanced held-out panel, lower bound {bound:.1}% against a {target:.0}% \
+                 target",
                 round.as_str(),
                 tally.wins,
-                tally.games
+                tally.games,
+                self.successes()
             ));
             self.mode = Mode::Training;
             return Unit {
@@ -1164,9 +1224,11 @@ impl Trainer {
         }
         if round != Round::Confirm {
             self.note(format!(
-                "overall audit passed for {champion}: {}/{} = {rate:.1}%, lower bound \
+                "overall audit passed for {champion}: {}/{} {} = {rate:.1}%, lower bound \
                  {bound:.1}%; confirming on a disjoint balanced panel",
-                tally.wins, tally.games
+                tally.wins,
+                tally.games,
+                self.successes()
             ));
             self.begin_overall(Round::Confirm);
             return Unit {
@@ -1278,9 +1340,9 @@ impl Trainer {
     /// empty so nothing reports 625 mastered matchups.
     ///
     /// Refuses a run graded against anything but the Awesome cyborg. Broad mode
-    /// reports its aggregate as a win rate "against the Awesome cyborg", and a
-    /// run carrying a weaker rating would keep producing that label while
-    /// fighting a weaker opponent. The caller either fixes the rating
+    /// reports its aggregate "against the Awesome cyborg", and a run carrying a
+    /// weaker rating would keep producing that label while fighting a weaker
+    /// opponent. The caller either fixes the rating
     /// explicitly, which is recorded, or the fork does not happen.
     pub fn broaden(&mut self, run_id: &str, reason: &str) -> Result<(), String> {
         if self.config.rating != CyborgRating::AwesomeCyborg {

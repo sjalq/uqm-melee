@@ -152,6 +152,8 @@ impl Trainer {
             "broad_shown": self.broad_shown.map(Source::as_str),
             "episodes": self.episodes,
             "unresolved": self.unresolved,
+            "combat_wins": self.combat_wins,
+            "combat_counted_since": self.combat_counted_since,
             "elapsed_seconds": self.elapsed,
             "compute_seconds": self.compute,
             "audit_attempt": self.audit_attempt,
@@ -354,6 +356,48 @@ fn decode(value: &Value) -> Option<Trainer> {
             }
         }
     }
+    // The factual combat-win counter and the window it covers are one fact in
+    // two fields, so they are decoded together and either BOTH tell a coherent
+    // story or the checkpoint is refused.
+    //
+    // Both absent is the one legacy case: a checkpoint written before the
+    // counter existed carries no history for it, so the window opens at the
+    // episode total it arrived with and no all-time figure is ever published
+    // for it. Anything else, one field without the other, a null, a negative,
+    // a fraction, a window that begins after the run ended, more victories
+    // than the window holds, or more victories than the run has resolved
+    // fights to give them, is a corrupt counter. Reading one of those as a
+    // known all-time zero would publish a lie quietly, so it is rejected as
+    // loudly as any other unreadable field.
+    //
+    // Every bound below is written as a SUBTRACTION from the episode total,
+    // never as a sum of two decoded counts: a malformed checkpoint may carry
+    // numbers near `u64::MAX`, and a sum of those would wrap to something
+    // small and pass a check it should have failed.
+    let episodes = value.get("episodes")?.as_u64()?;
+    let unresolved = value.get("unresolved").and_then(Value::as_u64).unwrap_or(0);
+    let (combat_wins, combat_counted_since) =
+        match (value.get("combat_wins"), value.get("combat_counted_since")) {
+            (None, None) => (0, episodes),
+            (Some(wins), Some(since)) => {
+                let wins = wins.as_u64()?;
+                let since = since.as_u64()?;
+                // The window has to lie inside the run, and cannot hold more
+                // victories than it holds episodes.
+                if since > episodes || wins > episodes - since {
+                    return None;
+                }
+                // Whatever the window covers, the fights counted in it are a
+                // subset of the run's RESOLVED fights, so the all-time
+                // unresolved count bounds it too. This holds for a partial
+                // window exactly as for a whole one.
+                if unresolved > episodes || wins > episodes - unresolved {
+                    return None;
+                }
+                (wins, since)
+            }
+            _ => return None,
+        };
     // The reading the dashboard is told to show has to exist.
     let shown_exists = match broad_shown {
         None => true,
@@ -400,8 +444,10 @@ fn decode(value: &Value) -> Option<Trainer> {
         broad_confirm,
         broad_gate,
         broad_shown,
-        episodes: value.get("episodes")?.as_u64()?,
-        unresolved: value.get("unresolved").and_then(Value::as_u64).unwrap_or(0),
+        episodes,
+        unresolved,
+        combat_wins,
+        combat_counted_since,
         elapsed: value
             .get("elapsed_seconds")?
             .as_f64()

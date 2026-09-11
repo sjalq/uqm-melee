@@ -200,15 +200,40 @@ impl Trainer {
             // Extension: fights that reached no victory, the tick ceiling and
             // the evaluator's Selecting phase alike. Never counted as wins.
             "episodes_unresolved": self.unresolved,
+            // FACTUAL combat victories, whatever the configured gate counts.
+            // Under the crew-lead criterion every other success number in this
+            // document means a crew lead rather than a win, and these three
+            // fields are the only ones that may be labelled combat wins.
+            //
+            // The count covers the window that opens at `counted_since`, which
+            // is zero, and therefore all time, for any run that started under
+            // a build with this counter. `all_time` is the same number when
+            // the window is the whole run and NULL otherwise, so a resumed
+            // legacy checkpoint cannot have its partial post-resume count read
+            // against its all-time episode total.
+            "episodes_combat_wins": self.combat_wins,
+            "episodes_combat_counted_since": self.combat_counted_since,
+            "episodes_combat_wins_all_time": match self.combat_counted_since {
+                0 => json!(self.combat_wins),
+                _ => Value::Null,
+            },
             "elapsed_seconds": self.elapsed,
             "episodes_per_second": per_second,
             "updated_at": iso8601(unix_now()),
             "stale": stale,
-            // What the population is RANKED by, and, separately, what stage
-            // promotion actually COUNTS. A run whose configuration predates the
-            // selector reads back as the combat scorer, which is what it was
-            // in fact trained under; the block is absent only when the binary
-            // serving the document predates the field entirely.
+            // What the population is RANKED by, what a gate, an audit, a
+            // probe and the sampler COUNT as a success, and what a fight that
+            // did the enemy no net harm is worth. A run whose configuration
+            // predates any of the three reads back as the combat scorer gated
+            // on combat wins with no penalty, which is what it was in fact
+            // trained under; the block is absent only when the binary serving
+            // the document predates the field entirely.
+            //
+            // `gate` is what every other success number here means. When it is
+            // "crew-lead", each wins/games/win_rate/lower_bound field below,
+            // and both history rates, counts fights we ENDED AHEAD ON CREW,
+            // not fights we won; a reader that labels them wins is claiming
+            // kills that did not happen.
             "scoring": self.config.scoring.to_json(),
             "curriculum": {
                 "stage": self.stage,
