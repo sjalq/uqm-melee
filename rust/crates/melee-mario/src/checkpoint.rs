@@ -7,13 +7,16 @@
 //! checkpoint would quietly resume a different experiment.
 
 use crate::audit::{Gate, Tally};
+use crate::broad::{Evaluation, Overall, Source};
 use crate::curriculum::{self, Cell};
 use crate::episode::Task;
 use crate::genome::Genome;
 use crate::neat::{MutationRates, Population};
 use crate::rng::Stream;
 use crate::sampler::{Panel, SamplerStats};
-use crate::trainer::{Config, Event, HistoryRow, Ladder, Mode, Trainer, ENGINE_VERSION};
+use crate::trainer::{
+    Config, Event, HistoryRow, Ladder, Mode, Origin, Trainer, ENGINE_VERSION,
+};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
 
@@ -50,10 +53,11 @@ fn mode_json(mode: &Mode) -> Value {
                     "cursor": cursor, "wins": wins,
                     "tasks": tasks.iter().map(task_json).collect::<Vec<_>>()}),
         Mode::Auditing { gate } => json!({"kind": "auditing", "gate": gate.to_json()}),
+        Mode::Overall { gate } => json!({"kind": "overall", "gate": gate.to_json()}),
     }
 }
 
-fn mode_from_json(value: &Value) -> Option<Mode> {
+fn mode_from_json(value: &Value, salt: u64, ticks: i64) -> Option<Mode> {
     match value.get("kind")?.as_str()? {
         "training" => Some(Mode::Training),
         "probing" => {
@@ -80,6 +84,9 @@ fn mode_from_json(value: &Value) -> Option<Mode> {
         }
         "auditing" => Some(Mode::Auditing {
             gate: Gate::from_json(value.get("gate")?)?,
+        }),
+        "overall" => Some(Mode::Overall {
+            gate: Overall::from_json(value.get("gate")?, salt, ticks)?,
         }),
         _ => None,
     }
@@ -136,6 +143,13 @@ impl Trainer {
             "stats": self.stats.to_json(),
             "panel": self.panel.as_ref().map(Panel::to_json),
             "mode": mode_json(&self.mode),
+            "origin": self.origin.as_ref().map(Origin::to_json),
+            "coverage_cursor": self.coverage_cursor,
+            "broad_ready": self.broad_ready.as_ref().map(Evaluation::to_json),
+            "broad_audit": self.broad_audit.as_ref().map(Evaluation::to_json),
+            "broad_confirm": self.broad_confirm.as_ref().map(Evaluation::to_json),
+            "broad_gate": self.broad_gate.as_ref().map(Evaluation::to_json),
+            "broad_shown": self.broad_shown.map(Source::as_str),
             "episodes": self.episodes,
             "unresolved": self.unresolved,
             "elapsed_seconds": self.elapsed,
@@ -228,15 +242,70 @@ fn decode(value: &Value) -> Option<Trainer> {
     if ladder == Ladder::Mixed && frozen_opponent.is_none() {
         return None;
     }
+    // Broad mode is defined by the whole board being active. A checkpoint that
+    // claimed broad scope on a narrower stage would sample and gate two
+    // different distributions.
+    if ladder == Ladder::Broad && stage != curriculum::FINAL_STAGE {
+        return None;
+    }
     let champion = genome("champion")?;
     let opponent_revision = value.get("opponent_revision")?.as_u64()? as u32;
-    let mode = mode_from_json(value.get("mode")?)?;
+    let mode = mode_from_json(value.get("mode")?, config.salt, config.ticks)?;
     // The evidence map is checked against the active board above, but a gate or
     // probe caught mid-flight carries its OWN idea of which candidate, stage and
     // opponent revision it is measuring. If any of those disagree with the run
     // being resumed, the in-flight evidence describes something else and the
     // checkpoint is not resumable.
     let fingerprint = champion.as_ref().map(Genome::fingerprint);
+    // Broad evidence, in flight or finished, belongs to the champion it was
+    // measured on and to the round that produced it. `broad_gate` is the
+    // exception on the champion: it NAMES the champion that cleared the target,
+    // which may since have been replaced, and the status document compares that
+    // name against the current champion rather than assuming they are the same.
+    let evaluation = |key: &str, source: Source| -> Option<Option<Evaluation>> {
+        match value.get(key) {
+            None | Some(Value::Null) => Some(None),
+            Some(other) => {
+                let decoded = Evaluation::from_json(other)?;
+                (decoded.source == source
+                    && fingerprint.as_deref() == Some(decoded.champion.as_str()))
+                .then_some(Some(decoded))
+            }
+        }
+    };
+    let broad_ready = evaluation("broad_ready", Source::Ready)?;
+    let broad_audit = evaluation("broad_audit", Source::Audit)?;
+    let broad_confirm = evaluation("broad_confirm", Source::Confirm)?;
+    let broad_gate = match value.get("broad_gate") {
+        None | Some(Value::Null) => None,
+        Some(other) => {
+            let decoded = Evaluation::from_json(other)?;
+            // Only a confirmation round can be the round that passed.
+            (decoded.source == Source::Confirm).then_some(decoded)?.into()
+        }
+    };
+    let broad_shown = match value.get("broad_shown") {
+        None | Some(Value::Null) => None,
+        Some(other) => Some(Source::parse(other.as_str()?)?),
+    };
+    // A confirmation exists only as the second half of a gate whose first half
+    // cleared the target. Without that, a document could present a confirmation
+    // round as a pass while the audit that is supposed to precede it never
+    // happened or failed.
+    let cleared = |reading: &Option<Evaluation>| {
+        reading.as_ref().is_some_and(|e| {
+            e.tally()
+                .lower_bound()
+                .is_some_and(|bound| bound > config.broad.target)
+        })
+    };
+    let audit_cleared = cleared(&broad_audit);
+    if broad_confirm.is_some() && !audit_cleared {
+        return None;
+    }
+    if broad_gate.is_some() && !cleared(&broad_confirm) {
+        return None;
+    }
     match &mode {
         Mode::Training => {}
         Mode::Probing {
@@ -255,6 +324,36 @@ fn decode(value: &Value) -> Option<Trainer> {
                 return None;
             }
         }
+        Mode::Overall { gate } => {
+            // The broad gate is a fixed panel against the ORIGINAL cyborgs on
+            // the whole board, measuring one frozen candidate under THIS run's
+            // settings. A different candidate, a narrower scope, a frozen-model
+            // cell, a different target or a differently sized panel would all
+            // make the numbers describe something else. And a confirmation
+            // round may only be in flight if the audit before it cleared.
+            if fingerprint.as_deref() != Some(gate.evaluation.champion.as_str())
+                || ladder != Ladder::Broad
+                || gate.target != config.broad.target
+                || gate.tasks.len() != config.broad.games()
+                || gate
+                    .tasks
+                    .iter()
+                    .any(|task| task.cell.foe != crate::curriculum::Opponent::Cyborg)
+                || (gate.round == crate::audit::Round::Confirm && !audit_cleared)
+            {
+                return None;
+            }
+        }
+    }
+    // The reading the dashboard is told to show has to exist.
+    let shown_exists = match broad_shown {
+        None => true,
+        Some(Source::Ready) => broad_ready.is_some(),
+        Some(Source::Audit) => broad_audit.is_some(),
+        Some(Source::Confirm) => broad_confirm.is_some(),
+    };
+    if !shown_exists && !matches!(mode, Mode::Overall { .. }) {
+        return None;
     }
     Some(Trainer {
         evaluator: value
@@ -279,6 +378,19 @@ fn decode(value: &Value) -> Option<Trainer> {
         stats: SamplerStats::from_json(value.get("stats")?)?,
         panel,
         mode,
+        origin: match value.get("origin") {
+            None | Some(Value::Null) => None,
+            Some(other) => Some(Origin::from_json(other)?),
+        },
+        coverage_cursor: value
+            .get("coverage_cursor")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        broad_ready,
+        broad_audit,
+        broad_confirm,
+        broad_gate,
+        broad_shown,
         episodes: value.get("episodes")?.as_u64()?,
         unresolved: value.get("unresolved").and_then(Value::as_u64).unwrap_or(0),
         elapsed: value

@@ -189,6 +189,17 @@ pub struct Panel {
 }
 
 impl Panel {
+    /// Seals a task list into a panel, stamping the identity that makes two
+    /// fitness numbers comparable. Every panel, however it was drawn, goes
+    /// through here so the identity rule is one rule.
+    pub fn of(tasks: Vec<Task>) -> Panel {
+        Panel {
+            id: Panel::identify(&tasks),
+            tasks,
+            cursor: 0,
+        }
+    }
+
     fn identify(tasks: &[Task]) -> String {
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
         let mut absorb = |word: u64| {
@@ -283,11 +294,7 @@ pub fn draw(
             ticks,
         });
     }
-    Panel {
-        id: Panel::identify(&tasks),
-        tasks,
-        cursor: 0,
-    }
+    Panel::of(tasks)
 }
 
 fn pick(

@@ -8,6 +8,7 @@
 //! unit of work in the same loop.
 
 use crate::audit::AuditConfig;
+use crate::broad::BroadConfig;
 use crate::episode::DEFAULT_TICKS;
 use crate::neat::NeatConfig;
 use crate::sampler::SamplerConfig;
@@ -30,6 +31,8 @@ USAGE
 COMMANDS
   start          Begin a new run in artifacts/mario/<run id>.
   resume         Continue an existing run exactly where it stopped.
+  broaden        Fork a STOPPED run into a new any-versus-any run, leaving the
+                 original completely untouched. Then resume the new run.
   status         Print one status document and exit. Reads the live server if
                  one is listening, otherwise the last checkpoint, and says so.
   pause          Ask a running trainer to stop computing but keep serving.
@@ -51,7 +54,30 @@ RUN OPTIONS
   --allow-rebuild          Resume even though this binary differs from the one
                            that produced the checkpoint. Without it, a rebuilt
                            evaluator refuses to continue someone else's
-                           trajectory silently.
+                           trajectory silently. broaden does not need it and
+                           does not accept it: a fork records the source's
+                           fingerprint as provenance instead, and an ordinary
+                           resume of the new run keeps the guard.
+
+BROADEN OPTIONS
+  --from <id>              The STOPPED run to fork. Read under a shared lock, so
+                           a trainer still writing it makes the fork fail rather
+                           than copy a half-written checkpoint. Never modified.
+  --run <id>               Identifier of the NEW run. Must not already have a
+                           checkpoint; broaden refuses to overwrite one.
+  --reason <text>          Recorded with the transition. Default:
+                           \"operator requested any-versus-any\".
+  --broad-panel <n>        Fights per genome per generation in broad mode.
+                           Default 32. Half are drawn by a balanced rotation
+                           over the board, half adaptively.
+  --overall-pairs <n>      Ordered pairs in one held-out round; each is played
+                           in both seats, so the round is twice this many games.
+                           Must be a multiple of 25. Default 500, giving a
+                           1000-game round with every hull appearing 20 times on
+                           each side.
+  --overall-target <r>     Aggregate win rate the Wilson lower bound must clear,
+                           on the audit round and again on the confirmation
+                           round. Default 0.80.
 
 BUDGET OPTIONS (a bounded local run stops on whichever arrives first)
   --generations <n>        Stop after this many completed generations.
@@ -87,6 +113,15 @@ NOTES
   POST /api/control {\"action\":\"pause\"|\"resume\"|\"stop\"}, GET / and
   GET /dashboard.js from scripts/mario. There is no option that exposes it.
 
+  BROAD MODE grades one question instead of 625: does the frozen champion clear
+  the target on a BALANCED any-versus-any distribution against the Awesome
+  cyborg? A held-out audit round and a disjoint confirmation round must each
+  clear a Wilson lower bound above the target, every game including timeouts
+  counts as played, and per-hull numbers are reported next to the aggregate as
+  blind-spot diagnostics that gate nothing. Paired seat outcomes are correlated,
+  so this is an operational confidence check on the aggregate, not a formal
+  guarantee about every matchup.
+
   A stage is promoted only when EVERY ordered matchup of that stage clears a
   Wilson lower bound above the target on a fixed withheld panel, and then again
   on a disjoint confirmation panel. On the default 100-fight panel that allows
@@ -98,6 +133,10 @@ pub struct Options {
     pub command: String,
     pub root: PathBuf,
     pub run: Option<String>,
+    /// The run `broaden` forks from. Never written to.
+    pub from: Option<String>,
+    /// Why the scope changed, recorded with the transition.
+    pub reason: Option<String>,
     pub seed: Option<u64>,
     pub port: u16,
     pub serve: bool,
@@ -128,6 +167,8 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
         command,
         root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         run: None,
+        from: None,
+        reason: None,
         seed: None,
         port: server::DEFAULT_PORT,
         serve: true,
@@ -145,6 +186,7 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
             neat: NeatConfig::default(),
             sampler: SamplerConfig::default(),
             audit: AuditConfig::default(),
+            broad: BroadConfig::default(),
             duty: 0.5,
             readiness_games: 128,
             readiness_threshold: 0.85,
@@ -165,6 +207,13 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
                 options.root = PathBuf::from(next.ok_or("--root needs a path")?);
             }
             "--run" => options.run = Some(next.ok_or("--run needs an id")?.clone()),
+            "--from" => options.from = Some(next.ok_or("--from needs a run id")?.clone()),
+            "--reason" => options.reason = Some(next.ok_or("--reason needs text")?.clone()),
+            "--broad-panel" => options.config.broad.panel = parse_value(next, "--broad-panel")?,
+            "--overall-pairs" => options.config.broad.pairs = parse_value(next, "--overall-pairs")?,
+            "--overall-target" => {
+                options.config.broad.target = parse_value(next, "--overall-target")?
+            }
             "--seed" => options.seed = Some(parse_value(next, "--seed")?),
             "--port" => options.port = parse_value(next, "--port")?,
             "--no-server" => {
@@ -220,6 +269,37 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
     }
     if options.config.audit.panel == 0 {
         return Err("--audit-panel must be positive".into());
+    }
+    if options.config.broad.panel == 0 {
+        return Err("--broad-panel must be positive".into());
+    }
+    // A pair count that is not a whole number of matchings could not give every
+    // hull the same number of appearances, so the panel would not be balanced
+    // and the aggregate it measures would not be the declared distribution.
+    if options.config.broad.pairs == 0
+        || options.config.broad.pairs % melee_sim::catalog::MELEE_SHIP_COUNT != 0
+    {
+        return Err("--overall-pairs must be a positive multiple of 25".into());
+    }
+    if !(options.config.broad.target > 0.0 && options.config.broad.target < 1.0) {
+        return Err("--overall-target must be between 0 and 1".into());
+    }
+    if options.command == "broaden" {
+        if options.from.is_none() {
+            return Err("broaden needs --from <run id>".into());
+        }
+        if options.run.is_none() {
+            return Err("broaden needs --run <new run id>".into());
+        }
+        if options.from == options.run {
+            return Err("broaden needs a DIFFERENT --run; it never writes to --from".into());
+        }
+        if options.allow_rebuild {
+            return Err(
+                "broaden does not take --allow-rebuild: it records the source evaluator as                  provenance, and the fingerprint guard still applies to resuming the new run"
+                    .into(),
+            );
+        }
     }
     Ok(options)
 }
@@ -332,6 +412,13 @@ pub fn run(arguments: &[String]) -> i32 {
         "resume-work" => control(&options, "resume"),
         "stop" => control(&options, "stop"),
         "status" => status(&options),
+        "broaden" => match broaden(&options) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("melee-mario: {error}");
+                1
+            }
+        },
         "start" | "resume" | "serve" => match supervise(options) {
             Ok(()) => 0,
             Err(error) => {
@@ -393,6 +480,143 @@ fn status(options: &Options) -> i32 {
             0
         }
     }
+}
+
+/// Forks a stopped run into a new any-versus-any run.
+///
+/// The ordering is the whole safety argument:
+///
+///   1. A SHARED lock on the source, which fails outright while a trainer is
+///      writing it and writes nothing itself, so the copy can never be of a
+///      half-written checkpoint and the source is left byte for byte as found.
+///   2. An EXCLUSIVE lock on the destination, so two forks cannot race into the
+///      same new run.
+///   3. A refusal if the destination already has a checkpoint. A fork never
+///      overwrites a run; the operator picks another identifier.
+///   4. The transition, then an atomic write of the new configuration and
+///      checkpoint. Nothing is ever written to the source directory.
+///
+/// This is the ONE place a differing evaluator fingerprint is accepted, and it
+/// is accepted by recording it rather than by waving it through: the new
+/// checkpoint belongs to this binary, the old fingerprint is kept as origin
+/// provenance, and an ordinary resume of the new run still enforces the guard.
+fn broaden(options: &Options) -> Result<(), String> {
+    let source_id = options.from.clone().ok_or("broaden needs --from")?;
+    let target_id = options.run.clone().ok_or("broaden needs --run")?;
+    let source_dir = store::run_dir(&options.root, &source_id);
+    let target_dir = store::run_dir(&options.root, &target_id);
+    if !source_dir.join(store::CHECKPOINT).exists() {
+        return Err(format!(
+            "no checkpoint at {}",
+            source_dir.join(store::CHECKPOINT).display()
+        ));
+    }
+
+    let _reading = RunLock::acquire_shared(&source_dir).map_err(|e| e.to_string())?;
+    let _writing = RunLock::acquire(&target_dir).map_err(|e| e.to_string())?;
+    let checkpoint = target_dir.join(store::CHECKPOINT);
+    if checkpoint.exists() {
+        return Err(format!(
+            "{} already exists. broaden never overwrites a run; choose another --run",
+            checkpoint.display()
+        ));
+    }
+
+    let mut trainer = load(&source_dir)?;
+    let source_evaluator = trainer.evaluator.clone();
+    let source_generation = trainer.population.generation;
+    let source_episodes = trainer.episodes;
+    let source_champion = trainer.champion.as_ref().map(|g| g.fingerprint());
+
+    // Settings that describe broad mode itself come from this command line;
+    // everything else about the run is inherited exactly.
+    trainer.config.broad = options.config.broad;
+    // A balanced readiness probe is much wider than a one-cell ladder probe, so
+    // it gets a wider default. An explicit flag still wins.
+    if options.given.iter().any(|flag| flag == "--readiness-games") {
+        trainer.config.readiness_games = options.config.readiness_games;
+    } else {
+        trainer.config.readiness_games = 250;
+    }
+    if options.given.iter().any(|flag| flag == "--readiness-period") {
+        trainer.config.readiness_period = options.config.readiness_period;
+    }
+    if options.given.iter().any(|flag| flag == "--duty") {
+        trainer.config.duty = options.config.duty;
+    }
+
+    // Broad mode's aggregate is defined against the Awesome cyborg, so a source
+    // graded against a weaker one may only be forked if the operator says so
+    // explicitly with --rating awesome. The change is recorded; it is never
+    // made quietly, because it changes what every number afterwards means.
+    if options.given.iter().any(|flag| flag == "--rating") {
+        if trainer.config.rating != options.config.rating {
+            trainer.note(format!(
+                "graded opponent changed at the transition: {} became {}",
+                trainer::rating_name(trainer.config.rating),
+                trainer::rating_name(options.config.rating)
+            ));
+            trainer.config.rating = options.config.rating;
+        }
+    }
+
+    let reason = options
+        .reason
+        .clone()
+        .unwrap_or_else(|| "operator requested any-versus-any".to_string());
+    trainer.broaden(&target_id, &reason)?;
+
+    // The checkpoint goes down last, so a crash between the two leaves a
+    // directory with no resumable run rather than one with a checkpoint whose
+    // configuration is missing.
+    store::write_atomic(&target_dir.join(store::CONFIG), &trainer.config.to_json())
+        .map_err(|e| e.to_string())?;
+    trainer.saved_at = Some(trainer::iso8601(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    ));
+    let document = trainer.to_json();
+    // The written document has to decode back into a resumable run, or the fork
+    // has produced something the operator cannot actually use.
+    Trainer::from_json(&document)
+        .map_err(|e| format!("the forked checkpoint would not decode: {e}"))?;
+    store::write_atomic(&checkpoint, &document).map_err(|e| e.to_string())?;
+    if let Some(event) = trainer.events.back() {
+        let _ = store::append_line(
+            &target_dir.join(store::EVENTS),
+            &serde_json::json!({"at": event.at, "message": event.message,
+                                "generation": trainer.population.generation,
+                                "episodes": trainer.episodes}),
+        );
+    }
+
+    println!(
+        "melee-mario: forked {source_id} generation {source_generation} ({source_episodes} \
+         episodes, evaluator {source_evaluator}) into {target_id}.\n  \
+         champion {} carried across; {} genome(s) in {} species keep their weights, mutation \
+         rates and RNG state.\n  \
+         scope is now any-versus-any: all {} ordered Awesome cyborg matchups active, NOTHING \
+         mastered, all previous gate evidence and fitness discarded.\n  \
+         training panel {} fights per genome, {:.0}% balanced rotation; overall gate {} games \
+         per round against a {:.0}% target.\n  \
+         a baseline readiness probe of {} balanced games is armed and will run first.\n  \
+         {} was not modified. Resume the new run with:\n    \
+         melee-mario resume --run {target_id}",
+        source_champion.unwrap_or_else(|| "none".into()),
+        trainer.population.size(),
+        trainer.population.species.len(),
+        crate::curriculum::cells(trainer.stage).len(),
+        trainer.config.broad.panel,
+        trainer.config.broad.coverage * 100.0,
+        trainer.config.broad.games(),
+        trainer.config.broad.target * 100.0,
+        trainer.config.readiness_games,
+        source_dir.display(),
+    );
+    let _ = io::stdout().flush();
+    Ok(())
 }
 
 fn load(dir: &Path) -> Result<Trainer, String> {
