@@ -163,6 +163,11 @@ type alias Config msg =
     , onSelect : Int -> Int -> msg
     , onClear : msg
     , describedBy : String
+
+    -- What the cells' tallies count, in the run's own words. A cell's
+    -- `wins` field is whatever the run's gate criterion counts, so the
+    -- readout is handed the noun rather than assuming "wins".
+    , successPlural : String
     }
 
 
@@ -440,7 +445,9 @@ viewReadout config g =
                                             "No audit games played for this ordered pair yet. Unmeasured, not lost."
 
                                          else
-                                            "Audit wins "
+                                            "Audit "
+                                                ++ config.successPlural
+                                                ++ " "
                                                 ++ Format.fraction m.wins m.games
                                                 ++ "  \u{00B7}  rate "
                                                 ++ (m.winRate |> Maybe.map Format.percent1 |> Maybe.withDefault Format.awaiting)

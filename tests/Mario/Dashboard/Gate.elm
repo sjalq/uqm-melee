@@ -34,6 +34,7 @@ it directly testable and keeps the view free of judgement calls.
 
 import Mario.Dashboard.Api as Api exposing (Champion, Matchup, MatchupStatus(..), Overall, Seat(..), ShipPerformance)
 import Mario.Dashboard.Format as Format
+import Mario.Dashboard.Scoring as Scoring
 
 
 {-| The standard two-sided 95% normal quantile, which is what a plain
@@ -492,9 +493,12 @@ that the figure is an aggregate rather than a promise about every
 matchup, and that a pass needs two independent rounds.
 
 -}
-explainBroad : Api.Curriculum -> Maybe Overall -> List ShipPerformance -> List String
-explainBroad curriculum maybeOverall ships =
+explainBroad : Maybe Api.Scoring -> Api.Curriculum -> Maybe Overall -> List ShipPerformance -> List String
+explainBroad scoring curriculum maybeOverall ships =
     let
+        rate =
+            Scoring.rateLabel scoring
+
         target =
             case maybeOverall of
                 Just overall ->
@@ -504,7 +508,9 @@ explainBroad curriculum maybeOverall ships =
                     curriculum.target
 
         scopeLine =
-            "The run is judged on one number: the frozen champion's win rate over a fixed held-out balanced panel in which every hull appears equally often on both sides, and every pair is played in both seats. The target is "
+            "The run is judged on one number: the frozen champion's "
+                ++ rate
+                ++ " over a fixed held-out balanced panel in which every hull appears equally often on both sides, and every pair is played in both seats. The target is "
                 ++ Format.percent target
                 ++ " overall."
 
@@ -558,7 +564,9 @@ explainBroad curriculum maybeOverall ships =
                 [ "Every hull reported carries games in both groupings on this panel." ]
 
         sourceLine =
-            "Both groupings count our champion's own wins: one grouped by the hull it was piloting, the other by the hull it was facing. Neither is the enemy's win count. All of it is this frozen champion's balanced-evaluation evidence only, never an earlier champion's and never adaptive training play."
+            "Both groupings count our champion's own "
+                ++ Scoring.successPlural scoring
+                ++ ": one grouped by the hull it was piloting, the other by the hull it was facing. Neither is the enemy's count. All of it is this frozen champion's balanced-evaluation evidence only, never an earlier champion's and never adaptive training play."
 
         readinessSourceLine =
             if List.any (\r -> r.source == Api.FromReadiness) ships then
@@ -568,7 +576,12 @@ explainBroad curriculum maybeOverall ships =
                 []
 
         timeoutLine =
-            "Every game on the panel counts, including games that time out. Those are counted as non-wins, so the figure cannot be flattered by dropping unresolved fights."
+            case Scoring.criterion scoring of
+                Api.CrewLead ->
+                    "Every game on the panel counts, including games that end unresolved. Those are scored on crew share like any other, so an unresolved game can count for this gate as readily as a resolved one, and none is dropped."
+
+                _ ->
+                    "Every game on the panel counts, including games that time out. Those are counted as non-wins, so the figure cannot be flattered by dropping unresolved fights."
 
         originLine =
             case curriculum.originRunId of

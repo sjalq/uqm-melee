@@ -15,6 +15,7 @@ module Mario.Dashboard.Copy exposing
     , episodesPerSecond
     , expansionBlocked
     , fightLimit
+    , combatVictories
     , fitnessRule
     , freshness
     , gateCriterion
@@ -33,6 +34,7 @@ module Mario.Dashboard.Copy exposing
     , meanConnections
     , meanNodes
     , nextExpansion
+    , noDamagePenalty
     , originRun
     , overallGate
     , overallPanel
@@ -73,7 +75,25 @@ once, rather than in the view, so no metric can quietly ship without one.
 
 -}
 
+import Mario.Dashboard.Api as Api
+import Mario.Dashboard.Scoring as Scoring
 import Mario.Dashboard.Tip as Tip exposing (Tip)
+
+
+{-| The run's own noun for one counted success, and for the rate those
+counts make. Every tip below that names what a figure counts asks for
+these rather than writing "win", because under a crew-lead gate the
+tallies are not wins and a tooltip is exactly where a reader goes to
+find out what a number means.
+-}
+successes : Maybe Api.Scoring -> String
+successes =
+    Scoring.successPlural
+
+
+rateOf : Maybe Api.Scoring -> String
+rateOf =
+    Scoring.rateLabel
 
 
 t : String -> String -> String -> List ( String, String ) -> Tip
@@ -81,11 +101,12 @@ t =
     Tip.tip
 
 
-{-| Every tip on the dashboard. Used by the test suite to assert that
-each one states its denominator, its window and its evidence source.
+{-| Every tip on the dashboard, as the run in front of the reader would
+render them. Used by the test suite to assert that each one states its
+denominator, its window and its evidence source, under either criterion.
 -}
-allTips : List Tip
-allTips =
+allTips : Maybe Api.Scoring -> List Tip
+allTips scoring =
     [ phase
     , runId
     , freshness
@@ -95,22 +116,22 @@ allTips =
     , nodesChart
     , ladderPhase
     , opponentRevision
-    , auditPanel
-    , observedNeeded
+    , auditPanel scoring
+    , observedNeeded scoring
     , readiness
-    , regression
+    , regression scoring
     , worstCell
-    , unresolved
+    , unresolved scoring
     , generation
     , episodes
     , episodesPerSecond
     , elapsed
     , championId
-    , championRate
-    , championLowerBound
-    , championGames
+    , championRate scoring
+    , championLowerBound scoring
+    , championGames scoring
     , championStructure
-    , target
+    , target scoring
     , stage
     , rosterOurs
     , rosterTheirs
@@ -131,22 +152,24 @@ allTips =
     , checkpointPath
     , resourcesWorkers
     , resourcesDuty
-    , winRateChart
+    , winRateChart scoring
     , structureChart
     , throughputChart
     , topology
     , timeline
     , controls
-    , overallGate
+    , overallGate scoring
     , overallPanel
     , overallRound
-    , shipPerformance
-    , broadMode
+    , shipPerformance scoring
+    , broadMode scoring
     , samplerCoverage
     , originRun
     , fitnessRule
     , fightLimit
     , gateCriterion
+    , noDamagePenalty
+    , combatVictories
     ]
 
 
@@ -178,6 +201,28 @@ fightLimit =
         [ ( "Denominator", "None; simulated time, the reported episode tick budget over 60 simulation ticks per second. It is not machine wall time, and a fight takes far less of that to run." )
         , ( "Window", "Each individual episode." )
         , ( "Source", "Trainer resource caps, field episode_ticks." )
+        ]
+
+
+noDamagePenalty : Tip
+noDamagePenalty =
+    t "no-damage-penalty"
+        "No-damage penalty"
+        "A conditional replacement for fitness, not an adjustment to it. When a fight ends with the other side's crew no smaller than the number it started with, the genome's fitness becomes the negative of this magnitude and the run's ordinary scoring rule is not consulted. It reads their crew at the end against their crew at the start, so it says nothing about damage we dealt and later lost to their recovery."
+        [ ( "Denominator", "None; it is a fitness value in the run's own scoring units, reported as a positive magnitude and applied negated." )
+        , ( "Window", "Each individual episode, judged at the moment the fight stops." )
+        , ( "Source", "Trainer scoring block, field no_damage_penalty. Absent or zero means the run applies none." )
+        ]
+
+
+combatVictories : Tip
+combatVictories =
+    t "combat-victories"
+        "Actual combat victories"
+        "A count of episodes our side actually resolved in its favour, across the whole population, whatever the run is gated on. It is the one tally on this page that is a win count, and it is deliberately not a rate: it cannot be compared with the champion's gate figure, which is one genome's record on a predeclared panel. When the counter started part-way through a run its baseline is named alongside it, because the run's true total is then unknown."
+        [ ( "Denominator", "None; it is a count of episodes, not a share of them. Divide it by nothing on this page." )
+        , ( "Window", "Every episode in the counting window the trainer reports, population-wide, cumulative." )
+        , ( "Source", "Trainer field episodes_combat_wins_all_time, or the partial counter with its episode baseline when no all-time figure is published." )
         ]
 
 
@@ -331,33 +376,42 @@ championId =
         ]
 
 
-championRate : Tip
-championRate =
+championRate : Maybe Api.Scoring -> Tip
+championRate scoring =
     t "champion-rate"
-        "Champion fresh audit win rate"
-        "Wins divided by games on the champion's predeclared audit panel. These are fresh gate episodes on gate seeds, played after the candidate was frozen. They are not training episodes and they are not pooled across the population, so this is the number that actually speaks to whether the champion is any good."
+        ("Champion fresh audit " ++ rateOf scoring)
+        ("Counted "
+            ++ successes scoring
+            ++ " divided by games on the champion's predeclared audit panel. These are fresh gate episodes on gate seeds, played after the candidate was frozen. They are not training episodes and they are not pooled across the population, so this is the number that actually speaks to whether the champion is any good."
+        )
         [ ( "Denominator", "Audit games played by this champion at the current stage." )
         , ( "Window", "The current champion's audit panel only. Reset when the champion changes." )
         , ( "Source", "Audit, on gate seeds separate from the training seeds." )
         ]
 
 
-championLowerBound : Tip
-championLowerBound =
+championLowerBound : Maybe Api.Scoring -> Tip
+championLowerBound scoring =
     t "champion-bound"
         "Wilson lower bound"
-        "The lower end of a Wilson confidence interval on the champion's audit win rate. Promotion is gated on this bound clearing the target, not on the raw rate, because a raw rate over the target on a handful of games is mostly luck. A small panel produces a low bound even when every game was won."
-        [ ( "Denominator", "The same audit games as the win rate above." )
+        ("The lower end of a Wilson confidence interval on the champion's audit "
+            ++ rateOf scoring
+            ++ ". Promotion is gated on this bound clearing the target, not on the raw rate, because a raw rate over the target on a handful of games is mostly luck. A small panel produces a low bound even when every game counted."
+        )
+        [ ( "Denominator", "The same audit games as the rate above." )
         , ( "Window", "Current champion, current stage." )
         , ( "Source", "Audit. Computed by the trainer, displayed here unchanged." )
         ]
 
 
-championGames : Tip
-championGames =
+championGames : Maybe Api.Scoring -> Tip
+championGames scoring =
     t "champion-games"
         "Audit sample size"
-        "Wins over games on the champion's audit panel. Panels are predeclared and finite, and audit and confirmation panels do not overlap, so this number rises in fixed steps rather than being extended until the result looks good. Repeated peeking at an arbitrary panel size is exactly how a lucky candidate gets promoted."
+        ("Counted "
+            ++ successes scoring
+            ++ " over games on the champion's audit panel. Panels are predeclared and finite, and audit and confirmation panels do not overlap, so this number rises in fixed steps rather than being extended until the result looks good. Repeated peeking at an arbitrary panel size is exactly how a lucky candidate gets promoted."
+        )
         [ ( "Denominator", "Games on the predeclared audit panel." )
         , ( "Window", "Current champion, current stage." )
         , ( "Source", "Audit." )
@@ -375,11 +429,14 @@ championStructure =
         ]
 
 
-target : Tip
-target =
+target : Maybe Api.Scoring -> Tip
+target scoring =
     t "target"
         "Gate target"
-        "The win rate every active ordered matchup must clear before the curriculum expands. The gate is per cell, not pooled: an overall average above the target means nothing if one matchup is still losing, because the average can hide a weak cell behind many strong ones."
+        ("The "
+            ++ rateOf scoring
+            ++ " every active ordered matchup must clear before the curriculum expands. The gate is per cell, not pooled: an overall average above the target means nothing if one matchup is still short, because the average can hide a weak cell behind many strong ones."
+        )
         [ ( "Denominator", "Applied to each ordered matchup separately." )
         , ( "Window", "Current stage." )
         , ( "Source", "Run configuration, immutable for the run." )
@@ -412,47 +469,62 @@ opponentRevision =
         ]
 
 
-auditPanel : Tip
-auditPanel =
+auditPanel : Maybe Api.Scoring -> Tip
+auditPanel scoring =
     t "audit-panel"
         "Audit panel"
-        "The predeclared, fixed-size panel a frozen candidate is judged on, and the number of losses it can absorb and still reach the target. Those losses are survivable: on a panel of 100 needing 88 wins, 12 losses still leave exactly 88 winnable, and it is the next loss after the cap that makes the target arithmetically unreachable and ends the attempt. The panel size is fixed before the audit starts and does not overlap the confirmation panel, so evidence cannot be extended until it happens to look good."
+        ("The predeclared, fixed-size panel a frozen candidate is judged on, and the number of games it can fail to count and still reach the target. Those are survivable: on a panel of 100 needing 88 counted "
+            ++ successes scoring
+            ++ ", 12 uncounted games still leave exactly 88 reachable, and it is the next one after the cap that makes the target arithmetically unreachable and ends the attempt. The panel size is fixed before the audit starts and does not overlap the confirmation panel, so evidence cannot be extended until it happens to look good."
+        )
         [ ( "Denominator", "Games in the predeclared panel." )
         , ( "Window", "Per audit attempt, for the current frozen candidate." )
         , ( "Source", "Run configuration, fixed for the run. Budget is the total audit spend allowed." )
         ]
 
 
-observedNeeded : Tip
-observedNeeded =
+observedNeeded : Maybe Api.Scoring -> Tip
+observedNeeded scoring =
     t "observed-needed"
-        "Observed wins the gate actually demands"
-        "The target is a floor on the Wilson lower bound, not on the observed rate, so the raw score a candidate must post is higher than the target. On a panel of 100 against an 80% target, 80 wins out of 100 fails: the bound on 80/100 is about 71%. It takes 88 wins for the bound to clear 80%. Reading the target as though it were an observed rate is the single easiest way to believe a candidate passed when it did not."
+        ("Observed " ++ successes scoring ++ " the gate actually demands")
+        ("The target is a floor on the Wilson lower bound, not on the observed rate, so the raw score a candidate must post is higher than the target. On a panel of 100 against an 80% target, 80 out of 100 fails: the bound on 80/100 is about 71%. It takes 88 counted "
+            ++ successes scoring
+            ++ " for the bound to clear 80%. Reading the target as though it were an observed rate is the single easiest way to believe a candidate passed when it did not."
+        )
         [ ( "Denominator", "The predeclared audit panel size." )
         , ( "Window", "Per audit attempt." )
-        , ( "Source", "Computed by the dashboard as the inverse of the Wilson bound at 95% confidence, z = 1.96. The trainer publishes the bound itself; this is the smallest win count that reaches it." )
+        , ( "Source", "Computed by the dashboard as the inverse of the Wilson bound at 95% confidence, z = 1.96. The trainer publishes the bound itself; this is the smallest count that reaches it." )
         ]
 
 
-regression : Tip
-regression =
+regression : Maybe Api.Scoring -> Tip
+regression scoring =
     t "regression"
         "Regression rehearsal"
-        "Periodic re-checking of cells that already passed the gate, so that progress at a later stage cannot quietly break an earlier one. A sweep that finds failed cells means mastery was lost and those cells are back in contention, which is exactly the kind of silent backsliding an aggregate win rate would hide."
+        ("Periodic re-checking of cells that already passed the gate, so that progress at a later stage cannot quietly break an earlier one. A sweep is judged on the same criterion as the gate itself. A sweep that finds failed cells means mastery was lost and those cells are back in contention, which is exactly the kind of silent backsliding an aggregate "
+            ++ rateOf scoring
+            ++ " would hide."
+        )
         [ ( "Denominator", "Previously mastered cells re-checked in the last sweep." )
         , ( "Window", "The most recent sweep, not the whole run." )
         , ( "Source", "Audit-style rehearsal play, separate from the current stage's gate evidence." )
         ]
 
 
-unresolved : Tip
-unresolved =
+unresolved : Maybe Api.Scoring -> Tip
+unresolved scoring =
     t "unresolved"
         "Unresolved episodes"
-        "Episodes that hit the display-tick deadline without a real resolved outcome, usually two ships that never finished each other off. These are invalidated, not won. A timeout is not a victory for either side and is never scored as one, so a rising count here means the win rates above rest on fewer real fights than the episode total suggests."
-        [ ( "Denominator", "Total episodes resolved in the run." )
+        (case Scoring.criterion scoring of
+            Api.CrewLead ->
+                "Episodes that ended without a resolved combat outcome: the display-tick deadline reached with both ships still flying, and episodes ended by selection or resurrection rather than by a kill. Under this run's gate they are not discarded. They are scored on crew share like any other episode and can count as leads, so a rising count here does not thin out the evidence behind the rates above; it changes what kind of fight most of that evidence describes."
+
+            _ ->
+                "Episodes that ended without a real resolved outcome, usually two ships that never finished each other off. These are invalidated, not won. A timeout is not a victory for either side and is never scored as one, so a rising count here means the win rates above rest on fewer real fights than the episode total suggests."
+        )
+        [ ( "Denominator", "Total episodes in the run." )
         , ( "Window", "Cumulative since the run started." )
-        , ( "Source", "Episode outcomes. Counted separately from wins and losses precisely so it cannot be mistaken for either." )
+        , ( "Source", "Episode outcomes. Counted separately from the gate tallies precisely so it cannot be mistaken for one." )
         ]
 
 
@@ -710,11 +782,16 @@ resourcesDuty =
 -- CHARTS
 
 
-winRateChart : Tip
-winRateChart =
+winRateChart : Maybe Api.Scoring -> Tip
+winRateChart scoring =
     t "chart-winrate"
-        "Win rate over generations"
-        "Two different measurements, drawn so they cannot be mistaken for each other. The training line is the population's win rate on the sampled training panel, which changes from generation to generation and is not gate evidence. The audit markers are the champion's fresh win rate on a predeclared gate panel. The line breaks at every stage change because a rate measured against a small roster is not comparable with one measured against a larger one."
+        (Scoring.successHeading scoring ++ " over generations")
+        ("Two different measurements, drawn so they cannot be mistaken for each other. The training line is the population's "
+            ++ rateOf scoring
+            ++ " on the sampled training panel, which changes from generation to generation and is not gate evidence. The audit markers are the champion's fresh "
+            ++ rateOf scoring
+            ++ " on a predeclared gate panel. The line breaks at every stage change because a rate measured against a small roster is not comparable with one measured against a larger one."
+        )
         [ ( "Denominator", "Training: episodes on that generation's sampled panel. Audit: games on the predeclared gate panel." )
         , ( "Window", "Per generation, whole run, split at stage boundaries." )
         , ( "Source", "Two distinct sources, never averaged together. Unmeasured generations leave a gap rather than a zero." )
@@ -789,23 +866,36 @@ controls =
 -- reader to infer from a heading.
 
 
-broadMode : Tip
-broadMode =
+broadMode : Maybe Api.Scoring -> Tip
+broadMode scoring =
     t "broad-mode"
         "Broad any-versus-any mode"
-        "Every ship is active against every ship at once. There is no staged unlock and no per-matchup gate: the run is judged on one overall win rate against Awesome cyborgs over a balanced distribution. The per-cell grid stays on the page as a diagnostic that shows where the champion is weak, which is exactly what an aggregate target hides."
+        ("Every ship is active against every ship at once. There is no staged unlock and no per-matchup gate: the run is judged on one overall "
+            ++ rateOf scoring
+            ++ " against Awesome cyborgs over a balanced distribution. The per-cell grid stays on the page as a diagnostic that shows where the champion is weak, which is exactly what an aggregate target hides."
+        )
         [ ( "Denominator", "None; a mode, not a measurement." )
         , ( "Window", "From the operator transition onward." )
         , ( "Source", "The trainer's declared curriculum ladder and evaluation scope." )
         ]
 
 
-overallGate : Tip
-overallGate =
+overallGate : Maybe Api.Scoring -> Tip
+overallGate scoring =
     t "overall-gate"
-        "Overall balanced win rate"
-        "The frozen champion's win rate on a fixed held-out balanced panel: all 25 of our hulls and all 25 opponent hulls equally represented, pairings randomised, every pair played in both seats. The gate is a floor on the Wilson lower bound, cleared on an audit round and then again on an independent confirm round. Because each pair is played in both seats the outcomes are correlated, so this is an operational confidence check on the distribution, not a formal guarantee about every matchup."
-        [ ( "Denominator", "Games on the current round's balanced held-out panel. All games count, including timeouts, which count as non-wins." )
+        ("Overall balanced " ++ rateOf scoring)
+        ("The frozen champion's "
+            ++ rateOf scoring
+            ++ " on a fixed held-out balanced panel: all 25 of our hulls and all 25 opponent hulls equally represented, pairings randomised, every pair played in both seats. The gate is a floor on the Wilson lower bound, cleared on an audit round and then again on an independent confirm round. Because each pair is played in both seats the outcomes are correlated, so this is an operational confidence check on the distribution, not a formal guarantee about every matchup."
+        )
+        [ ( "Denominator"
+          , case Scoring.criterion scoring of
+                Api.CrewLead ->
+                    "Games on the current round's balanced held-out panel. All games count, including unresolved ones, which are scored on crew share like any other."
+
+                _ ->
+                    "Games on the current round's balanced held-out panel. All games count, including timeouts, which count as non-wins."
+          )
         , ( "Window", "One round, one frozen champion. Rounds are never added together." )
         , ( "Source", "Held-out gate evidence. Not training play, and not the readiness probe." )
         ]
@@ -833,11 +923,14 @@ overallRound =
         ]
 
 
-shipPerformance : Tip
-shipPerformance =
+shipPerformance : Maybe Api.Scoring -> Tip
+shipPerformance scoring =
     t "ship-performance"
         "Per-hull blind spots"
-        "The same gate evidence broken out by hull. Both columns count OUR champion's wins: the \"when piloting\" rows group those wins by the hull our champion flew, and the \"when facing\" rows group the very same wins by the hull it flew against. A low \"when facing\" figure means our champion loses to that hull; it is not that hull's win count and not an inverse. Nothing here gates anything, and there is no per-hull minimum: this table exists to expose where an aggregate pass is hiding a weakness."
+        ("The same gate evidence broken out by hull. Both columns count OUR champion's "
+            ++ successes scoring
+            ++ ": the \"when piloting\" rows group those by the hull our champion flew, and the \"when facing\" rows group the very same ones by the hull it flew against. A low \"when facing\" figure means our champion does badly against that hull; it is not that hull's own count and not an inverse. Nothing here gates anything, and there is no per-hull minimum: this table exists to expose where an aggregate pass is hiding a weakness."
+        )
         [ ( "Denominator", "Per hull, the games on the current round's balanced panel in that grouping. A hull with no games shows as unmeasured, never as 0%." )
         , ( "Window", "One round, the one currently frozen champion. Never pooled across champions." )
         , ( "Source", "Labelled per row: an audit or confirm round is gate evidence; a readiness row is the cheap 250-game probe and is a diagnostic only." )

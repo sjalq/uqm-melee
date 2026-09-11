@@ -269,6 +269,11 @@ function snapshot(at, result, proc) {
   const sampler = s.sampler ?? null;
   const resources = s.resources ?? {};
   const readiness = s.readiness ?? {};
+  // Absence is the original pairing, not "unknown": a trainer old enough to
+  // publish no scoring block had exactly one scorer and one gate criterion.
+  // Every `wins`-named tally in this record counts whatever `gate` names, so
+  // the log carries the criterion beside them or the numbers are unreadable.
+  const scoring = s.scoring ?? {};
   return {
     t: at,
     ok: true,
@@ -284,6 +289,20 @@ function snapshot(at, result, proc) {
     scope: str(curriculum.evaluation_scope),
     origin_run: str(curriculum.origin_run_id),
     champion: str(s.champion?.id),
+    scoring: {
+      fitness: str(scoring.fitness) ?? "combat",
+      gate: str(scoring.gate) ?? "combat-wins",
+      no_damage_penalty: num(scoring.no_damage_penalty) ?? 0,
+    },
+    // Factual resolved victories, kept apart from every gate tally above. The
+    // all-time figure is null whenever the counter started part-way through a
+    // run, in which case the partial count and its baseline are what exist.
+    combat: {
+      wins: num(s.episodes_combat_wins),
+      counted_since: num(s.episodes_combat_counted_since),
+      wins_all_time: num(s.episodes_combat_wins_all_time),
+    },
+    episodes_unresolved: num(s.episodes_unresolved),
     overall: overall
       ? {
           round: str(overall.round),
@@ -462,16 +481,36 @@ function describe(record) {
     `${record.episodes ?? "?"} episodes`,
   ];
   if (record.ladder) parts.push(record.ladder);
+  // Named on every line, because "12/40" means a different measurement under
+  // each criterion and a log line is read long after the run is over.
+  if (record.scoring?.gate) {
+    parts.push(`fitness ${record.scoring.fitness ?? "?"} | gate ${record.scoring.gate}`);
+  }
+  if (record.scoring?.no_damage_penalty) {
+    parts.push(`no-damage penalty -${record.scoring.no_damage_penalty}`);
+  }
   if (record.overall) {
     const round = record.overall.round ?? "no round";
     const bound = record.overall.lower_bound === null ? "no bound" : `LB ${(record.overall.lower_bound * 100).toFixed(1)}%`;
-    parts.push(`${round}: ${record.overall.wins ?? 0}/${record.overall.games ?? 0} ${bound}`);
+    const counted = record.scoring?.gate === "crew-lead" ? "leads" : "wins";
+    parts.push(
+      `${round}: ${record.overall.wins ?? 0}/${record.overall.games ?? 0} ${counted} ${bound}`,
+    );
   }
   // Between the rare gate rounds this is the only quality signal there is, so
   // it is named as a probe rather than left to look like gate evidence.
   if (record.readiness?.last_rate !== null && record.readiness?.last_rate !== undefined) {
     parts.push(
       `ready probe ${(record.readiness.last_rate * 100).toFixed(1)}% of ${record.readiness.games ?? "?"}`,
+    );
+  }
+  // Only the all-time figure may be read as the run's total. A partial count
+  // is printed with the baseline it started from, never bare.
+  if (record.combat?.wins_all_time !== null && record.combat?.wins_all_time !== undefined) {
+    parts.push(`${record.combat.wins_all_time} actual combat wins`);
+  } else if (record.combat?.wins !== null && record.combat?.wins !== undefined) {
+    parts.push(
+      `${record.combat.wins} actual combat wins since episode ${record.combat.counted_since ?? 0}`,
     );
   }
   if (record.sampler?.cursor !== null && record.sampler?.cursor !== undefined) {
