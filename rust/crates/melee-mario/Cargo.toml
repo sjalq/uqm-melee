@@ -16,3 +16,4 @@ melee-core = { path = "../melee-core" }
 melee-sim = { path = "../melee-sim" }
 melee-neat = { path = "../melee-neat" }
 serde_json = "1"
+libc = "0.2"
