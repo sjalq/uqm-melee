@@ -6,7 +6,7 @@ module Mario.Genome exposing
     , Compiled, compile, compiledNodeCount, compiledEdgeCount, recurrentEdgeCount, evaluationOrder
     , State, initial, reset, previousValues
     , Step, Activation, activate, activateAll
-    , controlsFrom, controlBits, sigmoid
+    , controlsFrom, controlBits, sigmoid, taylorThreshold
     , observationCount, controlCount, memoryCount, inputCount, outputCount
     , firstInputId, firstControlFeedbackId, firstMemoryFeedbackId, biasId
     , firstOutputId, lastOutputId, firstMemoryOutputId, firstHiddenId
@@ -61,8 +61,11 @@ which this module keeps in State.
 
   - The node value is sigmoid sum, with sigmoid x = 2 / (1 + e ^ (-4.9 * x)) - 1,
     saturating a non finite accumulator to 1, -1 or, for a not a number sum, 0.
-    A non input node with no enabled incoming gene therefore outputs exactly 0,
-    which is also the rule for isolated nodes.
+    Near zero that written form cancels away the whole answer, so the identical
+    function tanh (2.45 x) is evaluated from its Taylor series instead; see the
+    sigmoid documentation below, and note that the Rust runtime branches on the
+    same threshold. A non input node with no enabled incoming gene therefore
+    outputs exactly 0, which is also the rule for isolated nodes.
 
   - A genome need not declare every fixed slot. An undeclared input feeds
     nothing, because no gene may reference an undeclared node, and an undeclared
@@ -76,8 +79,12 @@ which this module keeps in State.
     LEFT wins when both keys are held.
 
 Cross language note: Elm reaches the exponential through e ^ x while Rust uses
-f64::exp, so the two runtimes can disagree in the last unit in the last place.
-Compare oracle outputs with a small absolute tolerance, not bitwise.
+f64::exp, so above the sigmoid's Taylor threshold the two runtimes can disagree
+in the last unit in the last place. Compare those numbers with a small absolute
+tolerance rather than bitwise. Control DECISIONS are a different matter and must
+match exactly, which is what the threshold exists for: any output whose sign an
+ulp of the exponential could flip is computed by the series instead, using only
+correctly rounded arithmetic.
 
 -}
 
@@ -905,16 +912,70 @@ activateAll compiled steps =
         |> List.reverse
 
 
-{-| MarI/O's activation function. A not a number accumulator saturates to zero,
-matching the Rust runtime, so extreme weights cannot make the two disagree.
+{-| MarI/O's activation function, evaluated so that two runtimes agree on the
+sign of the answer.
+
+`2 / (1 + exp(-4.9 x)) - 1` is algebraically `tanh(2.45 x)`, but near zero the
+written form cancels catastrophically: `exp(-4.9 x)` lands a hair under 1,
+adding 1 gives a number a hair under 2, and subtracting 1 from the quotient
+throws away every bit that carried the answer. What survives is quantised to
+multiples of about 1.1e-16, and which multiple it lands on is decided by the
+last unit in the last place of `exp`. Elm reaches the exponential through
+`e ^ x` and Rust through `f64::exp`, and those disagree by an ulp, so the same
+tiny sum came out positive on one runtime and exactly zero on the other, which
+is the difference between turning left and not turning at all.
+
+Below the threshold the odd Taylor series of `tanh` is used instead. It is the
+same function, not a deadzone or an approximation of convenience: it is far more
+accurate than the exponential form there, and it uses only multiplication,
+division and subtraction, which IEEE-754 requires to be correctly rounded, so
+every runtime produces the identical double. The first dropped term is
+`2 u^5 / 15`, about 1.2e-24 at the threshold, which is a thousandth of an
+ulp of the answer there.
+
+This is a shared contract with the Rust runtime, which branches on the same
+threshold and evaluates the same expression with the same associativity:
+
+    NaN -> 0, +inf -> 1, -inf -> -1
+    u = 2.45 * x
+    |x| < 1e-5  ->  u - u * u * u / 3
+    otherwise   ->  2 / (1 + exp(-4.9 * x)) - 1
+
+Above the threshold the two runtimes' exponentials may still differ by an ulp,
+so numbers there compare within a tolerance rather than bitwise. No output that
+large can have its sign flipped by an ulp, so control decisions are unaffected.
+
 -}
 sigmoid : Float -> Float
 sigmoid x =
     if isNaN x then
         0
 
+    else if x == 1 / 0 then
+        1
+
+    else if x == -1 / 0 then
+        -1
+
     else
-        2 / (1 + e ^ (-4.9 * x)) - 1
+        let
+            u =
+                2.45 * x
+        in
+        if abs x < taylorThreshold then
+            u - u * u * u / 3
+
+        else
+            2 / (1 + e ^ (-4.9 * x)) - 1
+
+
+{-| Below this magnitude the exponential form has already cancelled the answer
+away, so the series is both the accurate and the reproducible choice. Part of
+the cross-language contract: the Rust port branches on the same number.
+-}
+taylorThreshold : Float
+taylorThreshold =
+    1.0e-5
 
 
 {-| Read the five control outputs. Left and right both above zero cancel, which
