@@ -1237,22 +1237,25 @@ nothing on this panel is a per-cell claim.
 viewOverallGate : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
 viewOverallGate tips model status =
     let
-        reasons =
-            Gate.explainBroad status.curriculum status.overall status.shipPerformance
+        -- The full reasoning lives behind the heading's explanation trigger
+        -- rather than under it. Printed in full it ran to a dozen paragraphs
+        -- and pushed every number below the fold, which is how a dashboard
+        -- stops being read at all.
+        gateTip =
+            Tip.detail Copy.overallGate
+                (Gate.explainBroad status.curriculum status.overall status.shipPerformance)
     in
     case status.overall of
         Nothing ->
             div [ class "panel" ]
                 [ div [ class "panel-head" ]
-                    [ Tip.view tips Tip.AlignStart Copy.overallGate [ h2 [] [ text "Overall balanced win rate" ] ]
+                    [ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text "Overall balanced win rate" ] ]
                     , span [ class "panel-note" ] [ text "any ship versus any ship, Awesome cyborgs" ]
                     ]
                 , div [ class "placeholder" ]
                     [ Html.strong [] [ text Format.awaiting ]
                     , span [] [ text "The trainer has not published an overall balanced panel result yet. This is an absence of evidence, not a score of zero." ]
                     ]
-                , div [ Attr.style "margin-top" "14px" ]
-                    (List.map (\line -> p [ class "prose" ] [ text line ]) reasons)
                 ]
 
         Just overall ->
@@ -1309,7 +1312,7 @@ viewOverallGate tips model status =
             in
             div [ class "panel" ]
                 [ div [ class "panel-head" ]
-                    [ Tip.view tips Tip.AlignStart Copy.overallGate [ h2 [] [ text "Overall balanced win rate" ] ]
+                    [ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text "Overall balanced win rate" ] ]
                     , span [ class "panel-note" ]
                         [ text ("any ship versus any ship, Awesome cyborgs \u{00B7} " ++ roundText) ]
                     ]
@@ -1333,7 +1336,12 @@ viewOverallGate tips model status =
                             (Maybe.withDefault 0 overall.lowerBound)
                         , gateLegend overall.target
                         , p [ class "prose" ] [ text verdictLine ]
-                        , p [ class "prose" ] [ text (overallDemandLine overall) ]
+                        , p [ class "prose" ]
+                            [ text
+                                ("An aggregate over a balanced held-out panel, not a promise about every matchup. "
+                                    ++ overallDemandLine overall
+                                )
+                            ]
                         ]
                     , div [ class "gate-side" ]
                         [ div [ class "metrics" ]
@@ -1413,13 +1421,11 @@ viewOverallGate tips model status =
                                     "Both rounds have cleared the overall target for this champion. That is an aggregate result over the balanced distribution, not a per-matchup guarantee; the per-hull table below shows where it is weakest."
 
                                  else
-                                    "The gate passes only once this frozen champion clears the target on the audit round and then again on an independent confirm round. Neither round's evidence is added to the other's."
+                                    "Passes only after the audit round and then an independent confirm round. Neither round's evidence is added to the other's."
                                 )
                             ]
                         ]
                     ]
-                , div [ Attr.style "margin-top" "14px" ]
-                    (List.map (\line -> p [ class "prose" ] [ text line ]) reasons)
                 ]
 
 
@@ -1650,11 +1656,15 @@ viewCurriculum tips status =
         blockers =
             Gate.analyse target status.matchups
 
+        -- In broad mode this panel earns one sentence on screen. Its subject
+        -- is the cells, the gate is explained on the gate panel, and the rest
+        -- of the reasoning sits behind the heading's explanation trigger.
+        cellDetail =
+            Gate.explainBroadCells curriculum status.matchups
+
         reasons =
             if broad then
-                -- Deliberately not the gate explanation, which lives on the
-                -- gate panel. This panel's subject is the cells.
-                Gate.explainBroadCells curriculum status.matchups
+                List.take 1 cellDetail
 
             else
                 Gate.explain target curriculum status.matchups
@@ -1669,7 +1679,7 @@ viewCurriculum tips status =
             [ Tip.view tips
                 Tip.AlignStart
                 (if broad then
-                    Copy.broadMode
+                    Tip.detail Copy.broadMode (List.drop 1 cellDetail)
 
                  else
                     Copy.expansionBlocked
@@ -2137,13 +2147,14 @@ viewBroadMode tips status =
                     []
 
                 Just origin ->
-                    [ dt [] [ Tip.view tips Tip.AlignStart Copy.originRun [ text "Carried over from" ] ]
+                    -- One row, not three. The whole migration is a single fact.
+                    [ dt [] [ Tip.view tips Tip.AlignStart Copy.originRun [ text "Carried over" ] ]
                     , dd []
                         [ text
                             (origin
                                 ++ (case curriculum.originGeneration of
                                         Just generation ->
-                                            " \u{00B7} generation " ++ String.fromInt generation
+                                            " \u{00B7} g" ++ String.fromInt generation
 
                                         Nothing ->
                                             ""
@@ -2155,21 +2166,19 @@ viewBroadMode tips status =
                                         Nothing ->
                                             ""
                                    )
+                                ++ (case curriculum.transitionReason of
+                                        Just reason ->
+                                            " \u{00B7} " ++ reason
+
+                                        Nothing ->
+                                            ""
+                                   )
                             )
                         ]
                     ]
-                        ++ (case curriculum.transitionReason of
-                                Just reason ->
-                                    [ dt [] [ Tip.view tips Tip.AlignStart Copy.originRun [ text "Transition" ] ]
-                                    , dd [] [ text reason ]
-                                    ]
-
-                                Nothing ->
-                                    []
-                           )
     in
     panel tips
-        Copy.broadMode
+        (Tip.detail Copy.broadMode (List.drop 1 (Gate.explainBroadBoard curriculum)))
         "Any ship versus any ship"
         [ div [ class "metrics" ]
             [ viewMetric tips
@@ -2187,8 +2196,8 @@ viewBroadMode tips status =
                 , accent = ""
                 }
             ]
-        , div [ Attr.style "margin-top" "12px" ]
-            (List.map (\line -> p [ class "prose" ] [ text line ]) (Gate.explainBroadBoard curriculum))
+        , p [ class "prose", Attr.style "margin-top" "12px" ]
+            [ text (Maybe.withDefault "" (List.head (Gate.explainBroadBoard curriculum))) ]
         , dl [ class "deflist", Attr.style "margin-top" "16px" ]
             ([ dt [] [ Tip.view tips Tip.AlignStart Copy.ladderPhase [ text "Ladder" ] ]
              , dd [] [ text (Api.ladderLabel curriculum.ladder) ]
@@ -2282,12 +2291,12 @@ viewShipPerformance tips status =
                                 ++ String.fromInt (List.length rows)
                                 ++ " hulls"
                                 ++ (if measured > 0 then
-                                        ", about " ++ Format.count (games // measured) ++ " per measured hull"
+                                        ", about " ++ Format.count (games // measured) ++ " each"
 
                                     else
                                         ""
                                    )
-                                ++ ". Read every rate against its own sample size; a few games is not a verdict."
+                                ++ ". Read every rate against its own sample size."
                             )
                         ]
                     , shipTable rows
@@ -2296,7 +2305,14 @@ viewShipPerformance tips status =
     in
     div [ class "panel" ]
         [ div [ class "panel-head" ]
-            [ Tip.view tips Tip.AlignStart Copy.shipPerformance [ h2 [] [ text "Per-hull blind spots" ] ]
+            [ Tip.view tips
+                Tip.AlignStart
+                (Tip.detail Copy.shipPerformance
+                    [ "There is no per-hull target. A hull with no games shows as unmeasured, not as a loss, and no row here can block or unblock the overall gate." ]
+                )
+                [ h2 [] [ text "Per-hull blind spots" ] ]
+
+            -- The source stays here, right beside the table it describes.
             , span [ class "panel-note" ] [ text sourceNote ]
             ]
         , if List.isEmpty status.shipPerformance then
@@ -2308,23 +2324,23 @@ viewShipPerformance tips status =
           else
             div []
                 ([ p [ class "prose" ]
-                    [ text "Every win counted here is our champion's own win. The two tables group the same games differently: by the hull our champion flew, and by the hull it flew against. Neither table reports the opponent's wins." ]
-                 , if diagnosticOnly then
-                    p [ class "prose", Attr.style "margin-top" "8px" ]
-                        [ text "These rows come from the cheap balanced readiness probe, not from a gate round. A readiness result decides when an audit is worth running; it is not audit evidence and nothing is gated on it." ]
+                    [ text
+                        ("Both tables count our champion's own wins, grouped two ways."
+                            ++ (if diagnosticOnly then
+                                    " These rows are the cheap balanced readiness probe, not gate evidence."
 
-                   else
-                    text ""
+                                else
+                                    ""
+                               )
+                        )
+                    ]
                  ]
                     ++ section_ Api.OurSeat
                         "When piloting"
-                        "Our champion's record grouped by the hull it was flying. A weak row is a hull our champion cannot win with."
+                        "Grouped by the hull our champion flew. A weak row is a hull it cannot win with."
                     ++ section_ Api.OpponentSeat
                         "When facing"
-                        "The same games grouped by the hull our champion was flying against. A weak row is a hull our champion cannot beat."
-                    ++ [ p [ class "prose", Attr.style "margin-top" "12px" ]
-                            [ text "There is no per-hull target. A hull with no games shows as unmeasured, not as a loss, and no row here can block or unblock the overall gate." ]
-                       ]
+                        "The same games grouped by the hull it flew against. A weak row is a hull it cannot beat."
                 )
         ]
 
