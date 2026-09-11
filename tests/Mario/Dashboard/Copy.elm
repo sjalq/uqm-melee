@@ -16,9 +16,14 @@ module Mario.Dashboard.Copy exposing
     , expansionBlocked
     , freshness
     , generation
+    , auditPanel
     , heatmap
     , ladder
+    , ladderPhase
     , machine
+    , observedNeeded
+    , opponentRevision
+    , readiness
     , matchupCoverage
     , meanConnections
     , meanNodes
@@ -41,8 +46,10 @@ module Mario.Dashboard.Copy exposing
     , timeline
     , topology
     , unevaluated
+    , unresolved
     , vitals
     , winRateChart
+    , worstCell
     )
 
 {-| The explanation attached to every number on the dashboard.
@@ -75,6 +82,13 @@ allTips =
     , machine
     , unevaluated
     , nodesChart
+    , ladderPhase
+    , opponentRevision
+    , auditPanel
+    , observedNeeded
+    , readiness
+    , worstCell
+    , unresolved
     , generation
     , episodes
     , episodesPerSecond
@@ -311,6 +325,83 @@ target =
 
 
 -- CURRICULUM
+
+
+ladderPhase : Tip
+ladderPhase =
+    t "ladder-phase"
+        "Ladder phase"
+        "How the curriculum is currently growing. Climbing walks the frozen expansion order one ship at a time, alternating the opponent side and our side. Mixed plays an assembled roster rather than extending it. The phase decides what a promotion means, so a rate measured in one phase is not interchangeable with one measured in the other."
+        [ ( "Denominator", "None; a mode." )
+        , ( "Window", "Current." )
+        , ( "Source", "Curriculum state, checkpointed." )
+        ]
+
+
+opponentRevision : Tip
+opponentRevision =
+    t "opponent-revision"
+        "Frozen opponent revision"
+        "Which generation of frozen opponent this evidence was gathered against, with its fingerprint. A challenger never faces changing opponent weights inside a generation or an audit, and evidence is versioned by this fingerprint. When the revision moves, results collected against the previous one no longer describe the current gate and are not pooled with it."
+        [ ( "Denominator", "None; a revision counter and a fingerprint." )
+        , ( "Window", "Current. Revision 0 with no fingerprint means no frozen model opponent is in play yet, only the original game's cyborg." )
+        , ( "Source", "Curriculum state. All audit evidence on this page belongs to this revision." )
+        ]
+
+
+auditPanel : Tip
+auditPanel =
+    t "audit-panel"
+        "Audit panel"
+        "The predeclared, fixed-size panel a frozen candidate is judged on, and the loss count that ends the attempt early. The size is fixed before the audit starts and the panel does not overlap the confirmation panel, so evidence cannot be extended until it happens to look good. Repeated peeking at a panel of convenient size is how a lucky candidate gets promoted."
+        [ ( "Denominator", "Games in the predeclared panel." )
+        , ( "Window", "Per audit attempt, for the current frozen candidate." )
+        , ( "Source", "Run configuration, fixed for the run. Budget is the total audit spend allowed." )
+        ]
+
+
+observedNeeded : Tip
+observedNeeded =
+    t "observed-needed"
+        "Observed wins the gate actually demands"
+        "The target is a floor on the Wilson lower bound, not on the observed rate, so the raw score a candidate must post is higher than the target. On a panel of 100 against an 80% target, 80 wins out of 100 fails: the bound on 80/100 is about 71%. It takes 88 wins for the bound to clear 80%. Reading the target as though it were an observed rate is the single easiest way to believe a candidate passed when it did not."
+        [ ( "Denominator", "The predeclared audit panel size." )
+        , ( "Window", "Per audit attempt." )
+        , ( "Source", "Computed by the dashboard as the inverse of the Wilson bound at 95% confidence, z = 1.96. The trainer publishes the bound itself; this is the smallest win count that reaches it." )
+        ]
+
+
+unresolved : Tip
+unresolved =
+    t "unresolved"
+        "Unresolved episodes"
+        "Episodes that hit the display-tick deadline without a real resolved outcome, usually two ships that never finished each other off. These are invalidated, not won. A timeout is not a victory for either side and is never scored as one, so a rising count here means the win rates above rest on fewer real fights than the episode total suggests."
+        [ ( "Denominator", "Total episodes resolved in the run." )
+        , ( "Window", "Cumulative since the run started." )
+        , ( "Source", "Episode outcomes. Counted separately from wins and losses precisely so it cannot be mistaken for either." )
+        ]
+
+
+worstCell : Tip
+worstCell =
+    t "worst-cell"
+        "Weakest cell's bound"
+        "The lowest Wilson lower bound across the champion's active ordered matchups. This is the number the per-cell gate actually turns on, because every cell must clear the target individually. It is always at or below the overall bound, and the gap between the two is exactly the weakness an aggregate figure would hide."
+        [ ( "Denominator", "The audit games of whichever single cell is weakest." )
+        , ( "Window", "Current stage, current champion." )
+        , ( "Source", "Audit. A minimum across cells, never an average of them." )
+        ]
+
+
+readiness : Tip
+readiness =
+    t "readiness"
+        "Readiness screen"
+        "A cheap recurring check that decides when a candidate is worth spending an expensive audit panel on. It is a screening test, not gate evidence: passing it only buys the right to be audited, and its rate never counts toward a promotion."
+        [ ( "Denominator", "Games in the readiness sample." )
+        , ( "Window", "Re-checked every few generations, as given by the period." )
+        , ( "Source", "Training-side screening. Never pooled with audit evidence." )
+        ]
 
 
 stage : Tip

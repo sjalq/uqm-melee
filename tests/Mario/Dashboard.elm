@@ -192,22 +192,52 @@ init () =
 -- HTTP
 
 
+{-| Every request carries an explicit timeout.
+
+Without one, a request that never completes leaves the in-flight flag
+set forever and the poll loop skips every subsequent tick, so a single
+dropped response wedges the page permanently. With a timeout the runtime
+always delivers an outcome, the flag always clears, and the next tick
+retries.
+-}
+requestTimeout : Maybe Float
+requestTimeout =
+    Just 10000
+
+
+getJson : String -> (Result Http.Error a -> Msg) -> Decode.Decoder a -> Cmd Msg
+getJson url toMsg decoder =
+    Http.request
+        { method = "GET"
+        , headers = []
+        , url = url
+        , body = Http.emptyBody
+        , expect = Http.expectJson toMsg decoder
+        , timeout = requestTimeout
+        , tracker = Nothing
+        }
+
+
 fetchStatus : Cmd Msg
 fetchStatus =
-    Http.get { url = statusUrl, expect = Http.expectJson GotStatus Api.decodeStatus }
+    getJson statusUrl GotStatus Api.decodeStatus
 
 
 fetchNetwork : Cmd Msg
 fetchNetwork =
-    Http.get { url = networkUrl, expect = Http.expectJson GotNetwork Api.decodeNetwork }
+    getJson networkUrl GotNetwork Api.decodeNetwork
 
 
 sendControl : Action -> Cmd Msg
 sendControl action =
-    Http.post
-        { url = controlUrl
+    Http.request
+        { method = "POST"
+        , headers = []
+        , url = controlUrl
         , body = Http.jsonBody (Encode.object [ ( "action", Encode.string (actionKey action) ) ])
         , expect = Http.expectWhatever (GotControl action)
+        , timeout = requestTimeout
+        , tracker = Nothing
         }
 
 
@@ -459,14 +489,29 @@ clearSettledControl status control =
 -- SUBSCRIPTIONS
 
 
+{-| While hidden the page keeps a slow heartbeat rather than stopping
+dead. The intent of pausing is to stop burning the machine's battery and
+the trainer's time on a page nobody is looking at, and a poll every
+thirty seconds honours that. Stopping entirely does not: an embedded or
+background webview can stay hidden for its whole life, and a page that
+never polls there shows a snapshot that is silently hours old.
+-}
+hiddenPollMillis : Float
+hiddenPollMillis =
+    30000
+
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ if model.visible then
-            Time.every pollMillis Tick
+        [ Time.every
+            (if model.visible then
+                pollMillis
 
-          else
-            Sub.none
+             else
+                hiddenPollMillis
+            )
+            Tick
         , Browser.Events.onVisibilityChange VisibilityChanged
         , Browser.Events.onKeyDown (Decode.map GlobalKey (Decode.field "key" Decode.string))
         ]
@@ -1038,6 +1083,7 @@ viewChampionGate tips model status =
                         ]
                     ]
                 , p [ class "prose" ] [ text verdictLine ]
+                , p [ class "prose" ] [ text (demandLine status) ]
                 ]
             , div [ class "gate-side" ]
                 [ div [ class "metrics" ]
@@ -1085,7 +1131,35 @@ viewChampionGate tips model status =
                         { tip = Copy.championStructure
                         , label = "Topology"
                         , value = Just (Format.count champion.nodes ++ " / " ++ Format.count champion.connections)
-                        , sub = "nodes / enabled links"
+                        , sub = Format.count champion.hiddenNodes ++ " hidden, evolved"
+                        , accent = ""
+                        }
+                    , viewMetric tips
+                        { tip = Copy.observedNeeded
+                        , label = "Wins needed"
+                        , value =
+                            Gate.winsNeeded Gate.z95 target status.audit.panel
+                                |> Maybe.map (\wins -> Format.fraction wins status.audit.panel)
+                        , sub = "observed, to clear the bound"
+                        , accent = "metric-amber"
+                        }
+                    , viewMetric tips
+                        { tip = Copy.auditPanel
+                        , label = "Audit panel"
+                        , value =
+                            if status.audit.panel > 0 then
+                                Just (String.fromInt status.audit.panel)
+
+                            else
+                                Nothing
+                        , sub = "ends early at " ++ String.fromInt status.audit.maxLosses ++ " losses"
+                        , accent = ""
+                        }
+                    , viewMetric tips
+                        { tip = Copy.worstCell
+                        , label = "Worst cell"
+                        , value = Maybe.map Format.percent1 champion.worstCellLowerBound
+                        , sub = "weakest cell's bound"
                         , accent = ""
                         }
                     ]
@@ -1103,6 +1177,41 @@ viewChampionGate tips model status =
                 ]
             ]
         ]
+
+
+
+{-| Spells out what the gate actually demands on this panel. A target of
+80% is a floor on the Wilson bound, so the observed score a candidate
+has to post is meaningfully higher, and saying only "80%" invites the
+reader to think 80 of 100 would pass.
+-}
+demandLine : Api.Status -> String
+demandLine status =
+    let
+        panelSize =
+            status.audit.panel
+
+        target =
+            status.curriculum.target
+    in
+    case Gate.winsNeeded Gate.z95 target panelSize of
+        Just wins ->
+            "On the predeclared panel of "
+                ++ String.fromInt panelSize
+                ++ ", clearing the "
+                ++ Format.percent target
+                ++ " Wilson lower bound takes "
+                ++ String.fromInt wins
+                ++ " observed wins ("
+                ++ Format.percent1 (toFloat wins / toFloat panelSize)
+                ++ "), not "
+                ++ String.fromInt (ceiling (target * toFloat panelSize))
+                ++ ". The attempt also ends early at "
+                ++ String.fromInt status.audit.maxLosses
+                ++ " losses."
+
+        Nothing ->
+            "No audit panel size has been published yet, so the observed win count the gate demands cannot be stated."
 
 
 
@@ -1146,6 +1255,24 @@ viewVitals tips model status =
                 , value = Just (Format.duration status.elapsedSeconds)
                 , sub = "summed across resumes"
                 , accent = ""
+                }
+            , viewMetric tips
+                { tip = Copy.unresolved
+                , label = "Unresolved"
+                , value = Just (Format.count status.episodesUnresolved)
+                , sub =
+                    if status.episodes > 0 then
+                        Format.percent1 (toFloat status.episodesUnresolved / toFloat status.episodes)
+                            ++ " timed out, not won"
+
+                    else
+                        "timed out, not won"
+                , accent =
+                    if status.episodes > 0 && toFloat status.episodesUnresolved > 0.25 * toFloat status.episodes then
+                        "metric-amber"
+
+                    else
+                        ""
                 }
             ]
         , p [ class "prose" ]
@@ -1279,6 +1406,44 @@ viewCurriculum tips status =
                  else
                     List.map (\kind -> span [ class "chip" ] [ text (Api.opponentTypeLabel kind) ]) curriculum.opponentTypes
                 )
+            ]
+        , dl [ class "deflist", Attr.style "margin-top" "16px" ]
+            [ dt [] [ Tip.view tips Tip.AlignStart Copy.ladderPhase [ text "Ladder" ] ]
+            , dd [] [ text (Api.ladderLabel curriculum.ladder) ]
+            , dt [] [ Tip.view tips Tip.AlignStart Copy.opponentRevision [ text "Opponent rev" ] ]
+            , dd []
+                [ text
+                    ("r"
+                        ++ String.fromInt curriculum.opponentRevision
+                        ++ (case curriculum.opponentFingerprint of
+                                Just fingerprint ->
+                                    " \u{00B7} " ++ Format.shortId fingerprint
+
+                                Nothing ->
+                                    " \u{00B7} cyborg only, no frozen model yet"
+                           )
+                    )
+                ]
+            , dt [] [ Tip.view tips Tip.AlignStart Copy.readiness [ text "Readiness" ] ]
+            , dd []
+                [ text
+                    (case status.readiness.lastRate of
+                        Just rate ->
+                            Format.percent1 rate
+                                ++ " of "
+                                ++ String.fromInt status.readiness.games
+                                ++ ", needs "
+                                ++ Format.percent status.readiness.threshold
+
+                        Nothing ->
+                            "not yet screened \u{00B7} "
+                                ++ String.fromInt status.readiness.games
+                                ++ " games every "
+                                ++ String.fromInt status.readiness.period
+                                ++ " generations, needs "
+                                ++ Format.percent status.readiness.threshold
+                    )
+                ]
             ]
         ]
 
@@ -1509,7 +1674,7 @@ viewWinChart tips model status =
                 base =
                     Chart.series "training" "Training win rate (sampled panel, whole population)" "#ffb23f" (List.map .trainingWinRate status.history)
             in
-            { base | dashed = True, width = 1.6 }
+            { base | width = 1.3 }
 
         validation =
             let
@@ -1524,6 +1689,7 @@ viewWinChart tips model status =
         status
         (Chart.view
             { height = 240
+            , userWidth = 760
             , xLabels = historyLabels status
             , segments = historySegments status
             , yMin = 0
@@ -1556,6 +1722,7 @@ viewSpeciesChart tips model status =
         status
         (Chart.view
             { height = 190
+            , userWidth = 400
             , xLabels = historyLabels status
             , segments = historySegments status
             , yMin = 0
@@ -1588,6 +1755,7 @@ viewNodesChart tips model status =
         status
         (Chart.view
             { height = 190
+            , userWidth = 400
             , xLabels = historyLabels status
             , segments = historySegments status
             , yMin = 0
@@ -1620,6 +1788,7 @@ viewEpisodesChart tips model status =
         status
         (Chart.view
             { height = 190
+            , userWidth = 400
             , xLabels = historyLabels status
             , segments = historySegments status
             , yMin = 0

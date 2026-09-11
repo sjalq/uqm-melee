@@ -70,6 +70,7 @@ type alias Guide =
 
 type alias Config msg =
     { height : Float
+    , userWidth : Float
     , xLabels : List String
     , segments : List Int
     , yMin : Float
@@ -113,23 +114,23 @@ plotBottom =
     26
 
 
-userWidth : Float
-userWidth =
-    720
+{-| The chart's own coordinate width. Callers pass a value close to the
+width the panel actually renders at, because the viewBox is stretched to
+fill its container: a 720-wide chart squeezed into a 380-pixel panel
+would condense every label to half width and make the axes unreadable.
+-}
+plotWidth : Config msg -> Float
+plotWidth config =
+    config.userWidth - plotLeft - plotRight
 
 
-plotWidth : Float
-plotWidth =
-    userWidth - plotLeft - plotRight
-
-
-slotX : Int -> Int -> Float
-slotX total index =
+slotX : Config msg -> Int -> Int -> Float
+slotX config total index =
     if total <= 1 then
-        plotLeft + (plotWidth / 2)
+        plotLeft + (plotWidth config / 2)
 
     else
-        plotLeft + (plotWidth * toFloat index / toFloat (total - 1))
+        plotLeft + (plotWidth config * toFloat index / toFloat (total - 1))
 
 
 valueY : Config msg -> Float -> Float
@@ -171,7 +172,7 @@ view config =
         div [ Attr.class "chart-wrap" ]
             [ Svg.svg
                 [ SA.class "chart-svg"
-                , SA.viewBox ("0 0 " ++ String.fromFloat userWidth ++ " " ++ String.fromFloat config.height)
+                , SA.viewBox ("0 0 " ++ String.fromFloat config.userWidth ++ " " ++ String.fromFloat config.height)
                 , SA.preserveAspectRatio "none"
                 , Attr.attribute "role" "group"
                 , Attr.attribute "tabindex" "0"
@@ -261,7 +262,7 @@ viewGrid config total =
                     in
                     [ Svg.line
                         [ SA.x1 (String.fromFloat plotLeft)
-                        , SA.x2 (String.fromFloat (userWidth - plotRight))
+                        , SA.x2 (String.fromFloat (config.userWidth - plotRight))
                         , SA.y1 (String.fromFloat y)
                         , SA.y2 (String.fromFloat y)
                         , SA.stroke "#1a2540"
@@ -285,7 +286,7 @@ viewGrid config total =
         ++ segmentDividers config total
         ++ [ Svg.line
                 [ SA.x1 (String.fromFloat plotLeft)
-                , SA.x2 (String.fromFloat (userWidth - plotRight))
+                , SA.x2 (String.fromFloat (config.userWidth - plotRight))
                 , SA.y1 (String.fromFloat bottomY)
                 , SA.y2 (String.fromFloat bottomY)
                 , SA.stroke "#24355c"
@@ -310,7 +311,7 @@ xAxisLabels config total =
         |> List.map
             (\( i, label ) ->
                 Svg.text_
-                    [ SA.x (String.fromFloat (slotX total i))
+                    [ SA.x (String.fromFloat (slotX config total i))
                     , SA.y (String.fromFloat (config.height - plotBottom + 15))
                     , SA.textAnchor
                         (if i == 0 then
@@ -346,7 +347,7 @@ segmentDividers config total =
             (\( i, _, b ) ->
                 let
                     x =
-                        (slotX total i + slotX total (i + 1)) / 2
+                        (slotX config total i + slotX config total (i + 1)) / 2
                 in
                 [ Svg.line
                     [ SA.x1 (String.fromFloat x)
@@ -380,7 +381,7 @@ viewGuides config =
             in
             [ Svg.line
                 [ SA.x1 (String.fromFloat plotLeft)
-                , SA.x2 (String.fromFloat (userWidth - plotRight))
+                , SA.x2 (String.fromFloat (config.userWidth - plotRight))
                 , SA.y1 (String.fromFloat y)
                 , SA.y2 (String.fromFloat y)
                 , SA.stroke guide.color
@@ -389,9 +390,9 @@ viewGuides config =
                 ]
                 []
             , Svg.text_
-                [ SA.x (String.fromFloat (userWidth - plotRight - 4))
+                [ SA.x (String.fromFloat (plotLeft + 4))
                 , SA.y (String.fromFloat (y - 5))
-                , SA.textAnchor "end"
+                , SA.textAnchor "start"
                 , SA.fontSize "10"
                 , SA.fill guide.color
                 , SA.fontFamily "ui-monospace, Menlo, Consolas, monospace"
@@ -456,7 +457,7 @@ viewSeries config total s =
             runs config.segments s.values
 
         toPoint ( i, v ) =
-            String.fromFloat (slotX total i) ++ "," ++ String.fromFloat (valueY config v)
+            String.fromFloat (slotX config total i) ++ "," ++ String.fromFloat (valueY config v)
 
         lineOf run =
             if List.length run < 2 then
@@ -486,7 +487,7 @@ viewSeries config total s =
                 List.map
                     (\( i, v ) ->
                         Svg.circle
-                            [ SA.cx (String.fromFloat (slotX total i))
+                            [ SA.cx (String.fromFloat (slotX config total i))
                             , SA.cy (String.fromFloat (valueY config v))
                             , SA.r "2.6"
                             , SA.fill s.color
@@ -514,7 +515,7 @@ viewCrosshair config total =
         Just index ->
             let
                 x =
-                    slotX total (clampIndex total index)
+                    slotX config total (clampIndex total index)
             in
             Svg.line
                 [ SA.x1 (String.fromFloat x)
@@ -555,15 +556,15 @@ viewHitTargets config total =
     let
         bandWidth =
             if total <= 1 then
-                plotWidth
+                plotWidth config
 
             else
-                plotWidth / toFloat (total - 1)
+                plotWidth config / toFloat (total - 1)
     in
     List.indexedMap
         (\i _ ->
             Svg.rect
-                [ SA.x (String.fromFloat (slotX total i - bandWidth / 2))
+                [ SA.x (String.fromFloat (slotX config total i - bandWidth / 2))
                 , SA.y (String.fromFloat plotTop)
                 , SA.width (String.fromFloat bandWidth)
                 , SA.height (String.fromFloat (config.height - plotTop - plotBottom))

@@ -6,6 +6,9 @@ module Mario.Dashboard.Gate exposing
     , explain
     , missingReverseSeats
     , weakestFirst
+    , wilsonLower
+    , winsNeeded
+    , z95
     )
 
 {-| Why the curriculum is or is not expanding.
@@ -25,6 +28,82 @@ it directly testable and keeps the view free of judgement calls.
 
 import Mario.Dashboard.Api as Api exposing (Champion, Matchup, MatchupStatus(..))
 import Mario.Dashboard.Format as Format
+
+
+{-| The standard two-sided 95% normal quantile, which is what a plain
+"Wilson lower bound" means unless stated otherwise.
+-}
+z95 : Float
+z95 =
+    1.96
+
+
+{-| Lower end of the Wilson score interval for `wins` out of `games`.
+
+The trainer computes and publishes its own bound, and the dashboard
+always displays that published value rather than this one. This exists
+for the inverse question below: given a panel size, how many wins does
+the gate actually demand?
+
+-}
+wilsonLower : Float -> Int -> Int -> Maybe Float
+wilsonLower z wins games =
+    if games <= 0 then
+        Nothing
+
+    else
+        let
+            n =
+                toFloat games
+
+            p =
+                toFloat wins / n
+
+            zz =
+                z * z
+
+            denominator =
+                1 + (zz / n)
+
+            centre =
+                p + (zz / (2 * n))
+
+            margin =
+                z * sqrt (((p * (1 - p)) + (zz / (4 * n))) / n)
+        in
+        Just (max 0 ((centre - margin) / denominator))
+
+
+{-| The smallest number of observed wins on a panel of `games` whose
+Wilson lower bound reaches `target`.
+
+This is the number that matters to anyone reading the gate. A target of
+80% does not mean "win 80 of 100"; on a panel of 100 it means win 88,
+because the bound has to clear 80% rather than the raw rate. Stating
+only the target invites the reader to think an 80/100 result passes,
+which it does not.
+
+The bound rises monotonically with wins at a fixed panel size, so a scan
+upward finds the first qualifying count.
+
+-}
+winsNeeded : Float -> Float -> Int -> Maybe Int
+winsNeeded z target games =
+    if games <= 0 then
+        Nothing
+
+    else
+        List.range 0 games
+            |> List.filter
+                (\wins ->
+                    case wilsonLower z wins games of
+                        Just bound ->
+                            bound >= target
+
+                        Nothing ->
+                            False
+                )
+            |> List.head
 
 
 type alias Blockers =

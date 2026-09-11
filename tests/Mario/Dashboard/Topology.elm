@@ -79,6 +79,23 @@ rowStep =
     11
 
 
+{-| Hidden nodes need less room than a labelled input row, but they still
+need enough that two adjacent circles do not touch.
+-}
+hiddenRowStep : Float
+hiddenRowStep =
+    11
+
+
+{-| Above this many nodes in one column, per-node id labels stop being
+readable and become texture. The nodes stay; only the numbering goes,
+and the readout still names whichever node is selected.
+-}
+denseColumn : Int
+denseColumn =
+    26
+
+
 bandGap : Float
 bandGap =
     10
@@ -108,6 +125,7 @@ type alias Layout =
     , placed : List Placed
     , index : Dict Int Placed
     , bandMarks : List ( Group, Float, Float )
+    , crowded : Bool
     }
 
 
@@ -245,11 +263,26 @@ layout genome =
                 |> Tuple.second
                 |> List.reverse
 
-        columnHeight =
+        inputColumnHeight =
             inputRows
                 |> List.map Tuple.second
                 |> List.maximum
                 |> Maybe.withDefault (topMargin + rowStep)
+
+        -- An evolved champion can carry far more hidden nodes than the 57
+        -- fixed inputs. Sizing the canvas to the inputs alone would stack
+        -- a hundred hidden nodes on top of each other into an unreadable
+        -- smear, so the tallest hidden column sets the floor instead.
+        widestHiddenColumn =
+            hidden
+                |> List.map (\id -> Dict.get id depths |> Maybe.withDefault maxDepth)
+                |> List.foldl (\d acc -> Dict.update d (\m -> Just (1 + Maybe.withDefault 0 m)) acc) Dict.empty
+                |> Dict.values
+                |> List.maximum
+                |> Maybe.withDefault 0
+
+        columnHeight =
+            max inputColumnHeight (topMargin + (toFloat widestHiddenColumn * hiddenRowStep))
 
         height =
             columnHeight + rowStep + bottomMargin
@@ -348,6 +381,9 @@ layout genome =
             , declared = Dict.member id declaredSet
             }
 
+        crowded =
+            widestHiddenColumn > denseColumn
+
         placed =
             List.map (place inputX) inputRows
                 ++ List.map (place outputX) outputRows
@@ -373,6 +409,7 @@ layout genome =
     , placed = placed
     , index = List.foldl (\p acc -> Dict.insert p.id p acc) Dict.empty placed
     , bandMarks = bandMarks
+    , crowded = crowded
     }
 
 
@@ -500,13 +537,34 @@ view config genome =
                 , Attr.attribute "aria-describedby" config.describedBy
                 , Html.Events.preventDefaultOn "keydown" (arrowDecoder config ids)
                 ]
-                (viewBands lay
+                (defs
+                    :: viewBands lay
                     ++ viewEdges config lay summary genome
-                    ++ List.concatMap (viewNode config) lay.placed
+                    ++ List.concatMap (viewNode config lay.crowded) lay.placed
                 )
             ]
         , viewReadout config genome summary
         , viewKey
+        ]
+
+
+{-| An arrowhead for recurrent edges. Signal flows left to right through
+the graph, so a link that travels right to left is the exception, and an
+explicit head at its destination says which way it is actually going.
+-}
+defs : Svg msg
+defs =
+    Svg.defs []
+        [ Svg.marker
+            [ SA.id "mario-recurrent-arrow"
+            , SA.viewBox "0 0 8 8"
+            , SA.refX "7"
+            , SA.refY "4"
+            , SA.markerWidth "5"
+            , SA.markerHeight "5"
+            , SA.orient "auto"
+            ]
+            [ Svg.path [ SA.d "M 0 0 L 8 4 L 0 8 z", SA.fill "#f4ead6" ] [] ]
         ]
 
 
@@ -569,6 +627,12 @@ viewBands lay =
     List.concatMap
         (\( group, lo, hi ) ->
             let
+                caption =
+                    Slots.groupLabel group
+
+                fits =
+                    (hi - lo) > (toFloat (String.length caption) * 5.0)
+
                 isOutput =
                     group == ControlOutputs || group == MemoryOutputs
 
@@ -589,23 +653,29 @@ viewBands lay =
                 , SA.strokeOpacity "0.5"
                 ]
                 []
-            , Svg.text_
-                [ SA.x (String.fromFloat (x + 5))
-                , SA.y (String.fromFloat ((lo + hi) / 2))
-                , SA.fontSize "8.5"
-                , SA.fill (groupColor group)
-                , SA.fontFamily "ui-sans-serif, system-ui, sans-serif"
-                , SA.transform
-                    ("rotate(-90 "
-                        ++ String.fromFloat (x + 5)
-                        ++ " "
-                        ++ String.fromFloat ((lo + hi) / 2)
-                        ++ ")"
-                    )
-                , SA.textAnchor "middle"
-                ]
-                [ Svg.text (Slots.groupLabel group) ]
             ]
+                ++ (if fits then
+                        [ Svg.text_
+                            [ SA.x (String.fromFloat (x + 5))
+                            , SA.y (String.fromFloat ((lo + hi) / 2))
+                            , SA.fontSize "9"
+                            , SA.fill (groupColor group)
+                            , SA.fontFamily "ui-sans-serif, system-ui, sans-serif"
+                            , SA.transform
+                                ("rotate(-90 "
+                                    ++ String.fromFloat (x + 5)
+                                    ++ " "
+                                    ++ String.fromFloat ((lo + hi) / 2)
+                                    ++ ")"
+                                )
+                            , SA.textAnchor "middle"
+                            ]
+                            [ Svg.text caption ]
+                        ]
+
+                    else
+                        []
+                   )
         )
         lay.bandMarks
 
@@ -700,6 +770,13 @@ viewEdges config lay summary genome =
                          else
                             "3 3"
                         )
+                    , SA.markerEnd
+                        (if recurrent then
+                            "url(#mario-recurrent-arrow)"
+
+                         else
+                            "none"
+                        )
                     ]
                     []
             )
@@ -710,8 +787,8 @@ pt x y =
     String.fromFloat x ++ " " ++ String.fromFloat y
 
 
-viewNode : Config msg -> Placed -> List (Svg msg)
-viewNode config placed =
+viewNode : Config msg -> Bool -> Placed -> List (Svg msg)
+viewNode config crowded placed =
     let
         info =
             Slots.slot placed.id
@@ -741,7 +818,11 @@ viewNode config placed =
 
         labelNode =
             if placed.group == Hidden then
-                [ Svg.text_
+                if crowded then
+                    []
+
+                else
+                    [ Svg.text_
                     [ SA.x (String.fromFloat placed.x)
                     , SA.y (String.fromFloat (placed.y - 7))
                     , SA.fontSize "7.5"
@@ -750,7 +831,7 @@ viewNode config placed =
                     , SA.fontFamily "ui-monospace, Menlo, Consolas, monospace"
                     ]
                     [ Svg.text (String.fromInt placed.id) ]
-                ]
+                    ]
 
             else
                 [ Svg.text_
