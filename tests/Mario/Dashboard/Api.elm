@@ -6,6 +6,8 @@ module Mario.Dashboard.Api exposing
     , EvaluationScope(..)
     , EvidenceSource(..)
     , Event
+    , Fitness(..)
+    , GateCriterion(..)
     , Gene
     , Genome
     , HistoryPoint
@@ -26,6 +28,7 @@ module Mario.Dashboard.Api exposing
     , Resources
     , RoundResult
     , Sampler
+    , Scoring
     , Seat(..)
     , ShipPerformance
     , Status
@@ -36,6 +39,8 @@ module Mario.Dashboard.Api exposing
     , evaluationScopeLabel
     , evidenceIsGate
     , evidenceSourceLabel
+    , fitnessLabel
+    , gateCriterionLabel
     , isBroad
     , ladderLabel
     , matchupStatusLabel
@@ -756,6 +761,118 @@ type alias Checkpoint =
 type alias Resources =
     { workers : Int
     , dutyCycle : Float
+
+    -- How long one fight is allowed to last, in simulation ticks. The
+    -- crew ratio is read at this deadline, so the figure is part of what
+    -- the score means rather than a scheduling detail. Absent when the
+    -- engine does not report it; never guessed at.
+    , episodeTicks : Maybe Int
+    }
+
+
+{-| How a genome's score was computed, as the engine reports it.
+
+Three rules govern this block, because getting any of them wrong would
+print a confident lie about what the run is optimising.
+
+1.  Absence means the original combat fitness. The selector is newer
+    than the runs it can be applied to, so a status without a `scoring`
+    block came from a build that had exactly one rule. The dashboard
+    says so in those words rather than showing the crew ratio, which
+    that run never used.
+
+2.  The ratio's edge-case constants are read, never assumed. A
+    crew-ratio run declares what a dead opponent scores and what a
+    mutual wipe scores; if it does not, the dashboard says the constant
+    was not reported instead of printing the documented default as if
+    it had been measured.
+
+3.  The fitness is not the gate. `gate` is a separate field and stays a
+    separate sentence on the page, because a run can breed on the crew
+    ratio while promotion still turns on actual wins.
+
+-}
+type Fitness
+    = Combat
+    | {- The caps live inside the constructor, so no combat run can carry
+         a crew-ratio constant and no crew-ratio run can lose one.
+      -}
+      CrewRatio
+        { zeroOpponent : Maybe Float
+        , mutualZero : Maybe Float
+        }
+    | UnknownFitness String
+
+
+fitnessFrom : String -> Maybe Float -> Maybe Float -> Fitness
+fitnessFrom raw zeroOpponent mutualZero =
+    case raw of
+        "combat" ->
+            Combat
+
+        "crew-ratio" ->
+            CrewRatio { zeroOpponent = zeroOpponent, mutualZero = mutualZero }
+
+        other ->
+            UnknownFitness other
+
+
+fitnessLabel : Fitness -> String
+fitnessLabel fitness =
+    case fitness of
+        Combat ->
+            "combat"
+
+        CrewRatio _ ->
+            "crew ratio"
+
+        UnknownFitness other ->
+            if String.isEmpty other then
+                "not reported"
+
+            else
+                other
+
+
+{-| What a promotion is actually judged on. Kept as its own type so the
+page can never rephrase an unfamiliar criterion as "wins".
+-}
+type GateCriterion
+    = CombatWins
+    | UnknownGate String
+
+
+gateFrom : String -> GateCriterion
+gateFrom raw =
+    case raw of
+        "combat-wins" ->
+            CombatWins
+
+        other ->
+            UnknownGate other
+
+
+gateCriterionLabel : GateCriterion -> String
+gateCriterionLabel criterion =
+    case criterion of
+        CombatWins ->
+            "actual combat wins"
+
+        UnknownGate other ->
+            if String.isEmpty other then
+                "not reported"
+
+            else
+                other
+
+
+type alias Scoring =
+    { fitness : Fitness
+
+    -- `Nothing` means the run did not say. A crew-ratio run has no time
+    -- term at all, but that is the engine's fact to state, not ours.
+    , speedBonus : Maybe Bool
+    , gate : GateCriterion
     }
 
 
@@ -817,6 +934,11 @@ type alias Status =
     , overall : Maybe Overall
     , shipPerformance : List ShipPerformance
     , sampler : Maybe Sampler
+
+    -- Absent on every run that predates the scoring selector. Absence is
+    -- not "unknown rule" and it is certainly not the crew ratio; see
+    -- `Scoring` below.
+    , scoring : Maybe Scoring
     }
 
 
@@ -884,6 +1006,7 @@ decodeStatus =
         |> optional "overall" (Decode.nullable decodeOverall) Nothing
         |> optional "ship_performance" (Decode.list decodeShipPerformance) []
         |> optional "sampler" (Decode.nullable decodeSampler) Nothing
+        |> optional "scoring" (Decode.nullable decodeScoring) Nothing
 
 
 emptyRoundResult : RoundResult
@@ -1012,6 +1135,7 @@ empty =
     , overall = Nothing
     , shipPerformance = []
     , sampler = Nothing
+    , scoring = Nothing
     }
 
 
@@ -1121,7 +1245,7 @@ decodeCheckpoint =
 
 emptyResources : Resources
 emptyResources =
-    { workers = 0, dutyCycle = 0 }
+    { workers = 0, dutyCycle = 0, episodeTicks = Nothing }
 
 
 decodeResources : Decoder Resources
@@ -1129,6 +1253,22 @@ decodeResources =
     Decode.succeed Resources
         |> optional "workers" Decode.int 0
         |> optional "duty_cycle" (safeFloat 0) 0
+        |> optional "episode_ticks" (Decode.nullable Decode.int) Nothing
+
+
+decodeScoring : Decoder Scoring
+decodeScoring =
+    Decode.succeed (\raw zeroOpponent mutualZero speedBonus gate ->
+        { fitness = fitnessFrom raw zeroOpponent mutualZero
+        , speedBonus = speedBonus
+        , gate = gate
+        }
+    )
+        |> optional "fitness" Decode.string ""
+        |> optional "zero_opponent" finiteFloat Nothing
+        |> optional "mutual_zero" finiteFloat Nothing
+        |> optional "speed_bonus" (Decode.nullable Decode.bool) Nothing
+        |> optional "gate" (Decode.map gateFrom Decode.string) (UnknownGate "")
 
 
 decodeHistoryPoint : Decoder HistoryPoint

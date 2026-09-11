@@ -8,6 +8,7 @@ module Mario.Dashboard exposing
     , init
     , main
     , update
+    , view
     )
 
 {-| MarI/O mission control.
@@ -50,6 +51,7 @@ import Mario.Dashboard.Copy as Copy
 import Mario.Dashboard.Format as Format
 import Mario.Dashboard.Gate as Gate
 import Mario.Dashboard.Heatmap as Heatmap
+import Mario.Dashboard.Scoring as Scoring
 import Mario.Dashboard.Slots as Slots
 import Mario.Dashboard.Tip as Tip
 import Mario.Dashboard.Topology as Topology
@@ -1056,6 +1058,23 @@ viewGate tips model status =
         viewChampionGate tips model status
 
 
+{-| The one line that keeps the scoring rule from being read as the
+gate, rendered in the gate panel's head because that is exactly where
+the two would be confused. Nothing is added when the run's fitness is
+the original combat rule, which nobody mistakes for a different measure.
+-}
+scoringNote : Tip.Handlers Msg -> Api.Status -> List (Html Msg)
+scoringNote tips status =
+    case Scoring.gateNote status.scoring of
+        Nothing ->
+            []
+
+        Just note ->
+            [ span [ class "panel-note" ]
+                [ Tip.view tips Tip.AlignEnd Copy.gateCriterion [ text note ] ]
+            ]
+
+
 viewChampionGate : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
 viewChampionGate tips model status =
     let
@@ -1105,9 +1124,11 @@ viewChampionGate tips model status =
     in
     div [ class "panel" ]
         [ div [ class "panel-head" ]
-            [ Tip.view tips Tip.AlignStart Copy.championRate [ h2 [] [ text "Champion fresh audit win rate" ] ]
-            , span [ class "panel-note" ] [ text "Audit evidence only. Not population training play." ]
-            ]
+            ([ Tip.view tips Tip.AlignStart Copy.championRate [ h2 [] [ text "Champion fresh audit win rate" ] ]
+             , span [ class "panel-note" ] [ text "Audit evidence only. Not population training play." ]
+             ]
+                ++ scoringNote tips status
+            )
         , div [ class "gate" ]
             [ div [ class "gate-figure" ]
                 [ div [ class rateClass ] [ text rateText ]
@@ -1312,10 +1333,12 @@ viewOverallGate tips model status =
             in
             div [ class "panel" ]
                 [ div [ class "panel-head" ]
-                    [ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text "Overall balanced win rate" ] ]
-                    , span [ class "panel-note" ]
-                        [ text ("any ship versus any ship, Awesome cyborgs \u{00B7} " ++ roundText) ]
-                    ]
+                    ([ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text "Overall balanced win rate" ] ]
+                     , span [ class "panel-note" ]
+                         [ text ("any ship versus any ship, Awesome cyborgs \u{00B7} " ++ roundText) ]
+                     ]
+                        ++ scoringNote tips status
+                    )
                 , div [ class "gate" ]
                     [ div [ class "gate-figure" ]
                         [ div [ class rateClass ] [ text rateText ]
@@ -1617,6 +1640,26 @@ viewVitals tips model status =
 
                     else
                         ""
+                }
+            , viewMetric tips
+                { tip = Tip.detail Copy.fitnessRule (Scoring.explain status.scoring status.resources)
+                , label = "Fitness"
+                , value = Just (Scoring.label status.scoring)
+                , sub = Scoring.formula status.scoring
+                , accent =
+                    case Maybe.map .fitness status.scoring of
+                        Just (Api.CrewRatio _) ->
+                            "metric-cyan"
+
+                        _ ->
+                            ""
+                }
+            , viewMetric tips
+                { tip = Copy.fightLimit
+                , label = "Fight limit"
+                , value = Scoring.fightLimit status.resources
+                , sub = Scoring.limitNote status.scoring
+                , accent = ""
                 }
             ]
         , p [ class "prose" ]

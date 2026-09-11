@@ -14,7 +14,10 @@ module Mario.Dashboard.Copy exposing
     , episodes
     , episodesPerSecond
     , expansionBlocked
+    , fightLimit
+    , fitnessRule
     , freshness
+    , gateCriterion
     , generation
     , auditPanel
     , heatmap
@@ -141,8 +144,52 @@ allTips =
     , broadMode
     , samplerCoverage
     , originRun
+    , fitnessRule
+    , fightLimit
+    , gateCriterion
     ]
 
+
+
+
+-- SCORING
+--
+-- Three tips, not one, because three different things get confused with
+-- one another here: the rule that ranks breeding, the deadline the rule
+-- is read at, and the separate evidence a promotion is judged on.
+
+
+fitnessRule : Tip
+fitnessRule =
+    t "fitness-rule"
+        "Scoring rule"
+        "What the trainer maximises when it decides which genomes breed. A crew ratio is a ratio of two shares, not a percentage of anything: 1.00 means both sides kept the same share of the crew they started with, and a value above 1.00 says our side kept more, not that the fight was won. It is not a fraction of maximum health, and it is not the gate."
+        [ ( "Denominator", "The opponent's surviving share of their starting crew; a ratio of two shares has no percentage denominator of its own." )
+        , ( "Window", "Every episode scored in the current generation, read when the fight ends, or at the cut-off if neither side has finished by then." )
+        , ( "Source", "Trainer configuration, republished with every status snapshot." )
+        ]
+
+
+fightLimit : Tip
+fightLimit =
+    t "fight-limit"
+        "Fight length"
+        "How long a fight may run in the simulation before it is cut off and scored where it stands. A fight that ends is scored when it ends; only one that neither side has finished runs to this limit. Under the crew ratio the two are scored by exactly the same rule, with no bonus for finishing early."
+        [ ( "Denominator", "None; simulated time, the reported episode tick budget over 60 simulation ticks per second. It is not machine wall time, and a fight takes far less of that to run." )
+        , ( "Window", "Each individual episode." )
+        , ( "Source", "Trainer resource caps, field episode_ticks." )
+        ]
+
+
+gateCriterion : Tip
+gateCriterion =
+    t "gate-criterion"
+        "Fitness is not the gate"
+        "The scoring rule ranks the population for breeding. This gate decides whether the run is allowed to move on, and it is judged on fresh audit evidence which may measure something else entirely. A champion can be the best-scoring genome in the population and still fail this gate, and that is the point of keeping them apart."
+        [ ( "Denominator", "The gate's own predeclared panel of audit games." )
+        , ( "Window", "The current champion's audit panel only." )
+        , ( "Source", "Trainer scoring block, which names the gate criterion alongside the fitness." )
+        ]
 
 
 -- RUN HEADER
@@ -185,7 +232,7 @@ vitals : Tip
 vitals =
     t "vitals"
         "Run vitals"
-        "Throughput and progress counters for the run as a whole. None of these say anything about how good the champion is; they say how much work has been done and how fast. The gate figures at the top of the page are the ones that speak to quality."
+        "Throughput and progress counters for the run as a whole, plus the rule that work is scored by and the deadline each fight is scored at. None of these say anything about how good the champion is; they say how much work has been done, how fast, and what it was ranked on. The gate figures at the top of the page are the ones that speak to quality."
         [ ( "Denominator", "Varies per tile; each states its own." )
         , ( "Window", "Cumulative for the run unless a tile says otherwise." )
         , ( "Source", "Trainer counters, training and audit work combined." )
