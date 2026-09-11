@@ -1,5 +1,6 @@
 module Mario.Dashboard.Format exposing
     ( awaiting
+    , capitalise
     , count
     , decimal
     , duration
@@ -27,6 +28,24 @@ Kept in one place so "awaiting evidence" can never drift into "0%".
 awaiting : String
 awaiting =
     "Awaiting evidence"
+
+
+{-| First letter upper-cased, the rest left exactly as written.
+
+Labels on this page are derived from a run's reported criterion, so the
+same noun appears mid-sentence and as a tile heading. Upper-casing only
+the first character keeps "crew leads" spelled the one way, rather than
+title-casing it into a second name for the same thing.
+
+-}
+capitalise : String -> String
+capitalise text =
+    case String.uncons text of
+        Just ( first, rest ) ->
+            String.cons (Char.toUpper first) rest
+
+        Nothing ->
+            text
 
 
 {-| Round half away from zero at a given number of decimal places, then

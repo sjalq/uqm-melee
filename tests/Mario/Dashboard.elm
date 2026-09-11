@@ -1027,8 +1027,8 @@ gateMeter target verdict rateFraction boundFraction =
         ]
 
 
-gateLegend : Float -> Html msg
-gateLegend target =
+gateLegend : Maybe Api.Scoring -> Float -> Html msg
+gateLegend scoring target =
     div [ class "gate-legend" ]
         [ span []
             [ span [ class "swatch", Attr.style "background" "#4fd6e0" ] []
@@ -1036,7 +1036,7 @@ gateLegend target =
             ]
         , span []
             [ span [ class "swatch", Attr.style "background" "rgba(79,214,224,0.3)" ] []
-            , text "raw win rate"
+            , text ("raw " ++ Scoring.rateLabel scoring)
             ]
         , span []
             [ span [ class "swatch", Attr.style "background" "#f4ead6" ] []
@@ -1124,7 +1124,10 @@ viewChampionGate tips model status =
     in
     div [ class "panel" ]
         [ div [ class "panel-head" ]
-            ([ Tip.view tips Tip.AlignStart Copy.championRate [ h2 [] [ text "Champion fresh audit win rate" ] ]
+            ([ Tip.view tips
+                Tip.AlignStart
+                (Tip.detail (Copy.championRate status.scoring) (Scoring.explainGate status.scoring))
+                [ h2 [] [ text ("Champion fresh audit " ++ Scoring.rateLabel status.scoring) ] ]
              , span [ class "panel-note" ] [ text "Audit evidence only. Not population training play." ]
              ]
                 ++ scoringNote tips status
@@ -1135,21 +1138,23 @@ viewChampionGate tips model status =
                 , div [ class "gate-denominator" ]
                     [ text
                         (if champion.validatedGames > 0 then
-                            "over " ++ Format.fraction champion.validatedWins champion.validatedGames ++ " fresh audit games"
+                            "over "
+                                ++ Format.fraction champion.validatedWins champion.validatedGames
+                                ++ " fresh audit games"
 
                          else
                             "no audit games on this champion's panel yet"
                         )
                     ]
                 , gateMeter target verdict rateFraction boundFraction
-                , gateLegend target
+                , gateLegend status.scoring target
                 , p [ class "prose" ] [ text verdictLine ]
                 , p [ class "prose" ] [ text (demandLine status) ]
                 ]
             , div [ class "gate-side" ]
                 [ div [ class "metrics" ]
                     [ viewMetric tips
-                        { tip = Copy.championLowerBound
+                        { tip = Copy.championLowerBound status.scoring
                         , label = "Lower bound"
                         , value = Maybe.map Format.percent1 champion.lowerBound
                         , sub = "gate target " ++ Format.percent target
@@ -1165,7 +1170,7 @@ viewChampionGate tips model status =
                                     ""
                         }
                     , viewMetric tips
-                        { tip = Copy.championGames
+                        { tip = Copy.championGames status.scoring
                         , label = "Audit sample"
                         , value =
                             if champion.validatedGames > 0 then
@@ -1173,7 +1178,7 @@ viewChampionGate tips model status =
 
                             else
                                 Nothing
-                        , sub = "wins over predeclared panel games"
+                        , sub = Scoring.successPlural status.scoring ++ " over predeclared panel games"
                         , accent = ""
                         }
                     , viewMetric tips
@@ -1196,8 +1201,8 @@ viewChampionGate tips model status =
                         , accent = ""
                         }
                     , viewMetric tips
-                        { tip = Copy.observedNeeded
-                        , label = "Wins needed"
+                        { tip = Copy.observedNeeded status.scoring
+                        , label = Format.capitalise (Scoring.successPlural status.scoring) ++ " needed"
                         , value =
                             Gate.winsNeeded Gate.z95 target status.audit.panel
                                 |> Maybe.map (\wins -> Format.fraction wins status.audit.panel)
@@ -1205,7 +1210,7 @@ viewChampionGate tips model status =
                         , accent = "metric-amber"
                         }
                     , viewMetric tips
-                        { tip = Copy.auditPanel
+                        { tip = Copy.auditPanel status.scoring
                         , label = "Audit panel"
                         , value =
                             if status.audit.panel > 0 then
@@ -1263,14 +1268,19 @@ viewOverallGate tips model status =
         -- and pushed every number below the fold, which is how a dashboard
         -- stops being read at all.
         gateTip =
-            Tip.detail Copy.overallGate
-                (Gate.explainBroad status.curriculum status.overall status.shipPerformance)
+            Tip.detail (Copy.overallGate status.scoring)
+                (Gate.explainBroad status.scoring status.curriculum status.overall status.shipPerformance
+                    ++ Scoring.explainGate status.scoring
+                )
+
+        heading =
+            "Overall balanced " ++ Scoring.rateLabel status.scoring
     in
     case status.overall of
         Nothing ->
             div [ class "panel" ]
                 [ div [ class "panel-head" ]
-                    [ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text "Overall balanced win rate" ] ]
+                    [ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text heading ] ]
                     , span [ class "panel-note" ] [ text "any ship versus any ship, Awesome cyborgs" ]
                     ]
                 , div [ class "placeholder" ]
@@ -1333,7 +1343,7 @@ viewOverallGate tips model status =
             in
             div [ class "panel" ]
                 [ div [ class "panel-head" ]
-                    ([ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text "Overall balanced win rate" ] ]
+                    ([ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text heading ] ]
                      , span [ class "panel-note" ]
                          [ text ("any ship versus any ship, Awesome cyborgs \u{00B7} " ++ roundText) ]
                      ]
@@ -1357,19 +1367,19 @@ viewOverallGate tips model status =
                             verdict
                             (Maybe.withDefault 0 overall.winRate)
                             (Maybe.withDefault 0 overall.lowerBound)
-                        , gateLegend overall.target
+                        , gateLegend status.scoring overall.target
                         , p [ class "prose" ] [ text verdictLine ]
                         , p [ class "prose" ]
                             [ text
                                 ("An aggregate over a balanced held-out panel, not a promise about every matchup. "
-                                    ++ overallDemandLine overall
+                                    ++ overallDemandLine status.scoring overall
                                 )
                             ]
                         ]
                     , div [ class "gate-side" ]
                         [ div [ class "metrics" ]
                             [ viewMetric tips
-                                { tip = Copy.overallGate
+                                { tip = Copy.overallGate status.scoring
                                 , label = "Lower bound"
                                 , value = Maybe.map Format.percent1 overall.lowerBound
                                 , sub = "overall target " ++ Format.percent overall.target
@@ -1394,7 +1404,8 @@ viewOverallGate tips model status =
                                     else
                                         Nothing
                                 , sub =
-                                    "wins over "
+                                    Scoring.successPlural status.scoring
+                                        ++ " over "
                                         ++ String.fromInt overall.panel
                                         ++ " predeclared games, "
                                         ++ String.fromInt overall.pairs
@@ -1424,8 +1435,8 @@ viewOverallGate tips model status =
                                 , accent = ""
                                 }
                             , viewMetric tips
-                                { tip = Copy.observedNeeded
-                                , label = "Wins needed"
+                                { tip = Copy.observedNeeded status.scoring
+                                , label = Format.capitalise (Scoring.successPlural status.scoring) ++ " needed"
                                 , value =
                                     Gate.winsNeeded Gate.z95 overall.target overall.panel
                                         |> Maybe.map (\wins -> Format.fraction wins overall.panel)
@@ -1492,11 +1503,16 @@ roundMetric tips tip label target round =
 
 
 {-| What the overall gate actually demands on its panel, in observed
-wins rather than in the target percentage, for the same reason the
-staged gate spells it out: a bound floor of 80% is not 80 wins in 100.
+successes rather than in the target percentage, for the same reason the
+staged gate spells it out: a bound floor of 80% is not 80 in 100.
+
+The noun is the run's own, because under a crew-lead gate the count the
+panel has to post is a count of leads and calling it a win count would
+name evidence the run never gathered.
+
 -}
-overallDemandLine : Api.Overall -> String
-overallDemandLine overall =
+overallDemandLine : Maybe Api.Scoring -> Api.Overall -> String
+overallDemandLine scoring overall =
     case Gate.winsNeeded Gate.z95 overall.target overall.panel of
         Just wins ->
             "On the balanced panel of "
@@ -1505,14 +1521,16 @@ overallDemandLine overall =
                 ++ Format.percent overall.target
                 ++ " Wilson lower bound takes "
                 ++ String.fromInt wins
-                ++ " observed wins ("
+                ++ " observed "
+                ++ Scoring.successPlural scoring
+                ++ " ("
                 ++ Format.percent1 (toFloat wins / toFloat overall.panel)
                 ++ "), not "
                 ++ String.fromInt (ceiling (overall.target * toFloat overall.panel))
                 ++ ". The same has to happen twice, on two independent rounds."
 
         Nothing ->
-            "No overall panel size has been published yet, so the observed win count the gate demands cannot be stated."
+            "No overall panel size has been published yet, so the observed count the gate demands cannot be stated."
 
 
 {-| Spells out what the gate actually demands on this panel. A target of
@@ -1537,20 +1555,24 @@ demandLine status =
                 ++ Format.percent target
                 ++ " Wilson lower bound takes "
                 ++ String.fromInt wins
-                ++ " observed wins ("
+                ++ " observed "
+                ++ Scoring.successPlural status.scoring
+                ++ " ("
                 ++ Format.percent1 (toFloat wins / toFloat panelSize)
                 ++ "), not "
                 ++ String.fromInt (ceiling (target * toFloat panelSize))
                 ++ ". That leaves "
                 ++ String.fromInt status.audit.maxLosses
-                ++ " losses to spare, so the attempt survives "
+                ++ " "
+                ++ Scoring.nonSuccessPhrase status.scoring
+                ++ " to spare, so the attempt survives "
                 ++ String.fromInt status.audit.maxLosses
                 ++ " and is abandoned on the "
                 ++ ordinal (status.audit.maxLosses + 1)
                 ++ ", the point at which the target became unreachable."
 
         Nothing ->
-            "No audit panel size has been published yet, so the observed win count the gate demands cannot be stated."
+            "No audit panel size has been published yet, so the observed count the gate demands cannot be stated."
 
 
 {-| The loss cap is the number of losses an attempt can absorb and still
@@ -1624,16 +1646,17 @@ viewVitals tips model status =
                 , accent = ""
                 }
             , viewMetric tips
-                { tip = Copy.unresolved
+                { tip = Copy.unresolved status.scoring
                 , label = "Unresolved"
                 , value = Just (Format.count status.episodesUnresolved)
                 , sub =
                     if status.episodes > 0 then
                         Format.percent1 (toFloat status.episodesUnresolved / toFloat status.episodes)
-                            ++ " timed out, not won"
+                            ++ " "
+                            ++ Scoring.unresolvedNote status.scoring
 
                     else
-                        "timed out, not won"
+                        Scoring.unresolvedNote status.scoring
                 , accent =
                     if status.episodes > 0 && toFloat status.episodesUnresolved > 0.25 * toFloat status.episodes then
                         "metric-amber"
@@ -1659,6 +1682,26 @@ viewVitals tips model status =
                 , label = "Fight limit"
                 , value = Scoring.fightLimit status.resources
                 , sub = Scoring.limitNote status.scoring
+                , accent = ""
+                }
+            , viewMetric tips
+                { tip = Tip.detail Copy.noDamagePenalty (Scoring.penaltyExplain status.scoring)
+                , label = "No-damage penalty"
+                , value = Scoring.penaltyLabel status.scoring
+                , sub = Scoring.penaltyNote status.scoring
+                , accent =
+                    case Maybe.map .noDamagePenalty status.scoring of
+                        Just (Api.PenaltyOf _) ->
+                            "metric-amber"
+
+                        _ ->
+                            ""
+                }
+            , viewMetric tips
+                { tip = Copy.combatVictories
+                , label = "Combat victories"
+                , value = Scoring.combatVictoriesValue status.combatVictories
+                , sub = Scoring.combatVictoriesNote status.combatVictories
                 , accent = ""
                 }
             ]
@@ -1722,7 +1765,7 @@ viewCurriculum tips status =
             [ Tip.view tips
                 Tip.AlignStart
                 (if broad then
-                    Tip.detail Copy.broadMode (List.drop 1 cellDetail)
+                    Tip.detail (Copy.broadMode status.scoring) (List.drop 1 cellDetail)
 
                  else
                     Copy.expansionBlocked
@@ -1751,7 +1794,7 @@ viewCurriculum tips status =
             [ viewMetric tips
                 { tip =
                     if broad then
-                        Copy.broadMode
+                        Copy.broadMode status.scoring
 
                     else
                         Copy.stage
@@ -1835,7 +1878,7 @@ viewCurriculum tips status =
             , viewMetric tips
                 { tip =
                     if broad then
-                        Copy.overallGate
+                        Copy.overallGate status.scoring
 
                     else
                         Copy.nextExpansion
@@ -1948,9 +1991,11 @@ viewCurriculum tips status =
                     ((case status.readiness.lastRate of
                         Just rate ->
                             Format.percent1 rate
-                                ++ " of "
+                                ++ " "
+                                ++ Scoring.rateLabel status.scoring
+                                ++ " over "
                                 ++ String.fromInt status.readiness.games
-                                ++ ", needs "
+                                ++ " games, needs "
                                 ++ Format.percent status.readiness.threshold
 
                         Nothing ->
@@ -1960,6 +2005,8 @@ viewCurriculum tips status =
                                 ++ String.fromInt status.readiness.period
                                 ++ " generations, needs "
                                 ++ Format.percent status.readiness.threshold
+                                ++ " "
+                                ++ Scoring.rateLabel status.scoring
                      )
                         ++ " \u{00B7} screening probe, never gate evidence"
                         ++ (case status.readiness.purpose of
@@ -2018,7 +2065,7 @@ regressionRow tips status =
                             ++ String.fromInt regression.lastSwept
                             ++ " held every mastered cell"
             in
-            [ dt [] [ Tip.view tips Tip.AlignStart Copy.regression [ text "Regression" ] ]
+            [ dt [] [ Tip.view tips Tip.AlignStart (Copy.regression status.scoring) [ text "Regression" ] ]
             , dd [] [ text (phaseText ++ " \u{00B7} " ++ resultText) ]
             ]
 
@@ -2221,18 +2268,18 @@ viewBroadMode tips status =
                     ]
     in
     panel tips
-        (Tip.detail Copy.broadMode (List.drop 1 (Gate.explainBroadBoard curriculum)))
+        (Tip.detail (Copy.broadMode status.scoring) (List.drop 1 (Gate.explainBroadBoard curriculum)))
         "Any ship versus any ship"
         [ div [ class "metrics" ]
             [ viewMetric tips
-                { tip = Copy.broadMode
+                { tip = Copy.broadMode status.scoring
                 , label = "Active board"
                 , value = Just (String.fromInt ours ++ " \u{00D7} " ++ String.fromInt theirs)
                 , sub = Format.count (ours * theirs) ++ " ordered matchups, all active at once"
                 , accent = "metric-cyan"
                 }
             , viewMetric tips
-                { tip = Copy.broadMode
+                { tip = Copy.broadMode status.scoring
                 , label = "Evaluation"
                 , value = Just "overall"
                 , sub = Api.evaluationScopeLabel curriculum.evaluationScope
@@ -2342,7 +2389,7 @@ viewShipPerformance tips status =
                                 ++ ". Read every rate against its own sample size."
                             )
                         ]
-                    , shipTable rows
+                    , shipTable status.scoring rows
                     ]
                 ]
     in
@@ -2350,7 +2397,7 @@ viewShipPerformance tips status =
         [ div [ class "panel-head" ]
             [ Tip.view tips
                 Tip.AlignStart
-                (Tip.detail Copy.shipPerformance
+                (Tip.detail (Copy.shipPerformance status.scoring)
                     [ "There is no per-hull target. A hull with no games shows as unmeasured, not as a loss, and no row here can block or unblock the overall gate." ]
                 )
                 [ h2 [] [ text "Per-hull blind spots" ] ]
@@ -2368,7 +2415,9 @@ viewShipPerformance tips status =
             div []
                 ([ p [ class "prose" ]
                     [ text
-                        ("Both tables count our champion's own wins, grouped two ways."
+                        ("Both tables count our champion's own "
+                            ++ Scoring.successPlural status.scoring
+                            ++ ", grouped two ways."
                             ++ (if diagnosticOnly then
                                     " These rows are the cheap balanced readiness probe, not gate evidence."
 
@@ -2380,7 +2429,9 @@ viewShipPerformance tips status =
                  ]
                     ++ section_ Api.OurSeat
                         "When piloting"
-                        "Grouped by the hull our champion flew. A weak row is a hull it cannot win with."
+                        ("Grouped by the hull our champion flew. A weak row is a hull it cannot "
+                            ++ weakRowVerb status.scoring
+                            ++ " with.")
                     ++ section_ Api.OpponentSeat
                         "When facing"
                         "The same games grouped by the hull it flew against. A weak row is a hull it cannot beat."
@@ -2388,8 +2439,23 @@ viewShipPerformance tips status =
         ]
 
 
-shipTable : List Api.ShipPerformance -> Html Msg
-shipTable rows =
+{-| What a strong row in the per-hull table would show, in the run's own
+terms. Under a crew-lead gate a hull our champion "cannot win with" is
+the wrong complaint: it may win nothing at all and still lead on crew
+every time, which is exactly what the run is asking it to do.
+-}
+weakRowVerb : Maybe Api.Scoring -> String
+weakRowVerb scoring =
+    case Scoring.criterion scoring of
+        Api.CombatWins ->
+            "win"
+
+        _ ->
+            "score"
+
+
+shipTable : Maybe Api.Scoring -> List Api.ShipPerformance -> Html Msg
+shipTable scoring rows =
     let
         cell attrs content =
             Html.td attrs [ text content ]
@@ -2441,8 +2507,8 @@ shipTable rows =
                 [ Html.tr []
                     [ header "Hull"
                     , header "Games"
-                    , header "Champion wins"
-                    , header "Win rate"
+                    , header ("Champion " ++ Scoring.successPlural scoring)
+                    , header (Scoring.successHeading scoring)
                     , header "Lower bound"
                     , header "Evidence"
                     ]
@@ -2609,20 +2675,32 @@ viewWinChart tips model status =
         training =
             let
                 base =
-                    Chart.series "training" "Training win rate (sampled panel, whole population)" "#ffb23f" (List.map .trainingWinRate status.history)
+                    Chart.series "training"
+                        ("Training "
+                            ++ Scoring.rateLabel status.scoring
+                            ++ " (sampled panel, whole population)"
+                        )
+                        "#ffb23f"
+                        (List.map .trainingWinRate status.history)
             in
             { base | width = 1.3 }
 
         validation =
             let
                 base =
-                    Chart.series "validation" "Champion audit win rate (predeclared gate panel)" "#4fd6e0" (List.map .validationWinRate status.history)
+                    Chart.series "validation"
+                        ("Champion audit "
+                            ++ Scoring.rateLabel status.scoring
+                            ++ " (predeclared gate panel)"
+                        )
+                        "#4fd6e0"
+                        (List.map .validationWinRate status.history)
             in
             { base | markers = True, width = 2.4 }
     in
     chartPanel tips
-        Copy.winRateChart
-        "Win rate over generations"
+        (Tip.detail (Copy.winRateChart status.scoring) (Scoring.explainGate status.scoring))
+        (Scoring.successHeading status.scoring ++ " over generations")
         status
         (Chart.view
             { height = 240
@@ -2820,6 +2898,7 @@ viewHeatmap tips model status =
                     , onSelect = HeatSelect
                     , onClear = HeatClear
                     , describedBy = "readout-heat"
+                    , successPlural = Scoring.successPlural status.scoring
                     }
                     (Heatmap.grid status.curriculum.ourRoster status.curriculum.opponentRoster list)
                 ]

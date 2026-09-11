@@ -896,13 +896,13 @@ copySuite =
     describe "tooltip copy"
         [ test "every metric explains itself" <|
             \() ->
-                Copy.allTips
+                (Copy.allTips Nothing)
                     |> List.filter (\t -> String.length t.body < 40 || String.isEmpty t.title)
                     |> List.map .id
                     |> Expect.equal []
         , test "every tip states its denominator, its window and its source" <|
             \() ->
-                Copy.allTips
+                (Copy.allTips Nothing)
                     |> List.filter
                         (\t ->
                             let
@@ -917,7 +917,7 @@ copySuite =
             \() ->
                 let
                     ids =
-                        List.map .id Copy.allTips
+                        List.map .id (Copy.allTips Nothing)
                 in
                 Expect.equal (List.length ids) (List.length (unique ids))
         , test "no two anchors on the page reuse the same tip, which would duplicate a DOM id" <|
@@ -943,7 +943,7 @@ copySuite =
         , test "the audit and training tips each say which kind of evidence they describe" <|
             \() ->
                 Expect.equal
-                    ( String.contains "audit" (String.toLower Copy.championRate.body)
+                    ( String.contains "audit" (String.toLower (Copy.championRate Nothing).body)
                     , String.contains "training" (String.toLower Copy.sampleAllocation.body)
                     )
                     ( True, True )
@@ -1225,7 +1225,7 @@ broadProvenanceSuite =
             \() ->
                 case decode broadOriginMixedPayload of
                     Ok status ->
-                        Gate.explainBroad status.curriculum status.overall status.shipPerformance
+                        Gate.explainBroad Nothing status.curriculum status.overall status.shipPerformance
                             |> List.any (String.contains "did not revert to per-matchup gating")
                             |> Expect.equal True
 
@@ -1367,21 +1367,21 @@ broadCopySuite =
                 -- insists every metric states.
                 let
                     detailed =
-                        Tip.detail Copy.overallGate broadLines
+                        Tip.detail (Copy.overallGate Nothing) broadLines
                 in
                 Expect.equal
                     ( detailed.id, detailed.title, detailed.meta )
-                    ( Copy.overallGate.id, Copy.overallGate.title, Copy.overallGate.meta )
+                    ( (Copy.overallGate Nothing).id, (Copy.overallGate Nothing).title, (Copy.overallGate Nothing).meta )
         , test "detail actually carries the reasoning into the bubble" <|
             \() ->
-                Tip.detail Copy.overallGate broadLines
+                Tip.detail (Copy.overallGate Nothing) broadLines
                     |> .body
                     |> String.contains "not a claim that the champion clears"
                     |> Expect.equal True
         , test "an empty detail list leaves the tip exactly as it was" <|
             \() ->
-                Tip.detail Copy.overallGate []
-                    |> Expect.equal Copy.overallGate
+                Tip.detail (Copy.overallGate Nothing) []
+                    |> Expect.equal (Copy.overallGate Nothing)
         , test "the on-screen cell sentence is one line, with the rest behind the tip" <|
             \() ->
                 -- The panel prints List.take 1 of this and hides the rest, so
@@ -1403,7 +1403,7 @@ broadCopySuite =
             \() ->
                 case decode broadReadyPayload of
                     Ok status ->
-                        Gate.explainBroad status.curriculum status.overall status.shipPerformance
+                        Gate.explainBroad Nothing status.curriculum status.overall status.shipPerformance
                             |> List.any (\line -> String.contains "readiness probe" line && String.contains "not audit evidence" line)
                             |> Expect.equal True
 
@@ -1417,9 +1417,9 @@ broadCopySuite =
         , test "the per-hull tip spells out that both groupings count our own wins" <|
             \() ->
                 Expect.equal
-                    ( String.contains "OUR champion's wins" Copy.shipPerformance.body
-                    , String.contains "when piloting" Copy.shipPerformance.body
-                    , String.contains "when facing" Copy.shipPerformance.body
+                    ( String.contains "OUR champion's wins" (Copy.shipPerformance Nothing).body
+                    , String.contains "when piloting" (Copy.shipPerformance Nothing).body
+                    , String.contains "when facing" (Copy.shipPerformance Nothing).body
                     )
                     ( True, True, True )
         , test "the sampler tip refuses to call the balanced share board coverage" <|
@@ -1432,13 +1432,13 @@ broadCopySuite =
         , test "the overall gate tip calls itself an operational check, not a guarantee" <|
             \() ->
                 Expect.equal
-                    ( String.contains "operational confidence check" Copy.overallGate.body
-                    , String.contains "not a formal guarantee" Copy.overallGate.body
+                    ( String.contains "operational confidence check" (Copy.overallGate Nothing).body
+                    , String.contains "not a formal guarantee" (Copy.overallGate Nothing).body
                     )
                     ( True, True )
         , test "the overall gate tip says timeouts count against it" <|
             \() ->
-                String.contains "timeouts" (String.toLower (denominatorOf Copy.overallGate))
+                String.contains "timeouts" (String.toLower (denominatorOf (Copy.overallGate Nothing)))
                     |> Expect.equal True
         ]
 
@@ -1499,7 +1499,7 @@ broadLines : List String
 broadLines =
     case decode broadPayload of
         Ok status ->
-            Gate.explainBroad status.curriculum status.overall status.shipPerformance
+            Gate.explainBroad Nothing status.curriculum status.overall status.shipPerformance
 
         Err _ ->
             []
@@ -1749,7 +1749,7 @@ readinessBaselineSuite =
             \() ->
                 case decode readyBaselinePayload of
                     Ok status ->
-                        Gate.explainBroad status.curriculum status.overall status.shipPerformance
+                        Gate.explainBroad Nothing status.curriculum status.overall status.shipPerformance
                             |> List.any (\line -> String.contains "readiness probe" line && String.contains "not audit evidence" line)
                             |> Expect.equal True
 
@@ -1758,8 +1758,8 @@ readinessBaselineSuite =
         , test "the per-hull tip names readiness as a diagnostic in its own source line" <|
             \() ->
                 Expect.equal
-                    ( String.contains "readiness row" (sourceOf Copy.shipPerformance)
-                    , String.contains "diagnostic only" (sourceOf Copy.shipPerformance)
+                    ( String.contains "readiness row" (sourceOf (Copy.shipPerformance Nothing))
+                    , String.contains "diagnostic only" (sourceOf (Copy.shipPerformance Nothing))
                     )
                     ( True, True )
         ]
@@ -1826,6 +1826,280 @@ scoringSuite =
         , fightLimitSuite
         , gateSeparationSuite
         , renderSuite
+        , crewLeadSuite
+        , penaltySuite
+        , combatVictorySuite
+        ]
+
+
+{-| The staged run the operator actually launched: ranked on the crew
+ratio, promoted on strict crew leads, with the no-damage penalty armed.
+-}
+crewLeadPayload : String
+crewLeadPayload =
+    """
+{
+  "run_id": "mario-ratio-staged-20260912",
+  "episodes": 400,
+  "episodes_unresolved": 240,
+  "episodes_combat_wins": 37,
+  "episodes_combat_counted_since": 0,
+  "episodes_combat_wins_all_time": 37,
+  "resources": {"workers": 8, "duty_cycle": 0.5, "episode_ticks": 1200},
+  "curriculum": {"stage": 0, "target": 0.8, "our_roster": ["Pkunk"], "opponent_roster": ["Umgah"]},
+  "champion": {"id": "g-1", "win_rate": 0.9, "lower_bound": 0.82, "validated_wins": 36, "validated_games": 40},
+  "audit": {"panel": 40, "max_losses": 4},
+  "scoring": {
+    "fitness": "crew-ratio", "zero_opponent": 1000, "mutual_zero": 1,
+    "speed_bonus": false, "gate": "crew-lead", "no_damage_penalty": 1000
+  }
+}
+"""
+
+
+crewLeadSuite : Test
+crewLeadSuite =
+    describe "a crew-lead gate is never rendered as wins"
+        [ test "the criterion decodes as its own value rather than as an unrecognised string" <|
+            \() ->
+                case decode crewLeadPayload of
+                    Ok status ->
+                        Expect.equal (Maybe.map .gate status.scoring) (Just Api.CrewLead)
+
+                    Err error ->
+                        Expect.fail error
+        , test "a scoring block that names no gate means the original criterion, not an unknown one" <|
+            \() ->
+                -- Absence is documented, not a guess: the only gate a build
+                -- old enough to omit the field ever had was actual wins.
+                case decode """{"scoring":{"fitness":"combat"}}""" of
+                    Ok status ->
+                        Expect.equal (Maybe.map .gate status.scoring) (Just Api.CombatWins)
+
+                    Err error ->
+                        Expect.fail error
+        , test "the vocabulary follows the criterion, and absence keeps the original words" <|
+            \() ->
+                case ( decode crewLeadPayload, decode crewRatioPayload ) of
+                    ( Ok lead, Ok wins ) ->
+                        Expect.equal
+                            ( ( Scoring.rateLabel lead.scoring, Scoring.successPlural lead.scoring )
+                            , ( Scoring.rateLabel wins.scoring, Scoring.successPlural wins.scoring )
+                            , ( Scoring.rateLabel Nothing, Scoring.successPlural Nothing )
+                            )
+                            ( ( "crew-lead rate", "crew leads" )
+                            , ( "win rate", "wins" )
+                            , ( "win rate", "wins" )
+                            )
+
+                    _ ->
+                        Expect.fail "payloads did not decode"
+        , test "an unrecognised criterion is neither reworded as wins nor guessed at" <|
+            \() ->
+                case decode """{"scoring":{"fitness":"combat","gate":"crew-fraction-at-deadline"}}""" of
+                    Ok status ->
+                        Expect.equal
+                            ( Scoring.successPlural status.scoring
+                            , Api.gateCriterionLabel (Scoring.criterion status.scoring)
+                            )
+                            ( "counted successes", "crew-fraction-at-deadline" )
+
+                    Err error ->
+                        Expect.fail error
+        , test "the unresolved tile does not call an unresolved episode a non-win under this gate" <|
+            \() ->
+                -- The whole point of the crew comparison is that a fight
+                -- nobody finished still scores, so "timed out, not won" would
+                -- state a rule this run does not use.
+                case ( decode crewLeadPayload, decode crewRatioPayload ) of
+                    ( Ok lead, Ok wins ) ->
+                        Expect.equal
+                            ( Scoring.unresolvedNote lead.scoring
+                            , String.contains "not won" (Scoring.unresolvedNote lead.scoring)
+                            , Scoring.unresolvedNote wins.scoring
+                            )
+                            ( "unresolved; crew leads still count"
+                            , False
+                            , "timed out, not won"
+                            )
+
+                    _ ->
+                        Expect.fail "payloads did not decode"
+        , test "the gate's own explanation says leads are not wins and that ties fail" <|
+            \() ->
+                case decode crewLeadPayload of
+                    Ok status ->
+                        let
+                            said phrase =
+                                Scoring.explainGate status.scoring
+                                    |> List.any (String.contains phrase)
+                        in
+                        Expect.equal
+                            ( said "strictly greater"
+                            , said "none of them is a count of wins"
+                            , said "Ties do not count"
+                            )
+                            ( True, True, True )
+
+                    Err error ->
+                        Expect.fail error
+        , test "no panel on the rendered page calls this run's tallies wins" <|
+            \() ->
+                expectRendered crewLeadPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Champion fresh audit crew-lead rate" ]
+                        , Query.has [ Selector.text "Crew leads needed" ]
+                        , Query.has [ Selector.text "crew leads over predeclared panel games" ]
+                        , Query.has [ Selector.text "raw crew-lead rate" ]
+                        , Query.hasNot [ Selector.text "Champion fresh audit win rate" ]
+                        , Query.hasNot [ Selector.text "Wins needed" ]
+                        , Query.hasNot [ Selector.text "wins over predeclared panel games" ]
+                        ]
+                    )
+        , test "an archived run keeps every word the original gate earned" <|
+            \() ->
+                expectRendered crewRatioPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Champion fresh audit win rate" ]
+                        , Query.hasNot [ Selector.text "crew-lead rate" ]
+                        ]
+                    )
+        ]
+
+
+penaltySuite : Test
+penaltySuite =
+    describe "the no-damage penalty"
+        [ test "a reported magnitude is read as armed, and its absence as off" <|
+            \() ->
+                case ( decode crewLeadPayload, decode crewRatioPayload ) of
+                    ( Ok armed, Ok legacy ) ->
+                        Expect.equal
+                            ( Maybe.map .noDamagePenalty armed.scoring
+                            , Maybe.map .noDamagePenalty legacy.scoring
+                            )
+                            ( Just (Api.PenaltyOf 1000), Just Api.PenaltyOff )
+
+                    _ ->
+                        Expect.fail "payloads did not decode"
+        , test "a magnitude of zero is off, because a punishment of nothing is not a punishment" <|
+            \() ->
+                case decode """{"scoring":{"fitness":"crew-ratio","no_damage_penalty":0}}""" of
+                    Ok status ->
+                        Expect.equal
+                            ( Maybe.map .noDamagePenalty status.scoring
+                            , Scoring.penaltyLabel status.scoring
+                            )
+                            ( Just Api.PenaltyOff, Nothing )
+
+                    Err error ->
+                        Expect.fail error
+        , test "the tile shows the negated magnitude the fitness actually becomes" <|
+            \() ->
+                case decode crewLeadPayload of
+                    Ok status ->
+                        Expect.equal (Scoring.penaltyLabel status.scoring) (Just "\u{2212}1000")
+
+                    Err error ->
+                        Expect.fail error
+        , test "the explanation ties the penalty to their end crew, not to damage we dealt" <|
+            \() ->
+                case decode crewLeadPayload of
+                    Ok status ->
+                        let
+                            said phrase =
+                                Scoring.penaltyExplain status.scoring
+                                    |> List.any (String.contains phrase)
+                        in
+                        Expect.equal
+                            ( said "not a measure of damage we dealt"
+                            , said "moves fitness only"
+                            )
+                            ( True, True )
+
+                    Err error ->
+                        Expect.fail error
+        , test "the penalty is independent of the gate: an armed run still names its own criterion" <|
+            \() ->
+                case decode """{"scoring":{"fitness":"combat","gate":"combat-wins","no_damage_penalty":1000}}""" of
+                    Ok status ->
+                        Expect.equal
+                            ( Scoring.penaltyLabel status.scoring
+                            , Scoring.successPlural status.scoring
+                            )
+                            ( Just "\u{2212}1000", "wins" )
+
+                    Err error ->
+                        Expect.fail error
+        , test "the armed run shows the penalty on the page, and a legacy run shows it off" <|
+            \() ->
+                Expect.all
+                    [ \() ->
+                        expectRendered crewLeadPayload
+                            (Expect.all
+                                [ Query.has [ Selector.text "No-damage penalty" ]
+                                , Query.has [ Selector.text "\u{2212}1000" ]
+                                ]
+                            )
+                    , \() ->
+                        expectRendered crewRatioPayload
+                            (Query.has
+                                [ Selector.text "no penalty for a fight that costs them nothing" ]
+                            )
+                    ]
+                    ()
+        ]
+
+
+combatVictorySuite : Test
+combatVictorySuite =
+    describe "factual combat victories stay factual"
+        [ test "a fresh run's counter is read as the run's own total" <|
+            \() ->
+                case decode crewLeadPayload of
+                    Ok status ->
+                        Expect.equal status.combatVictories (Just (Api.VictoriesAllTime 37))
+
+                    Err error ->
+                        Expect.fail error
+        , test "a null all-time figure is a partial count, kept with the baseline it started from" <|
+            \() ->
+                -- The engine nulls the all-time field precisely when the
+                -- window opened mid-run, so falling back to the raw count as
+                -- though it were a total would invent evidence.
+                case decode """{"episodes_combat_wins":5,"episodes_combat_counted_since":900,"episodes_combat_wins_all_time":null}""" of
+                    Ok status ->
+                        Expect.equal status.combatVictories
+                            (Just (Api.VictoriesSince { victories = 5, sinceEpisodes = 900 }))
+
+                    Err error ->
+                        Expect.fail error
+        , test "a run that publishes no counter shows none rather than a zero it never measured" <|
+            \() ->
+                case decode """{"run_id":"mario-main-20260911"}""" of
+                    Ok status ->
+                        Expect.equal
+                            ( status.combatVictories
+                            , Scoring.combatVictoriesValue status.combatVictories
+                            )
+                            ( Nothing, Nothing )
+
+                    Err error ->
+                        Expect.fail error
+        , test "a partial count never appears without saying what it is a count since" <|
+            \() ->
+                Scoring.combatVictoriesNote
+                    (Just (Api.VictoriesSince { victories = 5, sinceEpisodes = 900 }))
+                    |> Expect.equal "resolved victories since episode 900"
+        , test "the page shows the victory count beside the lead tallies without equating them" <|
+            \() ->
+                expectRendered crewLeadPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Combat victories" ]
+                        , Query.has [ Selector.text "37" ]
+                        , Query.has [ Selector.text "resolved victories, whole run, all episodes" ]
+                        ]
+                    )
         ]
 
 
@@ -1873,13 +2147,14 @@ scoringDecoderSuite =
                             { fitness = Api.CrewRatio { zeroOpponent = Just 1000, mutualZero = Just 1 }
                             , speedBonus = Just False
                             , gate = Api.CombatWins
+                            , noDamagePenalty = Api.PenaltyOff
                             }
                         )
                     )
         , test "a combat block decodes without picking up crew-ratio constants" <|
             \() ->
                 Expect.equal (scoringOf combatPayload)
-                    (Ok (Just { fitness = Api.Combat, speedBonus = Just True, gate = Api.CombatWins }))
+                    (Ok (Just { fitness = Api.Combat, speedBonus = Just True, gate = Api.CombatWins, noDamagePenalty = Api.PenaltyOff }))
         , test "an absent block stays absent rather than defaulting to a rule the run never used" <|
             \() ->
                 Expect.equal (scoringOf """{"run_id":"mario-main-20260911"}""") (Ok Nothing)
@@ -2148,7 +2423,7 @@ gateSeparationSuite =
                 case decode crewRatioPayload of
                     Ok status ->
                         Scoring.gateNote status.scoring
-                            |> Expect.equal (Just "Breeding ranks on the crew ratio; this gate counts actual combat wins.")
+                            |> Expect.equal (Just "Breeding ranks on crew ratio; this gate counts actual combat wins.")
 
                     Err error ->
                         Expect.fail error
@@ -2226,12 +2501,12 @@ renderSuite =
             \() ->
                 expectRendered crewRatioPayload
                     (Query.has
-                        [ Selector.text "Breeding ranks on the crew ratio; this gate counts actual combat wins." ]
+                        [ Selector.text "Breeding ranks on crew ratio; this gate counts actual combat wins." ]
                     )
         , test "a combat run adds no separating line, so the panel head stays quiet" <|
             \() ->
                 expectRendered combatPayload
-                    (Query.hasNot [ Selector.text "Breeding ranks on the crew ratio" ])
+                    (Query.hasNot [ Selector.text "Breeding ranks on crew ratio" ])
         , test "an archived run with no scoring block is never labelled crew ratio" <|
             \() ->
                 expectRendered """{"run_id":"mario-broad-any-any-20260911","resources":{"episode_ticks":1200}}"""

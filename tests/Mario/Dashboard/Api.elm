@@ -2,6 +2,7 @@ module Mario.Dashboard.Api exposing
     ( Audit
     , Champion
     , Checkpoint
+    , CombatVictories(..)
     , Curriculum
     , EvaluationScope(..)
     , EvidenceSource(..)
@@ -16,6 +17,7 @@ module Mario.Dashboard.Api exposing
     , MatchupStatus(..)
     , Network
     , Node
+    , NoDamagePenalty(..)
     , NodeKind(..)
     , NextSide(..)
     , OpponentType(..)
@@ -41,6 +43,8 @@ module Mario.Dashboard.Api exposing
     , evidenceSourceLabel
     , fitnessLabel
     , gateCriterionLabel
+    , gateSuccessNoun
+    , gateSuccessPlural
     , isBroad
     , ladderLabel
     , matchupStatusLabel
@@ -77,7 +81,7 @@ Two rules run through every decoder here.
 -}
 
 import Json.Decode as Decode exposing (Decoder)
-import Json.Decode.Pipeline exposing (optional, required)
+import Json.Decode.Pipeline exposing (custom, optional, required)
 
 
 
@@ -836,9 +840,18 @@ fitnessLabel fitness =
 
 {-| What a promotion is actually judged on. Kept as its own type so the
 page can never rephrase an unfamiliar criterion as "wins".
+
+`CrewLead` is the second criterion the trainer can be pointed at, and it
+counts something a win is not: a game in which our surviving share of
+our starting crew strictly exceeds theirs. A fight that runs to the
+cut-off with neither ship destroyed can be a crew lead; it can never be
+a win. So every tally gathered under this criterion is a count of leads,
+and no figure carrying it may be rendered with the word "win".
+
 -}
 type GateCriterion
     = CombatWins
+    | CrewLead
     | UnknownGate String
 
 
@@ -847,6 +860,9 @@ gateFrom raw =
     case raw of
         "combat-wins" ->
             CombatWins
+
+        "crew-lead" ->
+            CrewLead
 
         other ->
             UnknownGate other
@@ -858,12 +874,79 @@ gateCriterionLabel criterion =
         CombatWins ->
             "actual combat wins"
 
+        CrewLead ->
+            "strict crew-share leads"
+
         UnknownGate other ->
             if String.isEmpty other then
                 "not reported"
 
             else
                 other
+
+
+{-| One counted success under the criterion, singular, for the places
+the page would otherwise have hard-coded "win".
+-}
+gateSuccessNoun : GateCriterion -> String
+gateSuccessNoun criterion =
+    case criterion of
+        CombatWins ->
+            "win"
+
+        CrewLead ->
+            "crew lead"
+
+        UnknownGate _ ->
+            "counted success"
+
+
+gateSuccessPlural : GateCriterion -> String
+gateSuccessPlural criterion =
+    case criterion of
+        CombatWins ->
+            "wins"
+
+        CrewLead ->
+            "crew leads"
+
+        UnknownGate _ ->
+            "counted successes"
+
+
+{-| The penalty that replaces a genome's fitness when a fight ends with
+the opponent no worse off in crew than they started.
+
+It is a conditional replacement, not a bound on the ordinary score:
+under that one condition the run's scoring rule is not consulted at all.
+
+Off, and on with a magnitude of zero, are the same run, so they are the
+same value here: an absent field, a reported zero and a reported
+negative all mean no penalty is applied. That stops the page announcing
+a punishment that punishes nothing.
+
+The magnitude is reported positive and the fitness it forces is its
+negation. That is the engine's convention, and it is spelled out
+wherever the number appears rather than left to be inferred.
+
+-}
+type NoDamagePenalty
+    = PenaltyOff
+    | PenaltyOf Float
+
+
+noDamagePenaltyFrom : Maybe Float -> NoDamagePenalty
+noDamagePenaltyFrom reported =
+    case reported of
+        Just magnitude ->
+            if magnitude > 0 then
+                PenaltyOf magnitude
+
+            else
+                PenaltyOff
+
+        Nothing ->
+            PenaltyOff
 
 
 type alias Scoring =
@@ -873,7 +956,38 @@ type alias Scoring =
     -- term at all, but that is the engine's fact to state, not ours.
     , speedBonus : Maybe Bool
     , gate : GateCriterion
+
+    -- A floor on fitness, independent of the gate above: what breeds is
+    -- not what promotes, and this touches only the former.
+    , noDamagePenalty : NoDamagePenalty
     }
+
+
+{-| Actual resolved combat victories across the run's episodes, counted
+regardless of what the run is gated on.
+
+This exists because under a crew-lead gate every other tally on the page
+counts leads, and a lead is not a victory. It is the one figure that can
+still honestly say "won". It is a population-wide total over episodes,
+never a champion rate, and the two are never placed where one could be
+read as the other.
+
+The engine can only count from the point the counter existed, so the two
+cases are separate values rather than one number with a footnote:
+
+  - `VictoriesAllTime` is exact for the whole run, and the engine
+    publishes it only when the counting window starts at episode zero.
+  - `VictoriesSince` is a partial count on a run that was already under
+    way, and must always be shown with the episode baseline it started
+    from, because the run's true total is unknown.
+
+`Nothing` on the status means the engine reports no such counter at all,
+in which case the page shows none.
+
+-}
+type CombatVictories
+    = VictoriesAllTime Int
+    | VictoriesSince { victories : Int, sinceEpisodes : Int }
 
 
 type alias HistoryPoint =
@@ -930,6 +1044,10 @@ type alias Status =
     , readiness : Readiness
     , stale : Bool
     , episodesUnresolved : Int
+
+    -- Factual combat outcomes, kept apart from every gate tally above.
+    -- `Nothing` when the engine publishes no such counter.
+    , combatVictories : Maybe CombatVictories
     , regression : Maybe Regression
     , overall : Maybe Overall
     , shipPerformance : List ShipPerformance
@@ -1002,6 +1120,7 @@ decodeStatus =
         |> optional "readiness" decodeReadiness emptyReadiness
         |> optional "stale" Decode.bool False
         |> optional "episodes_unresolved" Decode.int 0
+        |> custom decodeCombatVictories
         |> optional "regression" (Decode.map Just decodeRegression) Nothing
         |> optional "overall" (Decode.nullable decodeOverall) Nothing
         |> optional "ship_performance" (Decode.list decodeShipPerformance) []
@@ -1131,6 +1250,7 @@ empty =
     , readiness = emptyReadiness
     , stale = False
     , episodesUnresolved = 0
+    , combatVictories = Nothing
     , regression = Nothing
     , overall = Nothing
     , shipPerformance = []
@@ -1258,17 +1378,58 @@ decodeResources =
 
 decodeScoring : Decoder Scoring
 decodeScoring =
-    Decode.succeed (\raw zeroOpponent mutualZero speedBonus gate ->
-        { fitness = fitnessFrom raw zeroOpponent mutualZero
-        , speedBonus = speedBonus
-        , gate = gate
-        }
-    )
+    Decode.succeed
+        (\raw zeroOpponent mutualZero speedBonus gate penalty ->
+            { fitness = fitnessFrom raw zeroOpponent mutualZero
+            , speedBonus = speedBonus
+            , gate = gate
+            , noDamagePenalty = noDamagePenaltyFrom penalty
+            }
+        )
         |> optional "fitness" Decode.string ""
         |> optional "zero_opponent" finiteFloat Nothing
         |> optional "mutual_zero" finiteFloat Nothing
         |> optional "speed_bonus" (Decode.nullable Decode.bool) Nothing
-        |> optional "gate" (Decode.map gateFrom Decode.string) (UnknownGate "")
+        -- A scoring block that names no gate predates the selector, and
+        -- the only gate such a build had was actual combat wins. That is
+        -- a documented meaning, not a guess, so it is not `UnknownGate`.
+        |> optional "gate" (Decode.map gateFrom Decode.string) CombatWins
+        |> optional "no_damage_penalty" finiteFloat Nothing
+
+
+{-| The factual combat-victory counter, assembled from the three
+top-level fields the engine publishes together.
+
+`episodes_combat_wins_all_time` is the only field that may be read as
+the run's total, and the engine nulls it whenever the counting window
+began part-way through a run. So a null there is not a missing number to
+fall back from: it is the statement that the total is unknown, and the
+partial count is then kept with its baseline attached so it can only be
+shown as the partial count it is.
+
+-}
+decodeCombatVictories : Decoder (Maybe CombatVictories)
+decodeCombatVictories =
+    Decode.map3
+        (\counted baseline allTime ->
+            case ( counted, allTime ) of
+                ( _, Just total ) ->
+                    Just (VictoriesAllTime total)
+
+                ( Just victories, Nothing ) ->
+                    Just
+                        (VictoriesSince
+                            { victories = victories
+                            , sinceEpisodes = Maybe.withDefault 0 baseline
+                            }
+                        )
+
+                ( Nothing, Nothing ) ->
+                    Nothing
+        )
+        (Decode.maybe (Decode.field "episodes_combat_wins" Decode.int))
+        (Decode.maybe (Decode.field "episodes_combat_counted_since" Decode.int))
+        (Decode.maybe (Decode.field "episodes_combat_wins_all_time" Decode.int))
 
 
 decodeHistoryPoint : Decoder HistoryPoint
