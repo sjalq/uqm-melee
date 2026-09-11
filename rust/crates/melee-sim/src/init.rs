@@ -1,4 +1,3 @@
-use alloc::vec;
 use crate::{
     battle::Arena,
     catalog::{mmrnmhrm_y_wing, ShipKind, Stock},
@@ -7,6 +6,7 @@ use crate::{
     ship_state::*,
 };
 use alloc::collections::BTreeMap;
+use alloc::vec;
 use melee_core::{rng::Seed, trig, units::*, velocity};
 
 pub fn empty_flags() -> ElementFlags {

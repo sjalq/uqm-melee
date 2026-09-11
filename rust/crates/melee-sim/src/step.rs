@@ -404,11 +404,21 @@ fn collide_all(arena: &mut Arena) {
         .map(Some)
         .collect();
     for index in 0..elements.len() {
-        let Some(mut first) = elements[index].take() else { continue };
+        let Some(mut first) = elements[index].take() else {
+            continue;
+        };
         for slot in &mut elements[index + 1..] {
-            let Some(second) = slot.as_ref() else { continue };
+            let Some(second) = slot.as_ref() else {
+                continue;
+            };
             if collision_possible(&first.element, &second.element)
-                && sprites_hit(arena, first.element, second.element, first.mask, second.mask)
+                && sprites_hit(
+                    arena,
+                    first.element,
+                    second.element,
+                    first.mask,
+                    second.mask,
+                )
             {
                 bounce(arena, first.element, second.element);
                 *slot = collision_element(arena, second.element.id);

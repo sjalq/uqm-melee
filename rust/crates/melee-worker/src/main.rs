@@ -2,7 +2,6 @@ use melee_core::units::Side;
 use melee_neat::{
     eval,
     policy::{Net, N_WEIGHTS},
-    training,
 };
 use melee_sim::{catalog::ShipKind, input::CyborgRating};
 use serde_json::{json, Value};
@@ -74,20 +73,7 @@ fn evaluate(raw: &str, out: &mut impl Write) -> Result<(), String> {
         });
         return error.map_or(Ok(()), |e| Err(e.to_string()));
     }
-    let scoring = string("scoring", "legacy");
-    let (report, display_ticks) = match scoring.as_str() {
-        "legacy" => {
-            let report = eval::run(&job, &net);
-            let ticks = report.ticks;
-            (report, ticks)
-        }
-        training::VERSION if ticks > 0 => {
-            let result = training::run(&job, &net);
-            (result.report, result.display_ticks)
-        }
-        training::VERSION => return Err("combat budget must be positive".into()),
-        _ => return Err(format!("unknown scoring version: {scoring}")),
-    };
+    let report = eval::run(&job, &net);
     let side = if swap { Side::Top } else { Side::Bottom };
     let seat = if swap { "top" } else { "bottom" };
     let own = *report.crew.get(side);
@@ -102,22 +88,19 @@ fn evaluate(raw: &str, out: &mut impl Write) -> Result<(), String> {
     let lost = report.completed && report.winner != seat && report.winner != "pending";
     let fitness = if won {
         1_000_000.0 - report.ticks as f64
-    } else if enemy == 0 && scoring == "legacy" {
+    } else if enemy == 0 {
         100_000.0 - report.ticks as f64 + dense
     } else if lost {
         dense - 3000.0
     } else {
         dense
     };
-    let mut result = json!({"fitness":fitness,"ticks":report.ticks,"winner":report.winner,"own":own,"enemy":enemy,
+    emit(out,
+        &json!({"fitness":fitness,"ticks":report.ticks,"winner":report.winner,"own":own,"enemy":enemy,
         "own_start":own_start,"enemy_start":enemy_start,"damage":damage,"hurt":hurt,"engage":engage,"dense":dense,
         "swap":swap,"outcome":if report.completed{"completed"}else{"invalidated"},"seed":seed,"us":us,"them":them,
-        "rating":rating,"foe":foe,"n_weights":N_WEIGHTS});
-    if scoring != "legacy" {
-        result["scoring_version"] = json!(scoring);
-        result["display_ticks"] = json!(display_ticks);
-    }
-    emit(out, &result).map_err(|e| e.to_string())
+        "rating":rating,"foe":foe,"n_weights":N_WEIGHTS}),
+    ).map_err(|e| e.to_string())
 }
 
 fn main() -> io::Result<()> {

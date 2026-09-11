@@ -5,9 +5,9 @@ const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
 
-const kernelPath = path.join(__dirname, "kernel.js");
+const kernelPath = path.join(__dirname, "neat-eval-elm.js");
 if (!fs.existsSync(kernelPath)) {
-  process.stderr.write("missing kernel.js; compile Neat.Eval first\n");
+  process.stderr.write("missing neat-eval-elm.js; compile Neat.Eval first\n");
   process.exit(1);
 }
 
@@ -26,7 +26,7 @@ vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(kernelPath, "utf8"), sandbox);
 const Elm = sandbox.Elm || (typeof sandbox.module === "object" && sandbox.module.exports);
 if (!Elm || !Elm.Neat || !Elm.Neat.Eval) {
-  process.stderr.write("kernel.js has no Elm.Neat.Eval\n");
+  process.stderr.write("neat-eval-elm.js has no Elm.Neat.Eval\n");
   process.exit(1);
 }
 

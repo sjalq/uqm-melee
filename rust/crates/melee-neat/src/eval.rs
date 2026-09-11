@@ -1,4 +1,4 @@
-//! Exact singleton-fleet training path through Local and Helpers.LongGame.
+//! Exact singleton-fleet evaluation path through Local and Helpers.LongGame.
 //! Display ticks, the physics pump, post-death simulation and recurrent policy
 //! calls deliberately follow the Elm evaluator's event boundaries.
 use crate::{encode, policy::Net};
