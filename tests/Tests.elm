@@ -1,6 +1,8 @@
 module Tests exposing (suite)
 
 import CodegenTests
+import Mario.DashboardTests
+import Mario.GenomeTests
 import Program.AdminAccessTests
 import Program.AuthFlowTests
 import Program.DarkModeTests
@@ -36,6 +38,10 @@ suite =
             , Program.AdminAccessTests.suite
             , Program.AuthFlowTests.suite
             , Program.PageContentTests.suite
+            ]
+        , Test.describe "MarI/O"
+            [ Mario.DashboardTests.suite
+            , Mario.GenomeTests.suite
             ]
         , Test.describe "Codegen Tests"
             [ CodegenTests.suite
