@@ -9,7 +9,7 @@
 
 use crate::audit::AuditConfig;
 use crate::broad::BroadConfig;
-use crate::episode::DEFAULT_TICKS;
+use crate::episode::{Scoring, DEFAULT_TICKS};
 use crate::neat::NeatConfig;
 use crate::sampler::SamplerConfig;
 use crate::server::{self, Control, Shared};
@@ -96,6 +96,26 @@ TRAINING OPTIONS
   --ticks <n>              Display ticks a fight may take. Default 3600, which
                            is one minute of melee. A timeout is never a win.
   --rating <name>          standard, good or awesome. Default awesome.
+  --fitness <name>         What the population is RANKED by. Default combat,
+                           which is the scorer every existing run used and the
+                           meaning of a configuration that names none.
+                             combat      a win, plus crew advantage, plus speed.
+                             crew-ratio  (our surviving crew / our starting
+                                         crew) divided by the same fraction for
+                                         them. No win, kill, survival or time
+                                         term at all, so a slower fight with the
+                                         same end state scores identically. A
+                                         score of 1 means both sides kept the
+                                         same PERCENTAGE of the crew they
+                                         started with; it is a raw ratio, not a
+                                         win rate. Fractions are of STARTING
+                                         crew, so a hull that gains crew may
+                                         legitimately go above 1. Wiping them
+                                         out while we still have crew scores
+                                         1000, a mutual wipeout scores 1, and
+                                         being wiped out ourselves scores 0.
+                           This selects; it does NOT gate. Stage promotion still
+                           counts actual won-and-resolved fights either way.
   --audit-panel <n>        Fights per matchup per audit round. Default 100.
   --audit-budget <n>       Fights one audit attempt may spend. Default 200000.
   --readiness-games <n>    Fights in the cheap probe that decides whether an
@@ -187,6 +207,7 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
             sampler: SamplerConfig::default(),
             audit: AuditConfig::default(),
             broad: BroadConfig::default(),
+            scoring: Scoring::default(),
             duty: 0.5,
             readiness_games: 128,
             readiness_threshold: 0.85,
@@ -235,6 +256,10 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
             "--rating" => {
                 options.config.rating = trainer::parse_rating(next.ok_or("--rating needs a name")?)
                     .ok_or("--rating must be standard, good or awesome")?;
+            }
+            "--fitness" => {
+                options.config.scoring = Scoring::parse(next.ok_or("--fitness needs a name")?)
+                    .ok_or("--fitness must be combat or crew-ratio")?;
             }
             "--audit-panel" => options.config.audit.panel = parse_value(next, "--audit-panel")?,
             "--audit-budget" => options.config.audit.budget = parse_value(next, "--audit-budget")?,
@@ -294,6 +319,17 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
         if options.from == options.run {
             return Err("broaden needs a DIFFERENT --run; it never writes to --from".into());
         }
+        // A fork inherits the source's scorer exactly. Accepting the flag here
+        // and ignoring it would leave the operator believing a fork had been
+        // rescored when its fitness numbers still mean the old thing.
+        if options.given.iter().any(|flag| flag == "--fitness") {
+            return Err(
+                "broaden does not take --fitness: a fork inherits the source run's scorer, and \
+                 fitness recorded under one scorer is not comparable with another. Start a new \
+                 run to change what the population is ranked by"
+                    .into(),
+            );
+        }
         if options.allow_rebuild {
             return Err(
                 "broaden does not take --allow-rebuild: it records the source evaluator as                  provenance, and the fingerprint guard still applies to resuming the new run"
@@ -325,11 +361,14 @@ const PUBLISH_EVERY: Duration = Duration::from_secs(1);
 /// Options that belong to a RUN rather than to one session of it. Changing any
 /// of them would change the trajectory, so a resume keeps the stored value and
 /// says so instead of quietly obeying the command line.
-const RUN_OWNED_FLAGS: [&str; 9] = [
+const RUN_OWNED_FLAGS: [&str; 10] = [
     "--population",
     "--panel",
     "--ticks",
     "--rating",
+    // What a run is ranked by cannot change mid-run: fitness is comparable
+    // only within one scorer, so a resume would be comparing two things.
+    "--fitness",
     "--seed",
     "--audit-panel",
     "--audit-budget",
@@ -988,6 +1027,50 @@ mod tests {
     }
 
     #[test]
+    fn the_scorer_defaults_to_combat_and_rejects_anything_it_does_not_implement() {
+        // Typing nothing must leave every existing run's meaning alone.
+        assert_eq!(
+            parse(&args(&["start"])).unwrap().config.scoring,
+            Scoring::Combat
+        );
+        assert_eq!(
+            parse(&args(&["start", "--fitness", "crew-ratio"]))
+                .unwrap()
+                .config
+                .scoring,
+            Scoring::CrewRatio
+        );
+        assert_eq!(
+            parse(&args(&["start", "--fitness", "combat"]))
+                .unwrap()
+                .config
+                .scoring,
+            Scoring::Combat
+        );
+        for bad in ["crew_ratio", "ratio", "crew", "kills", ""] {
+            assert!(parse(&args(&["start", "--fitness", bad])).is_err(), "{bad}");
+        }
+        assert!(parse(&args(&["start", "--fitness"])).is_err());
+
+        // It describes the run, not the session, so a resume reports it as
+        // stored rather than obeying it.
+        assert!(RUN_OWNED_FLAGS.contains(&"--fitness"));
+
+        // And a fork inherits it rather than pretending to rescore.
+        assert!(parse(&args(&[
+            "broaden",
+            "--from",
+            "a",
+            "--run",
+            "b",
+            "--fitness",
+            "crew-ratio"
+        ]))
+        .is_err());
+        assert!(parse(&args(&["broaden", "--from", "a", "--run", "b"])).is_ok());
+    }
+
+    #[test]
     fn the_help_text_documents_every_command_and_the_loopback_rule() {
         for command in [
             "start", "resume", "status", "pause", "stop", "serve", "oracle", "bench",
@@ -998,6 +1081,11 @@ mod tests {
         assert!(HELP.contains("/api/status"));
         assert!(HELP.contains("/api/network"));
         assert!(HELP.contains("/api/control"));
+        // The scorer changes what every fitness number in the run means, so
+        // the help has to name both choices and say which is the default.
+        assert!(HELP.contains("--fitness"));
+        assert!(HELP.contains(Scoring::Combat.as_str()));
+        assert!(HELP.contains(Scoring::CrewRatio.as_str()));
     }
 
     #[test]

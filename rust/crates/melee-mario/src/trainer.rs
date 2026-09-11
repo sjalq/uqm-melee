@@ -18,7 +18,7 @@
 use crate::audit::{AuditConfig, Gate, Progress, Round, Tally};
 use crate::broad::{self, BroadConfig, Evaluation, Overall, Source};
 use crate::curriculum::{self, Cell, Opponent};
-use crate::episode::{self, Rival, Task};
+use crate::episode::{self, Rival, Scoring, Task};
 use crate::genome::Genome;
 use crate::graph::Network;
 use crate::neat::{MutationRates, NeatConfig, Population};
@@ -42,6 +42,10 @@ pub struct Config {
     pub neat: NeatConfig,
     pub sampler: SamplerConfig,
     pub audit: AuditConfig,
+    /// Which scorer ranks the population. A per-run choice, recorded in the
+    /// run's configuration so that a checkpoint always says what its fitness
+    /// numbers mean. It does NOT change what the stage gate counts.
+    pub scoring: Scoring,
     /// Settings for [`Ladder::Broad`]. Present in every configuration so a
     /// staged run can be forked into a broad one without a schema change, and
     /// inert while the ladder is anything else.
@@ -61,7 +65,8 @@ impl Config {
         json!({"version": ENGINE_VERSION, "run_id": self.run_id, "salt": self.salt.to_string(),
                "ticks": self.ticks, "rating": rating_name(self.rating),
                "neat": self.neat.to_json(), "sampler": self.sampler.to_json(),
-               "audit": self.audit.to_json(), "broad": self.broad.to_json(), "duty": self.duty,
+               "audit": self.audit.to_json(), "broad": self.broad.to_json(),
+               "scoring": self.scoring.to_json(), "duty": self.duty,
                "readiness_games": self.readiness_games,
                "readiness_threshold": self.readiness_threshold,
                "readiness_period": self.readiness_period,
@@ -95,6 +100,11 @@ impl Config {
                 None => BroadConfig::default(),
                 Some(other) => BroadConfig::from_json(other)?,
             },
+            // A configuration written before the selector existed names no
+            // scorer, and every such run was trained under the combat scorer.
+            // A block that IS present but names something unknown is rejected
+            // rather than silently read as the default.
+            scoring: Scoring::from_json(value.get("scoring"))?,
             duty,
             readiness_games: value
                 .get("readiness_games")?
@@ -540,7 +550,10 @@ impl Trainer {
         let mut wins = 0u32;
         for task in &tasks {
             let outcome = self.play(task, &network);
-            total += outcome.fitness(ticks);
+            // The run's configured scorer, so every number that is compared
+            // with another, this member, the rescored incumbent and the
+            // species references drawn from them, comes from one definition.
+            total += outcome.score(self.config.scoring, ticks);
             wins += outcome.won as u32;
             if record {
                 self.stats

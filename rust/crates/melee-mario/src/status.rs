@@ -204,6 +204,12 @@ impl Trainer {
             "episodes_per_second": per_second,
             "updated_at": iso8601(unix_now()),
             "stale": stale,
+            // What the population is RANKED by, and, separately, what stage
+            // promotion actually COUNTS. A run whose configuration predates the
+            // selector reads back as the combat scorer, which is what it was
+            // in fact trained under; the block is absent only when the binary
+            // serving the document predates the field entirely.
+            "scoring": self.config.scoring.to_json(),
             "curriculum": {
                 "stage": self.stage,
                 "our_roster": curriculum::roster_names(&curriculum::ours(), mine),
