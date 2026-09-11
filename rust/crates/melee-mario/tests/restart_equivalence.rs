@@ -393,11 +393,97 @@ fn a_contradictory_or_unhonourable_configuration_is_refused() {
     }
 }
 
+/// Everything the two criteria disagreed about over one batch of REAL fights,
+/// counted from the same outcomes so the two tallies cannot differ for any
+/// reason but the criterion itself.
+struct Disagreement {
+    fights: usize,
+    lead_not_win: usize,
+    win_not_lead: usize,
+    unresolved_lead: usize,
+    combat_wins: usize,
+}
+
+/// Replays a fixed batch of real fights with one network and tallies them
+/// under both criteria. No outcome is injected and no fight is shortened.
+fn disagreement(trainer: &Trainer, cells: &[melee_mario::curriculum::Cell]) -> Disagreement {
+    use melee_mario::episode::{self, Rival, Task};
+    use melee_mario::graph::Network;
+    use std::sync::Arc;
+
+    let genome = trainer
+        .champion
+        .clone()
+        .expect("a champion is needed to fly the fights");
+    let network = Arc::new(Network::compile(&genome));
+    let mut found = Disagreement {
+        fights: 0,
+        lead_not_win: 0,
+        win_not_lead: 0,
+        unresolved_lead: 0,
+        combat_wins: 0,
+    };
+    for (at, cell) in cells.iter().enumerate() {
+        for slot in 0..12 {
+            let task = Task {
+                cell: *cell,
+                swap: slot % 2 == 1,
+                seed: 900_000 + (at as i64) * 1_000 + slot as i64,
+                ticks: 420,
+            };
+            let end = episode::run(&task, &network, Rival::Cyborg(CyborgRating::AwesomeCyborg));
+            let won = end.succeeded(GateCriterion::CombatWins);
+            let led = end.succeeded(GateCriterion::CrewLead);
+            found.fights += 1;
+            found.combat_wins += end.won as usize;
+            // The factual field is what CombatWins reports, always.
+            assert_eq!(won, end.won);
+            if led && !won {
+                found.lead_not_win += 1;
+                found.unresolved_lead += !end.resolved as usize;
+            }
+            if won && !led {
+                found.win_not_lead += 1;
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn the_two_criteria_really_disagree_about_real_fights() {
+    // The heart of it, and deliberately free of any trainer state: one
+    // network, one batch of real fights, both criteria applied to the SAME
+    // outcomes. If the routing were removed and everything counted wins, the
+    // disagreement count would be zero and this fails.
+    let mut trainer = Trainer::fresh(scored_config("disagree", staged()));
+    run_units(&mut trainer, 60);
+    let found = disagreement(&trainer, &trainer.cyborg_cells());
+
+    assert!(found.fights > 0, "expected real fights");
+    let disagreed = found.lead_not_win + found.win_not_lead;
+    assert!(
+        disagreed > 0,
+        "the two criteria agreed about all {} fights, so nothing distinguishes them",
+        found.fights
+    );
+    // The interesting half of the difference: fights nobody won, which the
+    // crew-lead criterion counts and the combat-wins criterion cannot.
+    assert!(
+        found.unresolved_lead > 0,
+        "expected at least one unresolved fight we led on crew"
+    );
+    // And those successes are emphatically not victories.
+    assert_eq!(
+        found.combat_wins, 0,
+        "a fight counted as a crew lead must not also be reported as a win here"
+    );
+}
+
 #[test]
 fn the_gate_criterion_really_changes_which_fights_count_as_successes() {
     // Identical run id, salt, seeds and fights. The ONLY difference is what
-    // counts as a success, so any difference in the recorded rates is the
-    // criterion doing its job rather than a different trajectory.
+    // counts as a success.
     let gated_on_wins = ScoringConfig {
         fitness: Scoring::CrewRatio,
         gate: GateCriterion::CombatWins,
@@ -411,20 +497,81 @@ fn the_gate_criterion_really_changes_which_fights_count_as_successes() {
     let mut leads = Trainer::fresh(scored_config("criterion", gated_on_leads));
     run_units(&mut wins, 60);
     run_units(&mut leads, 60);
-
-    // The scorer is the same in both, so the SAME fights happen in the same
-    // order; only the bookkeeping over them differs.
-    assert_eq!(wins.episodes, leads.episodes);
     assert!(wins.episodes > 100, "expected real fights");
+
+    // Each assertion below names a place the criterion is routed to, and each
+    // compares COUNTED SUCCESSES rather than configuration. Comparing whole
+    // trajectories would pass on the stored `scoring` block alone, even with
+    // every one of these call sites reverted to counting wins.
+
+    // 1. The sampler's own weakness statistics.
+    let sampler_successes = |t: &Trainer| -> f64 { t.stats.cells.values().map(|c| c.wins).sum() };
+    assert!(
+        sampler_successes(&wins) != sampler_successes(&leads),
+        "the sampler recorded the same successes under both criteria: {} against {}",
+        sampler_successes(&wins),
+        sampler_successes(&leads)
+    );
+
+    // 2. The training success rate written into every history row.
+    let training: fn(&Trainer) -> Vec<Option<f64>> =
+        |t| t.history.iter().map(|r| r.training_win_rate).collect();
+    assert!(
+        training(&wins).iter().any(Option::is_some),
+        "expected training rates to have been recorded at all"
+    );
+    assert_ne!(
+        training(&wins),
+        training(&leads),
+        "the recorded training success rate did not depend on the criterion"
+    );
+
+    // 3. The readiness probe. Its rate is recorded on the history row, and it
+    //    is checked separately from the audit below because a probe whose
+    //    trigger is already cleared would open the audit either way.
+    let validation: fn(&Trainer) -> Vec<Option<f64>> =
+        |t| t.history.iter().map(|r| r.validation_win_rate).collect();
+    assert!(
+        validation(&wins).iter().any(Option::is_some),
+        "expected a readiness probe to have run and recorded its rate"
+    );
+    assert_ne!(
+        validation(&wins),
+        validation(&leads),
+        "the readiness probe rate did not depend on the criterion"
+    );
+
+    // 4. The audit the probe opens.
+    assert!(
+        wins.champion_evidence().games > 0 && leads.champion_evidence().games > 0,
+        "expected the readiness probe to have opened an audit in both runs"
+    );
+    assert_ne!(
+        wins.champion_evidence(),
+        leads.champion_evidence(),
+        "audit evidence did not depend on the criterion"
+    );
+
+    // 5. What must NOT depend on it: the factual combat counters.
     assert_eq!(
         wins.combat_wins, leads.combat_wins,
         "the factual combat-win count must not depend on the gate criterion"
     );
     assert_eq!(wins.unresolved, leads.unresolved);
+    assert_eq!(wins.episodes, leads.episodes);
+
+    // 6. And the checkpoint really does diverge, with the stored settings
+    //    themselves removed from the comparison so the difference cannot be
+    //    the `scoring` block reading back what it was told.
+    let without_config = |t: &Trainer| -> Value {
+        let mut document = trajectory(&t.to_json());
+        document.as_object_mut().expect("a checkpoint").remove("config");
+        document
+    };
     assert_ne!(
-        trajectory(&wins.to_json()),
-        trajectory(&leads.to_json()),
-        "the gate criterion made no difference to anything it counts"
+        without_config(&wins),
+        without_config(&leads),
+        "nothing outside the stored configuration changed"
     );
 
     let document = status_of(&leads);
@@ -628,3 +775,4 @@ fn a_malformed_combat_counter_is_refused_rather_than_read_as_a_known_zero() {
     assert_eq!(back.combat_wins, episodes);
     assert_eq!(back.combat_counted_since, 0);
 }
+
