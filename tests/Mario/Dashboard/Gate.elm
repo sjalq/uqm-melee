@@ -182,7 +182,12 @@ missingReverseSeats matchups =
 
 {-| Cells ordered by how badly they block the gate: audited and short
 first, weakest bound leading, then cells mid-audit, then cells still
-learning, then cells never played.
+learning, then cells with no audit games.
+
+"No audit games" never means "no play". A cell can carry tens of
+thousands of training episodes and still have nothing here, because only
+fresh audit episodes count toward the gate. Saying "never played" would
+misdescribe that.
 -}
 weakestFirst : Float -> List Matchup -> List Matchup
 weakestFirst target matchups =
@@ -302,8 +307,8 @@ explain target curriculum matchups =
         breakdown =
             [ ( b.short, "audited and short of the target" )
             , ( b.auditing, "mid-audit with the panel not yet spent" )
-            , ( b.learning, "still training, with no audit evidence yet" )
-            , ( b.unseen, "never played" )
+            , ( b.learning, "still in training" )
+            , ( b.unseen, "with no audit games yet" )
             ]
                 |> List.filter (\( n, _ ) -> n > 0)
                 |> List.map (\( n, label ) -> String.fromInt n ++ " " ++ label)
