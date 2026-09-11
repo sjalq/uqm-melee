@@ -292,18 +292,27 @@ fn decode(value: &Value) -> Option<Trainer> {
     // cleared the target. Without that, a document could present a confirmation
     // round as a pass while the audit that is supposed to precede it never
     // happened or failed.
-    let cleared = |reading: &Option<Evaluation>| {
-        reading.as_ref().is_some_and(|e| {
-            e.tally()
-                .lower_bound()
-                .is_some_and(|bound| bound > config.broad.target)
-        })
+    let passed = |reading: &Evaluation| {
+        reading
+            .tally()
+            .lower_bound()
+            .is_some_and(|bound| bound > config.broad.target)
     };
-    let audit_cleared = cleared(&broad_audit);
+    // `broad_audit` and `broad_confirm` are evidence about the CURRENT
+    // champion and are discarded together the moment it is replaced, so they
+    // can be checked against each other: a confirmation only ever exists as
+    // the second half of a gate whose audit cleared.
+    let audit_cleared = broad_audit.as_ref().is_some_and(&passed);
     if broad_confirm.is_some() && !audit_cleared {
         return None;
     }
-    if broad_gate.is_some() && !cleared(&broad_confirm) {
+    // `broad_gate` is not that kind of evidence. It is the finished proof for
+    // ONE named champion and it deliberately outlives that champion, so by the
+    // first promotion afterwards `broad_confirm` is already gone. Tying it to
+    // the current confirmation made every such checkpoint unresumable. It
+    // carries its own numbers, so it is checked on its own: a confirmation
+    // round, for a named champion, whose bound actually clears the target.
+    if broad_gate.as_ref().is_some_and(|gate| !passed(gate)) {
         return None;
     }
     match &mode {

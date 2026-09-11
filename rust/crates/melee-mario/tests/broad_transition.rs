@@ -560,6 +560,134 @@ fn a_confirmation_round_resumes_and_only_exists_behind_a_passed_audit() {
     );
 }
 
+/// Passing the gate and then replacing the champion must still produce a
+/// resumable checkpoint.
+///
+/// The gate proof outlives the champion that earned it, so by the first
+/// promotion afterwards the confirmation evidence beside it is already gone.
+/// A decoder that insisted the two travel together made every checkpoint from
+/// that moment on unresumable.
+#[test]
+fn the_gate_proof_outlives_the_champion_that_earned_it() {
+    use melee_mario::audit::Round;
+    use melee_mario::broad::{balanced_panel, Evaluation, Overall, Source};
+    use melee_mario::rng::StreamTag;
+    use melee_mario::trainer::Mode;
+
+    let mut trainer = staged();
+    trainer
+        .broaden("passing", "operator requested any-versus-any")
+        .expect("an Awesome source forks");
+    let winner = trainer
+        .champion
+        .as_ref()
+        .map(|g| g.fingerprint())
+        .expect("the fork carried a champion");
+    let config = trainer.config.broad;
+    let attempt = trainer.audit_attempt;
+    let (salt, ticks) = (trainer.config.salt, trainer.config.ticks);
+
+    // Both rounds tallied over their REAL panels, so the per-hull splits add up
+    // exactly as a played round's would. Forty-eight of fifty clears the bound.
+    let tallied = |stream, source| {
+        let panel = balanced_panel(stream, salt, attempt, config.pairs, ticks);
+        let mut reading = Evaluation::open(source, winner.clone());
+        for (at, task) in panel.iter().enumerate() {
+            reading.record(task.cell, at >= 2);
+        }
+        (panel, reading)
+    };
+    let (_, audit) = tallied(StreamTag::Audit, Source::Audit);
+    assert!(audit.tally().lower_bound().unwrap() > config.target);
+    trainer.broad_audit = Some(audit);
+    trainer.broad_shown = Some(Source::Audit);
+
+    // A confirmation round already played out and won. Installing it decided
+    // means the next unit of work goes straight through the real finishing
+    // path: no simulator is stood in for, the fights are simply already over.
+    let mut gate = Overall::open(
+        attempt,
+        Round::Confirm,
+        config.target,
+        winner.clone(),
+        balanced_panel(StreamTag::Confirm, salt, attempt, config.pairs, ticks),
+    );
+    let mut at = 0;
+    while gate.next_task().is_some() {
+        gate.record(at >= 2);
+        at += 1;
+    }
+    trainer.mode = Mode::Overall { gate };
+    trainer.step();
+
+    // The gate passed: the run keeps its broad provenance, enters the mixed
+    // phase with a frozen opponent, and still claims nothing per cell.
+    let proof = trainer.broad_gate.as_ref().expect("the gate recorded its pass");
+    assert_eq!(proof.champion, winner);
+    assert_eq!(proof.source.as_str(), "confirm");
+    assert_eq!(trainer.ladder, Ladder::Mixed);
+    assert!(trainer.frozen_opponent.is_some());
+    assert_eq!(trainer.mastered(), 0, "the gate claimed per-cell mastery");
+    assert!(trainer.origin.is_some(), "the fork provenance was forgotten");
+    let status = trainer.status(
+        melee_mario::status::Phase::Training,
+        "test",
+        "checkpoint.json",
+        false,
+    );
+    assert_eq!(status["curriculum"]["ladder"], "mixed");
+    assert_eq!(status["curriculum"]["evaluation_scope"], "overall-balanced");
+    assert_eq!(status["curriculum"]["origin_run_id"], "staged-source");
+    assert_eq!(status["curriculum"]["mastered_matchups"], 0);
+    assert_eq!(status["curriculum"]["self_play_is_gated"], false);
+    assert_eq!(status["overall"]["passed"], true);
+    assert_eq!(status["overall"]["passed_by"], winner.as_str());
+    assert!(Trainer::from_json(&trainer.to_json()).is_ok());
+
+    // Now replace the champion, which is what discards the confirmation beside
+    // the proof. Real generations, real fights.
+    let mut replaced = false;
+    for _ in 0..900 {
+        trainer.step();
+        if trainer.champion.as_ref().map(|g| g.fingerprint()).as_deref() != Some(winner.as_str()) {
+            replaced = true;
+            break;
+        }
+    }
+    assert!(replaced, "no champion replacement happened, so nothing was proved");
+    assert!(
+        trainer.broad_confirm.is_none() && trainer.broad_audit.is_none(),
+        "evidence for a replaced champion survived"
+    );
+    let proof = trainer.broad_gate.as_ref().expect("the proof was discarded");
+    assert_eq!(proof.champion, winner, "the proof was reattributed");
+
+    // THE REGRESSION: this checkpoint has a gate proof and no confirmation.
+    let saved = trainer.to_json();
+    let resumed = Trainer::from_json(&saved).expect("a passed run must stay resumable");
+    assert_eq!(
+        resumed.broad_gate.as_ref().map(|e| e.champion.clone()),
+        Some(winner.clone())
+    );
+    assert_eq!(resumed.ladder, Ladder::Mixed);
+
+    // And the pass is reported as a fact about a NAMED champion, not inherited
+    // by whoever holds the title now.
+    let status = resumed.status(
+        melee_mario::status::Phase::Training,
+        "test",
+        "checkpoint.json",
+        false,
+    );
+    assert_eq!(status["overall"]["passed"], false);
+    assert_eq!(status["overall"]["passed_by"], winner.as_str());
+
+    // A proof whose own numbers do not clear the target is still refused.
+    let mut forged = saved.clone();
+    forged["broad_gate"]["wins"] = serde_json::json!(30);
+    assert!(Trainer::from_json(&forged).is_err());
+}
+
 #[test]
 fn a_checkpoint_cannot_claim_broad_scope_on_a_narrower_board() {
     let mut trainer = staged();
