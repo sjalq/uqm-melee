@@ -17,7 +17,11 @@
 //   --out PATH            NDJSON output path. Required. Appended to, never
 //                         truncated, so a restarted watcher keeps the history.
 //   --url URL             Trainer base URL. Default http://127.0.0.1:8788
-//                         Must be a loopback host; anything else is refused.
+//                         Must be a loopback host; anything else is refused,
+//                         and so is 0.0.0.0, which is a bind address rather
+//                         than a local destination. Redirects are refused
+//                         rather than followed, so the request cannot be sent
+//                         off the loopback interface after the check passed.
 //   --interval SECONDS    Poll period. Default 60.
 //   --timeout SECONDS     Per-request timeout. Default 10.
 //   --summary SECONDS     Stdout summary period. Default 300 (5 minutes).
@@ -132,7 +136,12 @@ function parseArgs(argv) {
 // The watcher exists to observe one local trainer. Pointing it at a remote host
 // would make it a network client for someone else's data, which is not what it
 // is for, so the host is checked rather than trusted.
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"]);
+//
+// 0.0.0.0 is deliberately not on this list. It is the address a server binds to
+// in order to listen on every interface, not an address that means "local" when
+// you connect to it, and accepting it here would let the loopback check pass for
+// a request that is not necessarily loopback. Connect to 127.0.0.1 instead.
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
 function checkLoopback(rawUrl) {
   let parsed;
@@ -153,14 +162,34 @@ function checkLoopback(rawUrl) {
 
 // ------------------------------------------------------------------ reading
 
+// The loopback check above is only worth anything if the request actually stays
+// on loopback. `fetch` follows redirects by default, so a local server that
+// answered with `Location: https://somewhere.else/` would have this watcher
+// fetching from a remote host with the check already passed. Redirects are
+// therefore refused outright rather than followed and re-checked: a local
+// trainer has no reason to redirect its own status endpoint, so a redirect is
+// a thing to report, not a thing to chase.
 async function fetchStatus(url, timeoutSeconds) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
   try {
     const response = await fetch(`${url}/api/status`, {
       signal: controller.signal,
+      redirect: "manual",
       headers: { accept: "application/json" },
     });
+    const redirected =
+      response.type === "opaqueredirect" ||
+      response.status === 0 ||
+      (response.status >= 300 && response.status < 400);
+    if (redirected) {
+      // An opaque redirect hides its Location, so there may be nothing to name.
+      const target = response.headers?.get?.("location") ?? null;
+      return {
+        ok: false,
+        error: `refused a redirect${target ? ` to ${target}` : ""}; this watcher reads the local trainer only and does not follow redirects`,
+      };
+    }
     if (!response.ok) {
       return { ok: false, error: `HTTP ${response.status}` };
     }
@@ -226,6 +255,7 @@ function snapshot(at, result, proc) {
   const checkpoint = s.checkpoint ?? {};
   const sampler = s.sampler ?? null;
   const resources = s.resources ?? {};
+  const readiness = s.readiness ?? {};
   return {
     t: at,
     ok: true,
@@ -255,15 +285,45 @@ function snapshot(at, result, proc) {
       saved_at: str(checkpoint.saved_at),
     },
     sampler: sampler
-      ? { panel: num(sampler.panel), coverage: num(sampler.coverage), tour: num(sampler.tour) }
+      ? {
+          panel: num(sampler.panel),
+          coverage: num(sampler.coverage),
+          // The rotation cursor is monotonic and checkpointed, so consecutive
+          // records show the balanced rotation actually walking the board.
+          cursor: num(sampler.cursor),
+          tour: num(sampler.tour),
+        }
       : null,
+    // Gate rounds are rare and the overall block is null between them. The
+    // readiness probe runs every few generations, so it is the only evidence
+    // stream that shows the run learning or not learning in the meantime, and
+    // without it the log would be silent on quality for hours at a stretch.
+    // It is a screening probe, never gate evidence, hence its own key.
+    readiness: {
+      last_rate: num(readiness.last_rate),
+      games: num(readiness.games),
+      threshold: num(readiness.threshold),
+    },
     workers: num(resources.workers),
     duty: num(resources.duty_cycle),
     proc: proc ?? null,
   };
 }
 
-const WORKING = new Set(["training", "auditing", "initializing"]);
+// Phases in which the trainer claims to be doing work, and so in which a frozen
+// episode counter or an ageing checkpoint is worth complaining about. The broad
+// gate adds rounds of its own, and a readiness probe or a confirm round is just
+// as much work as training: leaving them out would silence the stall alarm for
+// exactly the phases a new run spends most of its early life in.
+const WORKING = new Set([
+  "training",
+  "auditing",
+  "initializing",
+  "readiness",
+  "probing",
+  "confirming",
+  "evaluating",
+]);
 
 function ageSeconds(iso, now) {
   if (!iso) return null;
@@ -393,6 +453,16 @@ function describe(record) {
     const round = record.overall.round ?? "no round";
     const bound = record.overall.lower_bound === null ? "no bound" : `LB ${(record.overall.lower_bound * 100).toFixed(1)}%`;
     parts.push(`${round}: ${record.overall.wins ?? 0}/${record.overall.games ?? 0} ${bound}`);
+  }
+  // Between the rare gate rounds this is the only quality signal there is, so
+  // it is named as a probe rather than left to look like gate evidence.
+  if (record.readiness?.last_rate !== null && record.readiness?.last_rate !== undefined) {
+    parts.push(
+      `ready probe ${(record.readiness.last_rate * 100).toFixed(1)}% of ${record.readiness.games ?? "?"}`,
+    );
+  }
+  if (record.sampler?.cursor !== null && record.sampler?.cursor !== undefined) {
+    parts.push(`cursor ${record.sampler.cursor}`);
   }
   if (record.checkpoint?.generation !== null && record.checkpoint?.generation !== undefined) {
     parts.push(`ckpt g${record.checkpoint.generation}`);
@@ -552,7 +622,9 @@ const HELP = `watch.mjs - read-only watcher for the melee-mario trainer
   --quiet               print only alerts and summaries
 
 This watcher observes. It never starts, stops, restarts, retunes or reconfigures
-the trainer, and it makes no request other than a GET against a loopback host.`;
+the trainer, and it makes no request other than a GET against a loopback host.
+Redirects are refused rather than followed, and 0.0.0.0 is not accepted as a
+loopback destination; connect to 127.0.0.1.`;
 
 main().catch((error) => {
   console.error(`watch.mjs: ${error?.message ?? error}`);
