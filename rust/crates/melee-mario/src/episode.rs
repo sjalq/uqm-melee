@@ -5,6 +5,17 @@
 //! follows. Nothing here touches physics, forces a death or shortens a round:
 //! a policy that fails to finish simply runs out of ticks, and running out of
 //! ticks is NOT a win.
+//!
+//! KNOWN UNRESOLVED CASE. The evaluator's round transition can land in
+//! `Phase::Selecting` rather than `Phase::Victory` when both singleton slots
+//! are still occupied at the end of a round, which the Pkunk's resurrection
+//! can produce. That is pre-existing Local/evaluator phase semantics shared
+//! with the original dense path, and it is deliberately NOT reinterpreted
+//! here: such an episode is counted as UNRESOLVED, exactly like a timeout, and
+//! never as a win for either seat. Turning it into a win, or resuming combat
+//! artificially, would change game semantics to make a number look better. The
+//! trainer counts these episodes separately and the status document reports
+//! the count, so the conservatism is visible rather than hidden.
 
 use crate::curriculum::Cell;
 use crate::graph::Network;
@@ -42,7 +53,9 @@ impl Task {
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Outcome {
-    /// The round actually resolved, rather than hitting the tick ceiling.
+    /// The round reached a victory. False for a tick-limit timeout AND for the
+    /// Pkunk resurrection case described at the top of this module; neither is
+    /// a win for anybody.
     pub resolved: bool,
     pub won: bool,
     pub ticks: i64,

@@ -20,7 +20,7 @@ use crate::curriculum::{self, Cell, Opponent};
 use crate::episode::{self, Rival, Task};
 use crate::genome::Genome;
 use crate::graph::Network;
-use crate::neat::{NeatConfig, Population};
+use crate::neat::{MutationRates, NeatConfig, Population};
 use crate::rng::{episode_seed, Stream, StreamTag};
 use crate::sampler::{self, Panel, SamplerConfig, SamplerStats};
 use melee_sim::input::CyborgRating;
@@ -46,6 +46,9 @@ pub struct Config {
     pub readiness_games: usize,
     pub readiness_threshold: f64,
     pub readiness_period: u32,
+    /// Episode ceiling for one MIXED-PHASE regression sweep. Much smaller than
+    /// an audit budget: a regression sweep is a smoke alarm, not a gate.
+    pub regression_budget: u32,
 }
 
 impl Config {
@@ -56,7 +59,8 @@ impl Config {
                "audit": self.audit.to_json(), "duty": self.duty,
                "readiness_games": self.readiness_games,
                "readiness_threshold": self.readiness_threshold,
-               "readiness_period": self.readiness_period})
+               "readiness_period": self.readiness_period,
+               "regression_budget": self.regression_budget})
     }
 
     /// Rejects a configuration document from a different engine version or with
@@ -87,6 +91,10 @@ impl Config {
                 .filter(|g| *g > 0)? as usize,
             readiness_threshold: threshold,
             readiness_period: value.get("readiness_period")?.as_u64()?.max(1) as u32,
+            regression_budget: match value.get("regression_budget") {
+                None => 4_000,
+                Some(other) => other.as_u64().filter(|b| *b > 0)? as u32,
+            },
         })
     }
 }
@@ -139,6 +147,8 @@ pub enum Ladder {
     /// Every cyborg matchup has been gated. Training now mixes the Awesome
     /// cyborg distribution with a frozen champion snapshot and runs
     /// indefinitely; beating a copy of yourself is not a mastery criterion.
+    /// The cyborg board keeps being probed and swept so that a policy drifting
+    /// towards beating only its own reflection is caught.
     Mixed,
 }
 
@@ -210,6 +220,9 @@ pub struct Trainer {
     pub opponent_revision: u32,
     pub frozen_opponent: Option<Genome>,
     pub champion: Option<Genome>,
+    /// The mutation rates the champion had drifted to. Carried with it so that
+    /// re-entering it as an elite does not reset its search intensity.
+    pub champion_rates: MutationRates,
     /// Confirmed audit evidence for the current champion at the current stage.
     pub evidence: BTreeMap<Cell, Tally>,
     /// Cells that failed the most recent gate attempt; audited first next time.
@@ -218,6 +231,11 @@ pub struct Trainer {
     pub panel: Option<Panel>,
     pub mode: Mode,
     pub episodes: u64,
+    /// Episodes that ended without a victory: the tick ceiling, or the
+    /// evaluator's Selecting phase (see `episode`). Counted and reported
+    /// rather than quietly folded into losses, because the honest reading is
+    /// "no result", not "a loss".
+    pub unresolved: u64,
     /// Wall-clock seconds spent inside the run loop, work and governor rest
     /// together, accumulated across every resume.
     pub elapsed: f64,
@@ -229,6 +247,14 @@ pub struct Trainer {
     /// The champion's win rate on the panel currently being evaluated. Derived
     /// from the live panel, so it is rebuilt rather than restored.
     pub last_training_wins: Option<f64>,
+    /// Result of the most recent mixed-phase regression sweep, for honest
+    /// reporting. Both are zero before the first sweep.
+    pub regression_swept: usize,
+    pub regression_failed: usize,
+    /// Scheduling penalty this PROCESS is running under. A property of the
+    /// current invocation rather than of the run, so it is reported from the
+    /// live value and never restored from a checkpoint.
+    pub nice: i32,
     pub history: VecDeque<HistoryRow>,
     pub events: VecDeque<Event>,
     pub saved_at: Option<String>,
@@ -250,6 +276,7 @@ pub struct Unit {
 
 impl Trainer {
     pub fn fresh(config: Config) -> Trainer {
+        let config_rates = config.neat.seed_rates;
         let mut evolution = Stream::seeded(config.salt ^ 0xe0_1u64);
         let sampling = Stream::seeded(config.salt ^ 0x5a_2u64);
         let population = Population::seed(config.neat, &mut evolution);
@@ -264,17 +291,22 @@ impl Trainer {
             opponent_revision: 0,
             frozen_opponent: None,
             champion: None,
+            champion_rates: config_rates,
             evidence: BTreeMap::new(),
             priority: Vec::new(),
             stats: SamplerStats::default(),
             panel: None,
             mode: Mode::Training,
             episodes: 0,
+            unresolved: 0,
             elapsed: 0.0,
             compute: 0.0,
             audit_attempt: 0,
             last_validation: None,
             last_training_wins: None,
+            regression_swept: 0,
+            regression_failed: 0,
+            nice: 0,
             history: VecDeque::new(),
             events: VecDeque::new(),
             saved_at: None,
@@ -351,6 +383,7 @@ impl Trainer {
             },
         };
         self.episodes += 1;
+        self.unresolved += !outcome.resolved as u64;
         outcome
     }
 
@@ -375,26 +408,39 @@ impl Trainer {
             self.open_panel();
         }
         let ticks = self.config.ticks;
-        let panel = self.panel.clone().expect("panel opened above");
-        let order: Vec<Genome> = self
-            .population
-            .members()
-            .map(|m| m.genome.clone())
-            .collect();
-        if panel.cursor >= order.len() {
+        // Only the tasks are needed here, and the panel is small; cloning the
+        // whole panel struct per member would copy the task list once per
+        // genome for no reason.
+        let (tasks, cursor) = {
+            let panel = self.panel.as_ref().expect("panel opened above");
+            (panel.tasks.clone(), panel.cursor)
+        };
+        let members = self.population.size();
+        if cursor >= members {
             return self.close_panel();
         }
-        let genome = order[panel.cursor].clone();
+        // The member being scored is looked up by index. Materialising every
+        // genome in the population on every unit of work was quadratic in the
+        // population size, which at three hundred genomes with a hundred links
+        // each was the single largest allocation cost in the loop.
+        let found = self
+            .population
+            .members()
+            .nth(cursor)
+            .map(|member| member.genome.clone());
+        let Some(genome) = found else {
+            return self.close_panel();
+        };
         let fingerprint = genome.fingerprint();
         let network = self.compiled(&genome);
         let champion = self.champion.as_ref().map(Genome::fingerprint);
         // Sampler evidence follows the champion, because the sampler's job is
         // to find where the policy we actually gate on is still weak. Before a
         // champion exists the first member stands in for it.
-        let record = champion.map_or(panel.cursor == 0, |c| c == fingerprint);
+        let record = champion.map_or(cursor == 0, |c| c == fingerprint);
         let mut total = 0.0;
         let mut wins = 0u32;
-        for task in &panel.tasks {
+        for task in &tasks {
             let outcome = self.play(task, &network);
             total += outcome.fitness(ticks);
             wins += outcome.won as u32;
@@ -403,29 +449,25 @@ impl Trainer {
                     .record(task.cell, outcome.won, self.config.sampler.decay);
             }
         }
-        let fitness = total / panel.tasks.len().max(1) as f64;
-        if let Some(member) = self
-            .population
-            .members_mut()
-            .nth(panel.cursor)
-        {
+        let fitness = total / tasks.len().max(1) as f64;
+        if let Some(member) = self.population.members_mut().nth(cursor) {
             member.fitness = Some(fitness);
         }
         if record {
-            self.last_training_wins = Some(wins as f64 / panel.tasks.len().max(1) as f64);
+            self.last_training_wins = Some(wins as f64 / tasks.len().max(1) as f64);
         }
         if let Some(live) = self.panel.as_mut() {
             live.cursor += 1;
         }
         Unit {
-            episodes: panel.tasks.len() as u64,
+            episodes: tasks.len() as u64,
             boundary: false,
         }
     }
 
     fn open_panel(&mut self) {
         if let Some(champion) = self.champion.clone() {
-            self.population.ensure_elite(&champion);
+            self.population.ensure_elite(&champion, self.champion_rates);
         }
         self.population.open_panel();
         let cyborg = self.cyborg_cells();
@@ -442,6 +484,7 @@ impl Trainer {
             self.config.ticks,
             &cyborg,
             &model,
+            &self.priority,
         );
         self.panel = Some(panel);
         self.last_training_wins = None;
@@ -461,6 +504,11 @@ impl Trainer {
                 .find(|m| m.genome.fingerprint() == fingerprint)
                 .and_then(|m| m.fitness)
         });
+        let challenger_rates = self
+            .population
+            .best()
+            .map(|m| m.rates)
+            .unwrap_or(self.config.neat.seed_rates);
         if let Some((genome, score)) = challenger {
             let better = match (self.champion.as_ref(), incumbent) {
                 (None, _) => true,
@@ -468,7 +516,7 @@ impl Trainer {
                 (Some(_), Some(previous)) => score > previous,
             };
             if better {
-                self.promote(genome);
+                self.promote(genome, challenger_rates);
             }
         }
         self.history.push_back(HistoryRow {
@@ -500,8 +548,9 @@ impl Trainer {
     /// Records a new champion. This is the ONLY place the frozen self-play
     /// opponent may change, and it always discards the previous candidate's
     /// gate evidence rather than pooling it.
-    fn promote(&mut self, genome: Genome) {
+    fn promote(&mut self, genome: Genome, rates: MutationRates) {
         let fingerprint = genome.fingerprint();
+        self.champion_rates = rates;
         let nodes = genome.nodes.len();
         let links = genome.enabled_count();
         self.champion = Some(genome.clone());
@@ -524,9 +573,12 @@ impl Trainer {
         }
     }
 
+    /// A probe runs in BOTH phases. While climbing it decides whether an
+    /// expensive gate is worth opening; in the mixed phase it is a regression
+    /// alarm on the original Awesome cyborgs, which the frozen self-play
+    /// opponent can never test.
     fn should_probe(&self) -> bool {
-        self.ladder == Ladder::Climbing
-            && self.champion.is_some()
+        self.champion.is_some()
             && self.population.generation % self.config.readiness_period == 0
     }
 
@@ -571,15 +623,27 @@ impl Trainer {
             let played = cursor.max(1);
             let rate = wins as f64 / played as f64;
             self.last_validation = Some(rate);
-            if genome.fingerprint() == champion && rate >= self.config.readiness_threshold {
-                self.note(format!(
-                    "readiness {:.1}% over {} probe games: opening an audit",
-                    rate * 100.0,
-                    cursor
-                ));
-                self.begin_gate(Round::Audit);
-            } else {
-                self.mode = Mode::Training;
+            let same = genome.fingerprint() == champion;
+            match (same, self.ladder, rate >= self.config.readiness_threshold) {
+                // Climbing and strong enough: spend the audit.
+                (true, Ladder::Climbing, true) => {
+                    self.note(format!(
+                        "readiness {:.1}% over {cursor} probe games against cyborgs: \
+                         opening an audit",
+                        rate * 100.0
+                    ));
+                    self.begin_gate(Round::Audit);
+                }
+                // Mixed and slipping against the original opponents: sweep.
+                (true, Ladder::Mixed, false) => {
+                    self.note(format!(
+                        "cyborg rehearsal fell to {:.1}% over {cursor} probe games: \
+                         opening a bounded regression sweep",
+                        rate * 100.0
+                    ));
+                    self.begin_gate(Round::Regression);
+                }
+                _ => self.mode = Mode::Training,
             }
             return Unit {
                 episodes: 0,
@@ -612,7 +676,33 @@ impl Trainer {
             self.mode = Mode::Training;
             return;
         };
-        let cells = self.cyborg_cells();
+        // Always the CYBORG board. A frozen copy of ourselves is never gated
+        // and never swept; it cannot tell us whether we still beat the
+        // original opponents.
+        let mut cells = self.cyborg_cells();
+        let mut config = self.config.audit;
+        if round == Round::Regression {
+            // A sweep is bounded far more tightly than a gate, and it visits
+            // the cells the sampler currently believes are weakest first, so
+            // the budget is spent where a regression would actually be.
+            config.budget = self.config.regression_budget;
+            config.max_failures = u32::MAX;
+            let sampler = self.config.sampler;
+            let generation = self.population.generation;
+            let stats = &self.stats;
+            let priority = &self.priority;
+            cells.sort_by(|a, b| {
+                let score = |cell: &Cell| {
+                    sampler::weight(
+                        &sampler,
+                        stats.cells.get(cell).unwrap_or(&Default::default()),
+                        generation,
+                        priority.contains(cell),
+                    )
+                };
+                score(b).total_cmp(&score(a))
+            });
+        }
         let priority = self.priority.clone();
         self.mode = Mode::Auditing {
             gate: Gate::open(
@@ -620,7 +710,7 @@ impl Trainer {
                 self.stage,
                 self.opponent_revision,
                 round,
-                self.config.audit,
+                config,
                 &cells,
                 &priority,
             ),
@@ -656,6 +746,7 @@ impl Trainer {
         let stream = match gate.round {
             Round::Audit => StreamTag::Audit,
             Round::Confirm => StreamTag::Confirm,
+            Round::Regression => StreamTag::Regression,
         };
         let attempt = self.audit_attempt;
         let ticks = self.config.ticks;
@@ -698,6 +789,9 @@ impl Trainer {
     }
 
     fn finish_gate(&mut self, gate: Gate, progress: Progress) -> Unit {
+        if gate.round == Round::Regression {
+            return self.finish_regression(gate);
+        }
         match progress {
             Progress::Passed if gate.round == Round::Audit => {
                 for (cell, tally) in gate.evidence() {
@@ -744,6 +838,48 @@ impl Trainer {
         }
     }
 
+    /// A regression sweep decides nothing. It records what it saw, points the
+    /// sampler at whatever slipped, and hands the loop back to training.
+    fn finish_regression(&mut self, gate: Gate) -> Unit {
+        let failed = gate.failed_cells();
+        let swept = gate.tallies.len();
+        self.regression_swept = swept;
+        self.regression_failed = failed.len();
+        if failed.is_empty() {
+            self.note(format!(
+                "regression sweep clear: {swept} cyborg matchup(s) checked over {} fights, \
+                 none below the target",
+                gate.spent
+            ));
+            self.priority.clear();
+        } else {
+            let example = failed
+                .first()
+                .map(|c| format!("{} against {}", c.our_ship().name(), c.their_ship().name()))
+                .unwrap_or_default();
+            self.note(format!(
+                "regression sweep found {} of {swept} cyborg matchup(s) below the target \
+                 (for example {example}); rehearsing them harder",
+                failed.len()
+            ));
+            // Failure turns straight into sampling pressure rather than into a
+            // number nobody acts on.
+            self.priority = failed;
+        }
+        // A sweep is evidence about cyborg cells for the current champion, so
+        // it is kept and displayed like any other champion audit evidence.
+        for (cell, tally) in gate.evidence() {
+            self.evidence.insert(*cell, *tally);
+        }
+        // A later sweep must be fresh evidence, not a replay of this one.
+        self.audit_attempt += 1;
+        self.mode = Mode::Training;
+        Unit {
+            episodes: 0,
+            boundary: true,
+        }
+    }
+
     fn advance_stage(&mut self, champion: &str) {
         self.audit_attempt += 1;
         self.priority.clear();
@@ -774,6 +910,14 @@ impl Trainer {
         match self.mode {
             Mode::Training | Mode::Probing { .. } => "training",
             Mode::Auditing { .. } => "auditing",
+        }
+    }
+
+    /// The round a gate is running, if one is.
+    pub fn round(&self) -> Option<Round> {
+        match &self.mode {
+            Mode::Auditing { gate } => Some(gate.round),
+            _ => None,
         }
     }
 

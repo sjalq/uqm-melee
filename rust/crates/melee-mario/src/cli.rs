@@ -76,6 +76,11 @@ TRAINING OPTIONS
                            audit is worth opening. Default 128.
   --readiness-threshold <r>  Probe win rate needed to open an audit. Default 0.85.
   --readiness-period <n>   Probe every n generations. Default 5.
+  --regression-budget <n>  Fights one mixed-phase regression sweep may spend.
+                           Default 4000. A sweep gates nothing; it checks that
+                           a policy training against a frozen copy of itself
+                           still beats the original cyborgs, and points the
+                           sampler at whatever slipped.
 
 NOTES
   The server binds 127.0.0.1 only and serves GET /api/status, GET /api/network,
@@ -101,6 +106,10 @@ pub struct Options {
     pub episodes: Option<u64>,
     pub minutes: Option<f64>,
     pub allow_rebuild: bool,
+    /// Flags the operator actually typed. On a resume the run's own stored
+    /// configuration is authoritative, so anything typed here that the run
+    /// already decided has to be reported rather than silently ignored.
+    pub given: Vec<String>,
     pub config: Config,
 }
 
@@ -127,6 +136,7 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
         episodes: None,
         minutes: None,
         allow_rebuild: false,
+        given: Vec::new(),
         config: Config {
             run_id: String::new(),
             salt: 0,
@@ -139,6 +149,7 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
             readiness_games: 128,
             readiness_threshold: 0.85,
             readiness_period: 5,
+            regression_budget: 4_000,
         },
     };
     let mut at = 1;
@@ -146,6 +157,9 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
         let flag = arguments[at].as_str();
         let next = arguments.get(at + 1);
         let mut consumed = 2;
+        if flag.starts_with("--") {
+            options.given.push(flag.to_string());
+        }
         match flag {
             "--root" => {
                 options.root = PathBuf::from(next.ok_or("--root needs a path")?);
@@ -184,6 +198,9 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
             "--readiness-period" => {
                 options.config.readiness_period = parse_value(next, "--readiness-period")?
             }
+            "--regression-budget" => {
+                options.config.regression_budget = parse_value(next, "--regression-budget")?
+            }
             "--help" | "-h" => {
                 options.command = "help".to_string();
                 consumed = 1;
@@ -206,6 +223,39 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
     }
     Ok(options)
 }
+
+/// How long the evaluator must rest after `worked` seconds of computing to
+/// hold its long-run share of one core at `duty`. Pure so the arithmetic can
+/// be checked without waiting for a clock.
+pub fn rest_owed(worked: Duration, duty: f64) -> Duration {
+    if duty >= 1.0 {
+        return Duration::ZERO;
+    }
+    worked.mul_f64((1.0 - duty) / duty)
+}
+
+/// How long one slice of governor rest lasts. Short enough that a pause or a
+/// stop is acted on promptly, long enough that resting is not itself work.
+const REST_SLICE: Duration = Duration::from_millis(200);
+
+/// Ceiling on how often the status document is re-rendered when nothing the
+/// dashboard must not miss has changed.
+const PUBLISH_EVERY: Duration = Duration::from_secs(1);
+
+/// Options that belong to a RUN rather than to one session of it. Changing any
+/// of them would change the trajectory, so a resume keeps the stored value and
+/// says so instead of quietly obeying the command line.
+const RUN_OWNED_FLAGS: [&str; 9] = [
+    "--population",
+    "--panel",
+    "--ticks",
+    "--rating",
+    "--seed",
+    "--audit-panel",
+    "--audit-budget",
+    "--readiness-games",
+    "--readiness-threshold",
+];
 
 /// Set by the signal handler. The supervisor notices it at the next safe point
 /// and shuts down through the ordinary checkpoint path.
@@ -409,6 +459,15 @@ fn supervise(options: Options) -> Result<(), String> {
     let dir = store::run_dir(&options.root, &run_id);
     let checkpoint = dir.join(store::CHECKPOINT);
 
+    // Claimed BEFORE anything in the directory is read or written, so two
+    // resumes racing each other cannot both decide the run is free and then
+    // both write the checkpoint.
+    let _lock = if serve_only {
+        None
+    } else {
+        Some(RunLock::acquire(&dir).map_err(|e| e.to_string())?)
+    };
+
     let mut trainer = if starting {
         if checkpoint.exists() {
             return Err(format!(
@@ -425,6 +484,32 @@ fn supervise(options: Options) -> Result<(), String> {
         Trainer::fresh(config)
     } else {
         let mut restored = load(&dir)?;
+        // The run's own configuration is authoritative from here on, so the
+        // governor and the dashboard read the same number. The one exception
+        // is an explicit --duty, which is a pure resource knob that cannot
+        // change the trajectory; it is written into the run so that what the
+        // process does and what the dashboard says stay the same thing.
+        if options.given.iter().any(|flag| flag == "--duty") {
+            if restored.config.duty != options.config.duty {
+                restored.note(format!(
+                    "duty cap changed for this session: {:.2} became {:.2}",
+                    restored.config.duty, options.config.duty
+                ));
+            }
+            restored.config.duty = options.config.duty;
+        }
+        let overridden: Vec<&String> = options
+            .given
+            .iter()
+            .filter(|flag| RUN_OWNED_FLAGS.contains(&flag.as_str()))
+            .collect();
+        if !overridden.is_empty() {
+            eprintln!(
+                "melee-mario: {overridden:?} describe the run, not the session, so the values \
+                 stored in {} are being used instead. Start a new run to change them.",
+                checkpoint.display()
+            );
+        }
         let current = trainer::build_fingerprint();
         if restored.evaluator != current {
             if !options.allow_rebuild {
@@ -444,10 +529,12 @@ fn supervise(options: Options) -> Result<(), String> {
         restored
     };
 
+    trainer.nice = options.nice;
     let shared = Shared::new(server::asset_dir(&options.root));
     let listener = if options.serve {
         match server::bind(options.port) {
             Ok(listener) => {
+                shared.set_port(listener.local_addr().map(|a| a.port()).unwrap_or(options.port));
                 let clone = shared.clone();
                 std::thread::spawn(move || server::serve(listener, clone));
                 println!(
@@ -469,11 +556,15 @@ fn supervise(options: Options) -> Result<(), String> {
     };
     let _ = listener;
 
+    let path = checkpoint.display().to_string();
     let publish = |trainer: &Trainer, phase: Phase, message: &str, stale: bool| {
         shared.publish(
-            &trainer.status(phase, message, &checkpoint.display().to_string(), stale),
+            &trainer.status(phase, message, &path, stale),
             &trainer.network(),
         );
+    };
+    let publish_status = |trainer: &Trainer, phase: Phase, message: &str| {
+        shared.publish_status(&trainer.status(phase, message, &path, false));
     };
 
     if serve_only {
@@ -490,13 +581,18 @@ fn supervise(options: Options) -> Result<(), String> {
         return Ok(());
     }
 
-    let _lock = RunLock::acquire(&dir).map_err(|e| e.to_string())?;
     publish(&trainer, Phase::Initializing, "starting up", false);
 
     let started = Instant::now();
     let started_episodes = trainer.episodes;
     let started_generation = trainer.population.generation;
     let mut last_save = Instant::now();
+    // Publishing means serialising the whole status document, which is not free
+    // at 625 matchups. It happens at most once a second unless something the
+    // dashboard must not miss actually changed.
+    let mut last_publish = Instant::now();
+    let mut shown_phase = Phase::Initializing;
+    let mut shown_champion = String::new();
     let reason;
 
     loop {
@@ -510,9 +606,13 @@ fn supervise(options: Options) -> Result<(), String> {
                 break;
             }
             Control::Pause => {
-                publish(&trainer, Phase::Paused, "paused by request", false);
+                if shown_phase != Phase::Paused || last_publish.elapsed() >= PUBLISH_EVERY {
+                    publish(&trainer, Phase::Paused, "paused by request", false);
+                    shown_phase = Phase::Paused;
+                    last_publish = Instant::now();
+                }
                 // The server keeps answering while this loop idles.
-                std::thread::sleep(Duration::from_millis(200));
+                std::thread::sleep(REST_SLICE);
                 continue;
             }
             Control::Run => {}
@@ -536,28 +636,57 @@ fn supervise(options: Options) -> Result<(), String> {
             }
         }
 
+        // Everything from here to the rest below is work this process is doing
+        // and therefore work the duty cap must pay for: simulating, rendering
+        // the status document and writing the checkpoint alike. Measuring only
+        // the simulation would let a fast panel with an expensive publish blow
+        // straight through the cap.
         let began = Instant::now();
         let unit = trainer.step();
-        let worked = began.elapsed();
-        trainer.compute += worked.as_secs_f64();
 
         let phase = match trainer.phase() {
             "auditing" => Phase::Auditing,
             _ => Phase::Training,
         };
-        publish(&trainer, phase, "training", false);
+        let champion = trainer
+            .champion
+            .as_ref()
+            .map(|g| g.fingerprint())
+            .unwrap_or_default();
+        if champion != shown_champion {
+            // The genome changed, so the network document has to change too.
+            publish(&trainer, phase, "training", false);
+            shown_champion = champion;
+            shown_phase = phase;
+            last_publish = Instant::now();
+        } else if phase != shown_phase || last_publish.elapsed() >= PUBLISH_EVERY {
+            publish_status(&trainer, phase, "training");
+            shown_phase = phase;
+            last_publish = Instant::now();
+        }
 
         if unit.boundary || last_save.elapsed() >= Duration::from_secs(60) {
             save(&mut trainer, &dir)?;
             last_save = Instant::now();
-            publish(&trainer, phase, "training", false);
         }
 
-        // The governor. Sleeping for `worked * (1 - duty) / duty` holds the
-        // long-run share of one core at `duty`, whatever the unit was doing.
-        let rest = worked.mul_f64((1.0 - options.config.duty) / options.config.duty);
-        if rest > Duration::ZERO {
-            std::thread::sleep(rest.min(Duration::from_secs(5)));
+        let worked = began.elapsed();
+        trainer.compute += worked.as_secs_f64();
+
+        // The governor. Resting for `worked * (1 - duty) / duty` holds the
+        // long-run share of one core at `duty`. The whole debt is paid, never
+        // truncated, because truncating it is exactly how a heavy graph or a
+        // long audit would creep past the cap; it is paid in short slices so a
+        // pause, a stop or a signal is still noticed promptly.
+        // One authoritative duty: the same field the status document reports.
+        let mut owed = rest_owed(worked, trainer.config.duty);
+        while owed > Duration::ZERO {
+            let slice = owed.min(REST_SLICE);
+            std::thread::sleep(slice);
+            owed -= slice;
+            if INTERRUPTED.load(Ordering::SeqCst) || shared.control() == Control::Stop {
+                break;
+            }
         }
         // Elapsed counts the whole iteration, so episodes_per_second is real
         // throughput and compute / elapsed is the duty actually achieved.
@@ -645,6 +774,25 @@ mod tests {
         assert!(HELP.contains("/api/status"));
         assert!(HELP.contains("/api/network"));
         assert!(HELP.contains("/api/control"));
+    }
+
+    #[test]
+    fn the_governor_pays_the_whole_debt_for_any_duty() {
+        let work = Duration::from_millis(100);
+        assert_eq!(rest_owed(work, 1.0), Duration::ZERO);
+        assert_eq!(rest_owed(work, 0.5), work);
+        assert_eq!(rest_owed(work, 0.25), work * 3);
+        assert_eq!(rest_owed(work, 0.1), work * 9);
+        assert_eq!(rest_owed(Duration::ZERO, 0.5), Duration::ZERO);
+        // A long unit owes a long rest; nothing truncates it, because a cap
+        // that stops applying to expensive work is not a cap.
+        let heavy = Duration::from_secs(30);
+        assert_eq!(rest_owed(heavy, 0.5), heavy);
+        assert_eq!(rest_owed(heavy, 0.2), heavy * 4);
+        // And the debt is paid in slices small enough to notice a stop.
+        assert!(REST_SLICE <= Duration::from_millis(200));
+        let slices = rest_owed(heavy, 0.2).as_millis() / REST_SLICE.as_millis();
+        assert!(slices > 100, "a long rest must still be interruptible");
     }
 
     #[test]

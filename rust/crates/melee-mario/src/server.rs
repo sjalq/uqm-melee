@@ -11,12 +11,20 @@
 //!   * It never computes anything. The trainer thread publishes rendered
 //!     documents and the server hands out the latest one, so requests stay
 //!     fast while a fight is being simulated and keep working while paused.
+//!
+//! Listening on loopback is NOT by itself a security boundary. Any page in the
+//! user's browser can reach 127.0.0.1, and `fetch` with `mode: 'no-cors'` will
+//! happily post a body cross-origin with no preflight, which would let an
+//! unrelated web page stop a long training run. So the control endpoint also
+//! requires a JSON content type (which forces a preflight this server never
+//! satisfies), refuses any request carrying a foreign `Origin`, and requires a
+//! loopback `Host` so a rebound DNS name cannot be used to reach it.
 
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -59,6 +67,9 @@ pub struct Shared {
     documents: Arc<Mutex<Documents>>,
     control: Arc<AtomicU8>,
     assets: Arc<PathBuf>,
+    /// The port actually bound, so `Host` and `Origin` can be checked against
+    /// the only addresses this server can legitimately be reached at.
+    port: Arc<AtomicU16>,
 }
 
 struct Documents {
@@ -75,7 +86,18 @@ impl Shared {
             })),
             control: Arc::new(AtomicU8::new(Control::Run as u8)),
             assets: Arc::new(assets),
+            port: Arc::new(AtomicU16::new(DEFAULT_PORT)),
         }
+    }
+
+    pub fn set_port(&self, port: u16) {
+        self.port.store(port, Ordering::SeqCst);
+    }
+
+    /// The host authorities a request may legitimately name.
+    fn allowed_authorities(&self) -> [String; 2] {
+        let port = self.port.load(Ordering::SeqCst);
+        [format!("127.0.0.1:{port}"), format!("localhost:{port}")]
     }
 
     pub fn publish(&self, status: &Value, network: &Value) {
@@ -84,6 +106,15 @@ impl Shared {
         if let Ok(mut held) = self.documents.lock() {
             held.status = status;
             held.network = network;
+        }
+    }
+
+    /// Republishes only the status document. Serialising a genome is not free
+    /// and the network document changes only when the champion does.
+    pub fn publish_status(&self, status: &Value) {
+        let status = Arc::new(status.to_string());
+        if let Ok(mut held) = self.documents.lock() {
+            held.status = status;
         }
     }
 
@@ -142,6 +173,9 @@ fn handle(mut stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
     let target = parts.next().unwrap_or("").to_string();
 
     let mut length = 0usize;
+    let mut origin: Option<String> = None;
+    let mut host: Option<String> = None;
+    let mut content_type: Option<String> = None;
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 {
@@ -151,11 +185,16 @@ fn handle(mut stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
         if line.is_empty() {
             break;
         }
-        if let Some(raw) = line
-            .strip_prefix("Content-Length:")
-            .or_else(|| line.strip_prefix("content-length:"))
-        {
-            length = raw.trim().parse().unwrap_or(0);
+        let Some((name, raw)) = line.split_once(':') else {
+            continue;
+        };
+        let value = raw.trim().to_string();
+        match name.to_ascii_lowercase().as_str() {
+            "content-length" => length = value.parse().unwrap_or(0),
+            "origin" => origin = Some(value),
+            "host" => host = Some(value),
+            "content-type" => content_type = Some(value),
+            _ => {}
         }
     }
     // A body larger than this is not a control message.
@@ -176,10 +215,16 @@ fn handle(mut stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
             let (_, network) = shared.documents();
             respond(&mut stream, 200, "application/json", network.as_bytes())
         }
-        ("POST", "/api/control") => {
-            let answer = control(shared, &body);
-            respond(&mut stream, 200, "application/json", answer.as_bytes())
-        }
+        ("POST", "/api/control") => match authorised(shared, &host, &origin, &content_type) {
+            Err(reason) => {
+                let refusal = refusal(reason);
+                respond(&mut stream, 403, "application/json", refusal.as_bytes())
+            }
+            Ok(()) => {
+                let answer = control(shared, &body);
+                respond(&mut stream, 200, "application/json", answer.as_bytes())
+            }
+        },
         ("GET", _) | ("HEAD", _) => match STATIC_ROUTES.iter().find(|(route, _, _)| *route == path) {
             None => respond(&mut stream, 404, "text/plain", b"not found"),
             Some((_, file, kind)) => match std::fs::read(shared.assets.join(file)) {
@@ -197,6 +242,53 @@ fn handle(mut stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
         },
         _ => respond(&mut stream, 405, "text/plain", b"method not allowed"),
     }
+}
+
+/// Decides whether a control request really came from this dashboard.
+///
+/// `Host` must be one of this server's own authorities, which is what stops a
+/// hostile DNS name from being rebound to 127.0.0.1 and used as a front door.
+/// `Origin`, which browsers attach to every non-GET request, must either be
+/// absent (a command line client) or be this dashboard's own origin. The
+/// content type must be JSON, which is not one of the types a no-cors fetch is
+/// allowed to send, so a cross-origin attempt becomes a preflight that this
+/// server answers without any CORS headers and the browser then refuses.
+fn authorised(
+    shared: &Shared,
+    host: &Option<String>,
+    origin: &Option<String>,
+    content_type: &Option<String>,
+) -> Result<(), &'static str> {
+    let allowed = shared.allowed_authorities();
+    match host {
+        None => return Err("a Host header naming this server is required"),
+        Some(named) if allowed.iter().any(|a| a == named) => {}
+        Some(_) => return Err("Host must be this server's own loopback address"),
+    }
+    if let Some(named) = origin {
+        if !allowed.iter().any(|a| *named == format!("http://{a}")) {
+            return Err("this endpoint does not accept cross-origin requests");
+        }
+    }
+    let json = content_type
+        .as_deref()
+        .map(|kind| {
+            kind.split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case("application/json")
+        })
+        .unwrap_or(false);
+    if !json {
+        return Err("Content-Type must be application/json");
+    }
+    Ok(())
+}
+
+fn refusal(reason: &str) -> String {
+    let quoted = Value::String(reason.to_string()).to_string();
+    format!("{{\"ok\":false,\"error\":{quoted}}}")
 }
 
 /// Accepts exactly three actions and nothing else, so a malformed or hostile
@@ -250,8 +342,9 @@ pub fn post_control(port: u16, action: &str) -> std::io::Result<String> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     write!(
         stream,
-        "POST /api/control HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "POST /api/control HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
         body.len()
     )?;
     stream.flush()?;
@@ -294,9 +387,32 @@ mod tests {
         );
         let listener = bind(0).unwrap();
         let port = listener.local_addr().unwrap().port();
+        shared.set_port(port);
         let clone = shared.clone();
         std::thread::spawn(move || serve(listener, clone));
         (port, shared)
+    }
+
+    /// Posts a control message with whatever headers a caller wants, so the
+    /// shapes a hostile page can actually produce can be exercised.
+    fn post_raw(port: u16, headers: &[(&str, &str)], body: &str) -> String {
+        let mut stream = TcpStream::connect(SocketAddr::from((LOOPBACK, port))).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = String::from("POST /api/control HTTP/1.1\r\n");
+        for (name, value) in headers {
+            request.push_str(&format!("{name}: {value}\r\n"));
+        }
+        request.push_str(&format!(
+            "Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ));
+        stream.write_all(request.as_bytes()).unwrap();
+        stream.flush().unwrap();
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).unwrap();
+        answer
     }
 
     #[test]
@@ -340,6 +456,89 @@ mod tests {
             let answer = post_control(port, bogus).unwrap();
             assert!(answer.contains("\"ok\":false"), "accepted {bogus:?}");
         }
+        assert_eq!(shared.control(), Control::Run);
+    }
+
+    #[test]
+    fn a_hostile_page_cannot_stop_the_run_through_the_browser() {
+        let (port, shared) = started();
+        let good = format!("127.0.0.1:{port}");
+        let stop = "{\"action\":\"stop\"}";
+
+        // The shape a cross-origin no-cors fetch can actually put on the wire:
+        // a simple content type and the attacking page's Origin. Both are
+        // refused, so the run keeps going.
+        let answer = post_raw(
+            port,
+            &[
+                ("Host", good.as_str()),
+                ("Origin", "https://evil.example"),
+                ("Content-Type", "text/plain;charset=UTF-8"),
+            ],
+            stop,
+        );
+        assert!(answer.contains("403"), "{answer}");
+        assert_eq!(shared.control(), Control::Run);
+
+        // Even with a JSON content type, a foreign Origin is refused. (A
+        // browser would not get this far: application/json forces a preflight
+        // this server answers without CORS headers.)
+        let answer = post_raw(
+            port,
+            &[
+                ("Host", good.as_str()),
+                ("Origin", "https://evil.example"),
+                ("Content-Type", "application/json"),
+            ],
+            stop,
+        );
+        assert!(answer.contains("403"), "{answer}");
+        assert_eq!(shared.control(), Control::Run);
+
+        // A rebound DNS name resolving to 127.0.0.1 names itself in Host.
+        let answer = post_raw(
+            port,
+            &[
+                ("Host", "evil.example"),
+                ("Content-Type", "application/json"),
+            ],
+            stop,
+        );
+        assert!(answer.contains("403"), "{answer}");
+        assert_eq!(shared.control(), Control::Run);
+
+        // A missing Host is refused rather than assumed to be us.
+        let answer = post_raw(port, &[("Content-Type", "application/json")], stop);
+        assert!(answer.contains("403"), "{answer}");
+        assert_eq!(shared.control(), Control::Run);
+
+        // A form post, which needs no preflight at all, is refused.
+        let answer = post_raw(
+            port,
+            &[
+                ("Host", good.as_str()),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            stop,
+        );
+        assert!(answer.contains("403"), "{answer}");
+        assert_eq!(shared.control(), Control::Run);
+
+        // The dashboard's own page, same origin, works.
+        let answer = post_raw(
+            port,
+            &[
+                ("Host", good.as_str()),
+                ("Origin", &format!("http://127.0.0.1:{port}")),
+                ("Content-Type", "application/json"),
+            ],
+            "{\"action\":\"pause\"}",
+        );
+        assert!(answer.contains("\"ok\":true"), "{answer}");
+        assert_eq!(shared.control(), Control::Pause);
+
+        // And so does the command line client, which sends no Origin at all.
+        assert!(post_control(port, "resume").unwrap().contains("\"ok\":true"));
         assert_eq!(shared.control(), Control::Run);
     }
 

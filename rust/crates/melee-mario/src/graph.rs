@@ -23,20 +23,57 @@
 //!  5. Input nodes are driven directly and never have incoming edges. A
 //!     non-input node with no enabled incoming edge sums to zero and therefore
 //!     outputs zero, which is also what `sigmoid(0)` returns.
-//!  6. `sigmoid(x) = 2 / (1 + exp(-4.9 * x)) - 1`, with a non-finite
-//!     accumulator saturating: `+inf -> 1`, `-inf -> -1`, `NaN -> 0`.
+//!  6. `sigmoid(x) = 2 / (1 + exp(-4.9 * x)) - 1`, which is exactly
+//!     `tanh(2.45 * x)`, with a non-finite accumulator saturating:
+//!     `+inf -> 1`, `-inf -> -1`, `NaN -> 0`. Near zero the exponential form
+//!     is evaluated through a cancellation: `exp(-4.9x)` rounds to a
+//!     neighbour of 1, `2 / (1 + that)` rounds to a neighbour of 1, and the
+//!     final subtraction keeps only the rounding noise, which two runtimes
+//!     need not agree on. Since a control is asserted when its output is
+//!     strictly greater than zero, that noise can flip a control. So for
+//!     `|x| < 1e-5` the odd Taylor series of `tanh` is used instead; see
+//!     [`sigmoid`] for the exact expression both languages must write.
 //!  7. All activations are zero when an episode begins and whenever the state
 //!     is reset (a new round, or a different ship in the seat).
 
 use crate::genome::{Genome, NodeKind, N_INPUT, N_OUTPUT};
 
-/// `2 / (1 + exp(-4.9 x)) - 1`, the activation the original MarI/O used.
+/// Cutoff below which the series form is used. At `|x| = 1e-5` the next
+/// series term is `2 u^5 / 15` with `u = 2.45e-5`, which is about `5e-20`
+/// relative to `u` and therefore far below the last bit of the result, so two
+/// terms are exact here. Above the cutoff the exponential form has no
+/// cancellation left to worry about.
+pub const SERIES_CUTOFF: f64 = 1.0e-5;
+
+/// `2 / (1 + exp(-4.9 x)) - 1`, the activation the original MarI/O used,
+/// written so that both runtimes agree on the SIGN as well as the value.
+///
+/// Every language implementing this genome must write these two expressions
+/// exactly as they stand, including the association:
+///
+/// ```text
+///   u = 2.45 * x
+///   |x| <  1e-5  ->  u - u * u * u / 3.0
+///   |x| >= 1e-5  ->  2.0 / (1.0 + exp(-4.9 * x)) - 1.0
+/// ```
+///
+/// The series branch is an odd polynomial, so its sign is the sign of `x` with
+/// no rounding involved at all, and it is composed only of correctly rounded
+/// multiplications, a division by an exact power of two's neighbour and one
+/// subtraction, which IEEE-754 makes bit-identical everywhere. The branch
+/// above the cutoff never approaches zero closely enough for rounding to
+/// decide a control.
 #[inline]
 pub fn sigmoid(x: f64) -> f64 {
     if x.is_nan() {
         return 0.0;
     }
-    2.0 / (1.0 + (-4.9 * x).exp()) - 1.0
+    let u = 2.45 * x;
+    if x.abs() < SERIES_CUTOFF {
+        u - u * u * u / 3.0
+    } else {
+        2.0 / (1.0 + (-4.9 * x).exp()) - 1.0
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -327,6 +364,57 @@ mod tests {
         assert_eq!(sigmoid(f64::NEG_INFINITY), -1.0);
         assert_eq!(sigmoid(f64::NAN), 0.0);
         assert!(sigmoid(-1000.0) > -1.0000001 && sigmoid(-1000.0) <= -1.0 + 1e-12);
+    }
+
+    #[test]
+    fn sigmoid_never_lets_rounding_decide_a_control_near_zero() {
+        // A control is asserted on `> 0`, so the sign has to be the sign of the
+        // input for every input, including the ones where the exponential form
+        // cancels down to nothing but rounding noise.
+        assert_eq!(sigmoid(0.0), 0.0);
+        assert_eq!(sigmoid(-0.0), 0.0);
+        let mut x = 1.0e-3;
+        while x > 0.0 {
+            assert!(sigmoid(x) > 0.0, "sigmoid({x:e}) was not positive");
+            assert!(sigmoid(-x) < 0.0, "sigmoid({:e}) was not negative", -x);
+            if x < SERIES_CUTOFF {
+                // Below the cutoff the polynomial is exactly odd, so the two
+                // seats of a mirrored fight cannot disagree by a rounding step.
+                assert_eq!(sigmoid(-x), -sigmoid(x), "series stopped being odd at {x:e}");
+            }
+            x /= 2.0;
+        }
+        // The exponential form collapses exactly where the series takes over.
+        let naive = |x: f64| 2.0 / (1.0 + (-4.9 * x).exp()) - 1.0;
+        assert_eq!(naive(1.0e-17), 0.0, "the defect this branch exists for");
+        assert!(sigmoid(1.0e-17) > 0.0);
+    }
+
+    #[test]
+    fn the_two_sigmoid_branches_join_smoothly_at_the_cutoff() {
+        let naive = |x: f64| 2.0 / (1.0 + (-4.9 * x).exp()) - 1.0;
+        // Just ABOVE the cutoff the exponential form is still the one in use,
+        // and the series it replaced would have given the same answer to well
+        // within the value's own precision. Its residual error there is the
+        // cancellation, about one part in 1e11, which is nowhere near enough to
+        // change a sign.
+        for step in 1..=1000 {
+            let x = SERIES_CUTOFF * (1.0 + step as f64 / 100.0);
+            let series = 2.45 * x - (2.45 * x) * (2.45 * x) * (2.45 * x) / 3.0;
+            let relative = ((naive(x) - series) / series).abs();
+            assert!(relative < 1e-9, "branches disagree at {x:e} by {relative:e}");
+        }
+        // Below the cutoff the series is the true tanh to full precision.
+        for x in [1e-6_f64, 1e-7, 5e-6, -3e-6, 9.9e-6] {
+            assert!(
+                (sigmoid(x) - (2.45 * x).tanh()).abs() <= 1e-21,
+                "series is not tanh at {x:e}"
+            );
+        }
+        // The old formula collapses entirely well before the cutoff, which is
+        // exactly the region the series now covers.
+        assert_eq!(naive(1e-17), 0.0);
+        assert!(naive(1e-16) != 2.45e-16, "the cancellation is real");
     }
 
     #[test]

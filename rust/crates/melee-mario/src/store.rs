@@ -9,6 +9,7 @@
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 pub const CHECKPOINT: &str = "checkpoint.json";
@@ -20,67 +21,71 @@ pub fn run_dir(root: &Path, run_id: &str) -> PathBuf {
     root.join("artifacts").join("mario").join(run_id)
 }
 
-/// Holds the run directory for one process. Dropping it releases the claim.
+/// An exclusive claim on one run directory, held by the KERNEL rather than by
+/// a written process id.
+///
+/// A file containing a pid can only ever be advisory: two resumes that both
+/// read a dead owner's pid would both decide the lock was stale and both
+/// proceed, and then two processes would be writing the same checkpoint. So
+/// the claim is an `flock(LOCK_EX | LOCK_NB)` on the lock file's inode, held
+/// open for the life of the [`RunLock`]. The kernel releases it when the file
+/// descriptor closes, which includes a crash or a kill, so a dead owner never
+/// blocks a resume and a live one always does.
+///
+/// The lock file is never unlinked while held: removing it would let a second
+/// process create a NEW inode at the same path and lock that instead. It stays
+/// in the run directory as a permanent, empty marker.
 #[derive(Debug)]
 pub struct RunLock {
-    path: PathBuf,
+    /// Kept open purely to hold the kernel lock. Dropping it releases.
+    _file: File,
+    owner: u32,
 }
 
 impl RunLock {
-    /// Fails when another live process already owns this run. A lock left
-    /// behind by a killed process is reclaimed, because the run directory is
-    /// still consistent: the checkpoint is whole and the unfinished batch is
-    /// deterministic and simply replays.
+    /// Fails while another live process owns this run. Acquire it BEFORE
+    /// reading or writing anything else in the directory.
     pub fn acquire(dir: &Path) -> io::Result<RunLock> {
         fs::create_dir_all(dir)?;
         let path = dir.join(LOCK);
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                writeln!(file, "{}", std::process::id())?;
-                Ok(RunLock { path })
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                let owner = fs::read_to_string(&path).unwrap_or_default();
-                let pid: u32 = owner.trim().parse().unwrap_or(0);
-                if pid != 0 && alive(pid) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::AddrInUse,
-                        format!(
-                            "run {} is already being trained by process {pid}",
-                            dir.display()
-                        ),
-                    ));
-                }
-                let mut file = File::create(&path)?;
-                writeln!(file, "{}", std::process::id())?;
-                Ok(RunLock { path })
-            }
-            Err(error) => Err(error),
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)?;
+        // Safety: the descriptor is valid and owned for the duration of the
+        // call, and flock only associates a lock with it.
+        let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if locked != 0 {
+            let error = io::Error::last_os_error();
+            let owner = fs::read_to_string(&path).unwrap_or_default();
+            let owner = owner.trim();
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                format!(
+                    "run {} is already being trained{}: {error}",
+                    dir.display(),
+                    if owner.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" by process {owner}")
+                    }
+                ),
+            ));
         }
+        // Recorded for the operator's benefit only; nothing depends on it.
+        let owner = std::process::id();
+        let mut file = file;
+        file.set_len(0)?;
+        writeln!(file, "{owner}")?;
+        file.flush()?;
+        Ok(RunLock { _file: file, owner })
     }
-}
 
-impl Drop for RunLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+    pub fn owner(&self) -> u32 {
+        self.owner
     }
-}
-
-#[cfg(unix)]
-fn alive(pid: u32) -> bool {
-    // `kill -0` reports whether the process exists without disturbing it.
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn alive(_pid: u32) -> bool {
-    true
 }
 
 /// Writes `value` so that readers only ever observe a complete document.
@@ -165,8 +170,13 @@ mod tests {
     fn a_second_live_instance_cannot_claim_the_same_run() {
         let dir = scratch("lock");
         let first = RunLock::acquire(&dir).unwrap();
-        let second = RunLock::acquire(&dir);
-        assert!(second.is_err(), "two trainers claimed one run");
+        assert_eq!(first.owner(), std::process::id());
+        for _ in 0..5 {
+            assert!(
+                RunLock::acquire(&dir).is_err(),
+                "two trainers claimed one run"
+            );
+        }
         drop(first);
         // Released, so the run can be resumed.
         let third = RunLock::acquire(&dir).unwrap();
@@ -175,10 +185,52 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_lock_from_a_dead_process_is_reclaimed() {
-        let dir = scratch("stale");
+    fn two_simultaneous_resumes_cannot_both_win() {
+        // The old pid-file scheme lost exactly here: both racers read the same
+        // dead owner and both decided the lock was stale.
+        let dir = scratch("race");
         fs::write(dir.join(LOCK), "999999999\n").unwrap();
-        let lock = RunLock::acquire(&dir).expect("stale lock must not block a resume");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let winners = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let held = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut racers = Vec::new();
+        for _ in 0..8 {
+            let (dir, barrier, winners, held) = (
+                dir.clone(),
+                barrier.clone(),
+                winners.clone(),
+                held.clone(),
+            );
+            racers.push(std::thread::spawn(move || {
+                barrier.wait();
+                if let Ok(lock) = RunLock::acquire(&dir) {
+                    winners.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    // Hold it, so a later winner would overlap with this one.
+                    held.lock().unwrap().push(lock);
+                }
+            }));
+        }
+        for racer in racers {
+            racer.join().unwrap();
+        }
+        assert_eq!(
+            winners.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "more than one process would have written this checkpoint"
+        );
+        held.lock().unwrap().clear();
+        // And once the winner is gone the run is resumable again.
+        drop(RunLock::acquire(&dir).expect("a released run must be resumable"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_lock_left_by_a_dead_process_does_not_block_a_resume() {
+        let dir = scratch("stale");
+        // A crash closes the descriptor, which is what releasing looks like.
+        drop(RunLock::acquire(&dir).unwrap());
+        assert!(dir.join(LOCK).exists(), "the lock file must persist");
+        let lock = RunLock::acquire(&dir).expect("a dead owner must not block a resume");
         drop(lock);
         fs::remove_dir_all(&dir).unwrap();
     }

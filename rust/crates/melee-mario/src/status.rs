@@ -123,6 +123,9 @@ impl Trainer {
             "message": message,
             "generation": self.population.generation,
             "episodes": self.episodes,
+            // Extension: fights that reached no victory, the tick ceiling and
+            // the evaluator's Selecting phase alike. Never counted as wins.
+            "episodes_unresolved": self.unresolved,
             "elapsed_seconds": self.elapsed,
             "episodes_per_second": per_second,
             "updated_at": iso8601(unix_now()),
@@ -141,6 +144,8 @@ impl Trainer {
                 "ladder": self.ladder.as_str(),
                 "opponent_revision": self.opponent_revision,
                 "opponent_fingerprint": self.frozen_opponent.as_ref().map(|g| g.fingerprint()),
+                // A policy is never asked to beat an identical copy of itself
+                // 80% of the time, so self play is never a mastery criterion.
                 "self_play_is_gated": false
             },
             "champion": match self.champion.as_ref() {
@@ -182,7 +187,7 @@ impl Trainer {
                     .then(|| self.compute / self.elapsed)),
                 "compute_seconds": self.compute,
                 "episode_ticks": self.config.ticks,
-                "nice": 10
+                "nice": self.nice
             },
             "audit": match self.auditing_now() {
                 None => json!({"round": Value::Null, "spent": 0,
@@ -199,7 +204,24 @@ impl Trainer {
                 "threshold": self.config.readiness_threshold,
                 "games": self.config.readiness_games,
                 "last_rate": number(self.last_validation),
-                "period": self.config.readiness_period
+                "period": self.config.readiness_period,
+                // What the probe means depends on the phase, so say which.
+                "purpose": if self.ladder == Ladder::Mixed {
+                    "cyborg regression alarm"
+                } else {
+                    "audit readiness"
+                }
+            },
+            "regression": {
+                // Mixed-phase only. A sweep gates nothing; these numbers say
+                // whether a policy training against a frozen copy of itself
+                // still beats the original Awesome cyborgs.
+                "active": self.ladder == Ladder::Mixed,
+                "budget": self.config.regression_budget,
+                "last_swept": self.regression_swept,
+                "last_failed": self.regression_failed,
+                "rehearsing": self.priority.len(),
+                "sweeping": self.round() == Some(Round::Regression)
             },
             "history": self.history.iter().map(|row| json!({
                 "generation": row.generation,
@@ -261,7 +283,8 @@ impl Trainer {
                     "win_rate": number(tally.rate()),
                     "lower_bound": number(tally.lower_bound()),
                     "status": status,
-                    "sample_weight": sampler::weight(&self.config.sampler, &stat, generation),
+                    "sample_weight": sampler::weight(&self.config.sampler, &stat, generation,
+                                                     self.priority.contains(cell)),
                     // Extension: decayed training evidence, kept clearly apart
                     // from the audit numbers above.
                     "training_games": stat.games,

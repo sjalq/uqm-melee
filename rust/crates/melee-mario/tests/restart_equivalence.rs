@@ -46,6 +46,7 @@ fn config(run: &str) -> Config {
         // Deliberately reachable, so the probe and the gate really run.
         readiness_threshold: 0.0,
         readiness_period: 2,
+        regression_budget: 30,
     }
 }
 
