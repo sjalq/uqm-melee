@@ -1320,9 +1320,40 @@ broadCopySuite =
                     |> Expect.equal True
         , test "an externally unlocked stage is named as unlocked, not as mastered" <|
             \() ->
-                broadLines
+                broadBoardLines
                     |> List.any (String.contains "not earned cell by cell")
                     |> Expect.equal True
+        , test "the board explanation says the whole roster is active" <|
+            \() ->
+                broadBoardLines
+                    |> List.any (String.contains "are active at once")
+                    |> Expect.equal True
+        , test "the cell explanation says the cells gate nothing" <|
+            \() ->
+                broadCellLines
+                    |> List.any (String.contains "no cell here can block or unblock it")
+                    |> Expect.equal True
+        , test "the cell explanation says an unplayed cell is unmeasured, not lost" <|
+            \() ->
+                broadCellLines
+                    |> List.any (String.contains "unmeasured, not lost")
+                    |> Expect.equal True
+        , test "no sentence is repeated across the three broad explanations" <|
+            \() ->
+                -- Three panels could each reasonably say "all 25 ships are
+                -- active", and when all three did, the page showed the same
+                -- eleven paragraphs twice and nobody read any of them. Each
+                -- fact belongs to exactly one panel.
+                let
+                    all =
+                        broadLines ++ broadBoardLines ++ broadCellLines
+                in
+                Expect.equal (List.length all) (List.length (unique all))
+        , test "the gate explanation no longer describes the board, which is another panel's job" <|
+            \() ->
+                broadLines
+                    |> List.any (\line -> String.contains "are active at once" line || String.contains "not earned cell by cell" line)
+                    |> Expect.equal False
         , test "carried-over provenance names the origin and the evidence that was cleared" <|
             \() ->
                 broadLines
@@ -1429,6 +1460,26 @@ broadLines =
     case decode broadPayload of
         Ok status ->
             Gate.explainBroad status.curriculum status.overall status.shipPerformance
+
+        Err _ ->
+            []
+
+
+broadBoardLines : List String
+broadBoardLines =
+    case decode broadPayload of
+        Ok status ->
+            Gate.explainBroadBoard status.curriculum
+
+        Err _ ->
+            []
+
+
+broadCellLines : List String
+broadCellLines =
+    case decode broadPayload of
+        Ok status ->
+            Gate.explainBroadCells status.curriculum status.matchups
 
         Err _ ->
             []

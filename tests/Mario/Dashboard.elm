@@ -1652,7 +1652,9 @@ viewCurriculum tips status =
 
         reasons =
             if broad then
-                Gate.explainBroad curriculum status.overall status.shipPerformance
+                -- Deliberately not the gate explanation, which lives on the
+                -- gate panel. This panel's subject is the cells.
+                Gate.explainBroadCells curriculum status.matchups
 
             else
                 Gate.explain target curriculum status.matchups
@@ -2185,26 +2187,8 @@ viewBroadMode tips status =
                 , accent = ""
                 }
             ]
-        , p [ class "prose", Attr.style "margin-top" "12px" ]
-            [ text
-                ("All ships are active. The run is judged on one overall win rate against Awesome cyborgs over a balanced held-out distribution, with a target of "
-                    ++ Format.percent curriculum.target
-                    ++ ". There is no staged unlock and no per-matchup gate: the grid and per-hull tables below are diagnostics that show where that aggregate is weakest."
-                )
-            ]
-        , if curriculum.stageUnlockedExternally then
-            p [ class "prose", Attr.style "margin-top" "8px" ]
-                [ text
-                    ("Stage "
-                        ++ String.fromInt curriculum.stage
-                        ++ " is recorded because the whole board is in play, not because "
-                        ++ Format.count curriculum.totalMatchups
-                        ++ " cells were mastered. The board was unlocked by the operator transition."
-                    )
-                ]
-
-          else
-            text ""
+        , div [ Attr.style "margin-top" "12px" ]
+            (List.map (\line -> p [ class "prose" ] [ text line ]) (Gate.explainBroadBoard curriculum))
         , dl [ class "deflist", Attr.style "margin-top" "16px" ]
             ([ dt [] [ Tip.view tips Tip.AlignStart Copy.ladderPhase [ text "Ladder" ] ]
              , dd [] [ text (Api.ladderLabel curriculum.ladder) ]
