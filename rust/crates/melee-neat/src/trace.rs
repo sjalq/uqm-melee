@@ -2,7 +2,7 @@
 
 use crate::{
     encode,
-    eval::{Job, Phase, State},
+    eval::{DensePilot, Job, Phase, State},
     policy::{self, Net, N_WEIGHTS},
 };
 use melee_core::units::{Side, VelocityDesc, WorldExtent, WorldPoint};
@@ -60,13 +60,13 @@ pub fn run_with_metadata(
         "weight_count": N_WEIGHTS,
     }));
 
-    let mut state = State::start(job);
+    let mut state = State::start(job, DensePilot::new(net));
     emit(snapshot(0, 0, &state, None, job));
     let mut event = 0;
     while !matches!(state.phase, Phase::Victory(_)) && state.ticks < job.ticks {
         let policy = policy_trace(&state, net);
         let before = state.ticks;
-        state.advance(job, net);
+        state.advance(job);
         event += 1;
         emit(snapshot(event, state.ticks - before, &state, policy, job));
     }
@@ -79,7 +79,7 @@ pub fn run_with_metadata(
     }));
 }
 
-fn policy_trace(state: &State, net: &Net) -> Option<Value> {
+fn policy_trace(state: &State<DensePilot<'_>>, net: &Net) -> Option<Value> {
     if state.phase != Phase::Combat {
         return None;
     }
@@ -89,13 +89,13 @@ fn policy_trace(state: &State, net: &Net) -> Option<Value> {
     ))
 }
 
-fn side_trace(state: &State, net: &Net, side: Side) -> Value {
+fn side_trace(state: &State<DensePilot<'_>>, net: &Net, side: Side) -> Value {
     let live = state.arena.combatants.get(side);
     let name = live.kind().name();
-    let extra = if state.memory_round != 1 || *state.memory_names.get(side) != name {
+    let extra = if state.pilot.memory_round != 1 || *state.pilot.memory_names.get(side) != name {
         [0.0; 8]
     } else {
-        *state.memory.get(side)
+        *state.pilot.memory.get(side)
     };
     let observation = encode::vector(side, &state.arena);
     let action = policy::actions(live.core().old_input);
@@ -115,7 +115,13 @@ fn side_trace(state: &State, net: &Net, side: Side) -> Value {
     })
 }
 
-fn snapshot(event: i64, elapsed: i64, state: &State, policy: Option<Value>, job: &Job) -> Value {
+fn snapshot(
+    event: i64,
+    elapsed: i64,
+    state: &State<DensePilot<'_>>,
+    policy: Option<Value>,
+    job: &Job,
+) -> Value {
     let source = match state.phase {
         Phase::Selecting | Phase::Victory(_) => "survivor",
         _ => "phase",
@@ -132,11 +138,11 @@ fn snapshot(event: i64, elapsed: i64, state: &State, policy: Option<Value>, job:
         "arena_source": source,
         "arena": arena(&state.arena),
         "memory": {
-            "extra_bottom": state.memory.bottom,
-            "extra_top": state.memory.top,
-            "round": state.memory_round,
-            "ship_bottom": state.memory_names.bottom,
-            "ship_top": state.memory_names.top,
+            "extra_bottom": state.pilot.memory.bottom,
+            "extra_top": state.pilot.memory.top,
+            "round": state.pilot.memory_round,
+            "ship_bottom": state.pilot.memory_names.bottom,
+            "ship_top": state.pilot.memory_names.top,
         },
         "policy": policy,
     })

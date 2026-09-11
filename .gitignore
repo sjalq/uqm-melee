@@ -27,3 +27,6 @@ rust/target/
 artifacts/
 __pycache__/
 *.pyc
+
+# MarI/O dashboard build output (compiled Elm, never committed)
+scripts/mario/dashboard.js

@@ -1,0 +1,18 @@
+[package]
+name = "melee-mario"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "melee-mario"
+path = "src/main.rs"
+
+[lib]
+name = "melee_mario"
+path = "src/lib.rs"
+
+[dependencies]
+melee-core = { path = "../melee-core" }
+melee-sim = { path = "../melee-sim" }
+melee-neat = { path = "../melee-neat" }
+serde_json = "1"

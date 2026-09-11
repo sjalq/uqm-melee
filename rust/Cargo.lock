@@ -50,6 +50,16 @@ name = "melee-core"
 version = "0.1.0"
 
 [[package]]
+name = "melee-mario"
+version = "0.1.0"
+dependencies = [
+ "melee-core",
+ "melee-neat",
+ "melee-sim",
+ "serde_json",
+]
+
+[[package]]
 name = "melee-neat"
 version = "0.1.0"
 dependencies = [

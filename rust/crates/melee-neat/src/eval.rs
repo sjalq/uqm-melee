@@ -1,7 +1,10 @@
 //! Exact singleton-fleet evaluation path through Local and Helpers.LongGame.
 //! Display ticks, the physics pump, post-death simulation and recurrent policy
 //! calls deliberately follow the Elm evaluator's event boundaries.
-use crate::{encode, policy::Net};
+use crate::{
+    encode,
+    policy::{Net, N_OBS},
+};
 use melee_core::{
     rng::Seed,
     units::{Side, Sided},
@@ -34,7 +37,71 @@ pub enum Phase {
     Victory(Option<Side>),
 }
 
-pub struct State {
+/// The policy driving a seat. Implementing this is the only thing a new brain
+/// has to do; the round, phase and pump bookkeeping below stays shared, so the
+/// original dense path and any evolved topology see identical event stepping.
+pub trait Controller {
+    /// The dense path mirrors Elm and evaluates BOTH seats every decision tick,
+    /// discarding the seat the cyborg actually pilots. That discarded call
+    /// cannot influence the simulation, so a controller that would rather not
+    /// pay for it may return false.
+    fn evaluates_idle_seat(&self) -> bool {
+        true
+    }
+
+    /// `ship` is the live hull in that seat; a controller resets any per-ship
+    /// state when it changes. `previous` is the seat's actual last input.
+    fn decide(
+        &mut self,
+        side: Side,
+        ship: &'static str,
+        observation: &[f64; N_OBS],
+        previous: BattleInput,
+    ) -> BattleInput;
+}
+
+/// The original fixed-topology policy, including its memory reset rule: the
+/// eight feedback channels zero whenever the hull in a seat changes.
+pub struct DensePilot<'a> {
+    pub net: &'a Net,
+    pub memory: Sided<[f64; 8]>,
+    pub memory_round: i64,
+    pub memory_names: Sided<&'static str>,
+}
+
+impl<'a> DensePilot<'a> {
+    pub fn new(net: &'a Net) -> Self {
+        Self {
+            net,
+            memory: Sided::both([0.0; 8]),
+            memory_round: -1,
+            memory_names: Sided::both(""),
+        }
+    }
+}
+
+impl Controller for DensePilot<'_> {
+    fn decide(
+        &mut self,
+        side: Side,
+        ship: &'static str,
+        observation: &[f64; N_OBS],
+        previous: BattleInput,
+    ) -> BattleInput {
+        let extra = if *self.memory_names.get(side) == ship {
+            *self.memory.get(side)
+        } else {
+            [0.0; 8]
+        };
+        let next = self.net.step(observation, previous, &extra);
+        self.memory.set(side, next.extra);
+        self.memory_names.set(side, ship);
+        self.memory_round = 1;
+        next.input
+    }
+}
+
+pub struct State<C> {
     pub phase: Phase,
     /// In Selecting/Victory this is Local.survivor, otherwise phaseArena.
     pub arena: Arena,
@@ -42,9 +109,7 @@ pub struct State {
     pub ticks: i64,
     pub quiet: i64,
     pub longest: i64,
-    pub memory: Sided<[f64; 8]>,
-    pub memory_round: i64,
-    pub memory_names: Sided<&'static str>,
+    pub pilot: C,
 }
 
 pub struct Report {
@@ -67,8 +132,8 @@ const DITTY: [i64; 25] = [
     194, 285, 336, 230, 136, 287,
 ];
 
-impl State {
-    pub fn start(job: &Job) -> Self {
+impl<C: Controller> State<C> {
+    pub fn start(job: &Job, pilot: C) -> Self {
         // Demo autoPick consumes a roll for each fleet, including singletons.
         let (_, s) = Seed(job.seed).next();
         let (_, s) = s.next();
@@ -84,38 +149,31 @@ impl State {
             ticks: 0,
             quiet: 0,
             longest: 0,
-            memory: Sided::both([0.0; 8]),
-            memory_round: -1,
-            memory_names: Sided::both(""),
+            pilot,
         }
     }
 
-    fn think(&mut self, net: &Net) -> Sided<BattleInput> {
+    fn think(&mut self, job: &Job) -> Sided<BattleInput> {
         let mut desired = Sided::both(idle());
         // Both policies are evaluated before either pilot runs, including the
         // unused opposing policy. Feedback contains actual previous controls.
+        let ours = if job.swap { Side::Top } else { Side::Bottom };
+        let all = self.pilot.evaluates_idle_seat();
         for side in [Side::Bottom, Side::Top] {
+            if !(all || job.self_play || side == ours) {
+                continue;
+            }
             let combatant = self.arena.combatants.get(side);
             let name = combatant.kind().name();
-            let extra = if self.memory_round != 1 || *self.memory_names.get(side) != name {
-                [0.0; 8]
-            } else {
-                *self.memory.get(side)
-            };
-            let next = net.step(
-                &encode::vector(side, &self.arena),
-                combatant.core().old_input,
-                &extra,
-            );
-            desired.set(side, next.input);
-            self.memory.set(side, next.extra);
-            self.memory_names.set(side, name);
+            let previous = combatant.core().old_input;
+            let observation = encode::vector(side, &self.arena);
+            let next = self.pilot.decide(side, name, &observation, previous);
+            desired.set(side, next);
         }
-        self.memory_round = 1;
         desired
     }
 
-    pub fn advance(&mut self, job: &Job, net: &Net) {
+    pub fn advance(&mut self, job: &Job) {
         let before = (
             crew(&self.arena, Side::Bottom),
             crew(&self.arena, Side::Top),
@@ -130,7 +188,7 @@ impl State {
                 }
             }
             Phase::Combat => {
-                let desired = self.think(net);
+                let desired = self.think(job);
                 let display_ticks = ((60 - self.arena.pump_acc + 23) / 24).max(1);
                 if display_ticks <= job.ticks - self.ticks {
                     elapsed = display_ticks;
@@ -226,14 +284,22 @@ impl State {
 }
 
 pub fn run(job: &Job, net: &Net) -> Report {
-    run_observed(job, net, |_| {})
+    run_with(job, DensePilot::new(net))
 }
 
-pub fn run_observed(job: &Job, net: &Net, mut observe: impl FnMut(&State)) -> Report {
-    let mut state = State::start(job);
+pub fn run_with<C: Controller>(job: &Job, pilot: C) -> Report {
+    run_observed(job, pilot, |_| {})
+}
+
+pub fn run_observed<C: Controller>(
+    job: &Job,
+    pilot: C,
+    mut observe: impl FnMut(&State<C>),
+) -> Report {
+    let mut state = State::start(job, pilot);
     observe(&state);
     while !matches!(state.phase, Phase::Victory(_)) && state.ticks < job.ticks {
-        state.advance(job, net);
+        state.advance(job);
         observe(&state);
     }
     state.report()

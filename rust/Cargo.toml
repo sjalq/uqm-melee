@@ -5,6 +5,7 @@ members = [
     "crates/melee-sim",
     "crates/melee-neat",
     "crates/melee-worker",
+    "crates/melee-mario",
 ]
 
 [workspace.package]
