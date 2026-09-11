@@ -2,9 +2,13 @@ module Mario.Dashboard.Gate exposing
     ( Blockers
     , Verdict(..)
     , analyse
+    , blindSpots
     , championVerdict
     , explain
+    , explainBroad
     , missingReverseSeats
+    , overallVerdict
+    , seatCoverage
     , weakestFirst
     , wilsonLower
     , winsNeeded
@@ -26,7 +30,7 @@ it directly testable and keeps the view free of judgement calls.
 
 -}
 
-import Mario.Dashboard.Api as Api exposing (Champion, Matchup, MatchupStatus(..))
+import Mario.Dashboard.Api as Api exposing (Champion, Matchup, MatchupStatus(..), Overall, Seat(..), ShipPerformance)
 import Mario.Dashboard.Format as Format
 
 
@@ -351,3 +355,267 @@ explain target curriculum matchups =
         ]
             ++ seatNote
             ++ [ nextText ]
+
+
+
+-- BROAD MODE
+--
+-- A broad run is judged on one aggregate figure: the frozen champion's
+-- record on a fixed held-out balanced panel, first as an audit round and
+-- then again on an independent confirm round. That is a different claim
+-- from the per-cell gate above, and the two must never be worded alike.
+-- The per-cell evidence stays on the page, but as a diagnostic that
+-- exposes blind spots, not as something the run is gated on.
+
+
+{-| What the overall balanced panel says about the frozen champion.
+
+The same rule as the per-cell verdict applies: a raw rate over the
+target with no published bound is reported as exactly that, never as a
+pass, because the gate is a floor on the bound.
+
+-}
+overallVerdict : Overall -> Verdict
+overallVerdict overall =
+    if overall.games <= 0 then
+        NoEvidence
+
+    else
+        case overall.lowerBound of
+            Just bound ->
+                if bound >= overall.target then
+                    Passing bound
+
+                else
+                    Short bound
+
+            Nothing ->
+                case overall.winRate of
+                    Just rate ->
+                        RateOnly rate
+
+                    Nothing ->
+                        NoEvidence
+
+
+{-| How many hulls carry evidence in each grouping, and how many are
+silent.
+
+The held-out panel is built to represent all 25 of our hulls and all 25
+opponent hulls equally, so a hull with no games in a grouping is a
+reporting hole worth naming rather than a hull that lost.
+
+`opponent` here counts hulls our champion has faced, not hulls that have
+beaten it: both groupings count our champion's own wins.
+
+-}
+seatCoverage : List ShipPerformance -> { ours : Int, oursWithGames : Int, opponent : Int, opponentWithGames : Int }
+seatCoverage rows =
+    let
+        inSeat seat =
+            List.filter (\r -> r.side == seat) rows
+    in
+    { ours = List.length (inSeat OurSeat)
+    , oursWithGames = List.length (List.filter (\r -> r.games > 0) (inSeat OurSeat))
+    , opponent = List.length (inSeat OpponentSeat)
+    , opponentWithGames = List.length (List.filter (\r -> r.games > 0) (inSeat OpponentSeat))
+    }
+
+
+{-| Per-hull rows ordered worst first, so the weakest hulls lead.
+
+"Worst" is always worst for our champion, in both groupings: a low
+`opponent` row is a hull our champion loses to, not a hull that is
+losing.
+
+Hulls with no games sort last rather than first. A hull with nothing
+measured is not evidence of weakness, and putting it at the top of a
+"weakest" list would assert something the panel has not shown. Where a
+bound exists it ranks; where only a raw rate exists that ranks instead,
+because a small sample still says more than silence.
+
+-}
+blindSpots : List ShipPerformance -> List ShipPerformance
+blindSpots rows =
+    let
+        rank row =
+            if row.games <= 0 then
+                ( 1, 0 )
+
+            else
+                case row.lowerBound of
+                    Just bound ->
+                        ( 0, bound )
+
+                    Nothing ->
+                        case row.winRate of
+                            Just rate ->
+                                ( 0, rate )
+
+                            Nothing ->
+                                ( 1, 0 )
+    in
+    rows
+        |> List.sortWith
+            (\a b ->
+                let
+                    ( ra, va ) =
+                        rank a
+
+                    ( rb, vb ) =
+                        rank b
+                in
+                if ra /= rb then
+                    compare ra rb
+
+                else if va /= vb then
+                    compare va vb
+
+                else
+                    compare ( Api.seatLabel a.side, a.ship ) ( Api.seatLabel b.side, b.ship )
+            )
+
+
+{-| Plain sentences for the broad gate panel.
+
+Three things have to come across, and each has its own sentence so none
+can be lost in a clause: the distribution the figure was measured on,
+that the figure is an aggregate rather than a promise about every
+matchup, and that a pass needs two independent rounds.
+
+-}
+explainBroad : Api.Curriculum -> Maybe Overall -> List ShipPerformance -> List String
+explainBroad curriculum maybeOverall ships =
+    let
+        target =
+            case maybeOverall of
+                Just overall ->
+                    overall.target
+
+                Nothing ->
+                    curriculum.target
+
+        rosterLine =
+            "All "
+                ++ String.fromInt (List.length curriculum.ourRoster)
+                ++ " of our hulls and all "
+                ++ String.fromInt (List.length curriculum.opponentRoster)
+                ++ " opponent hulls are active at once. Nothing is being unlocked stage by stage, so there is no per-matchup gate to pass and no cell is waiting its turn."
+
+        unlockedLine =
+            if curriculum.stageUnlockedExternally then
+                [ "Stage "
+                    ++ String.fromInt curriculum.stage
+                    ++ " was opened by the operator transition, not earned cell by cell. The "
+                    ++ String.fromInt curriculum.totalMatchups
+                    ++ " cells are active, not mastered, and the mastered count below is a diagnostic that gates nothing."
+                ]
+
+            else
+                []
+
+        scopeLine =
+            "The run is judged on one number: the frozen champion's win rate over a fixed held-out balanced panel in which every hull appears equally often on both sides, and every pair is played in both seats. The target is "
+                ++ Format.percent target
+                ++ " overall."
+
+        aggregateLine =
+            "That is an aggregate over the whole distribution. It is not a claim that the champion clears "
+                ++ Format.percent target
+                ++ " in every matchup, and the per-hull and per-cell figures below exist precisely to show where it does not."
+
+        correlationLine =
+            "Each pair is played in both seats, so the outcomes on the panel are correlated rather than independent. Treat the bound as an operational confidence check on this distribution, not as a formal guarantee over every matchup."
+
+        roundLine =
+            case maybeOverall of
+                Nothing ->
+                    "No overall panel result has been published yet, so the gate cannot be judged. That is an absence of evidence, not a score of zero."
+
+                Just overall ->
+                    case overall.round of
+                        Just Api.AuditRound ->
+                            "This is the audit round. A pass here is provisional: the same frozen champion then has to repeat it on an independent confirm panel with its own trial counter before the gate is cleared."
+
+                        Just Api.ConfirmRound ->
+                            "This is the independent confirm round, played by the same frozen champion on a separate panel with its own trial counter after the audit round passed."
+
+                        Just (Api.UnknownRound other) ->
+                            "The trainer reports the round as \"" ++ other ++ "\", which this dashboard does not recognise. The figures are shown as published."
+
+                        Nothing ->
+                            "No gate round is running. These figures are the last published panel result, not a live attempt."
+
+        coverage =
+            seatCoverage ships
+
+        coverageLine =
+            if List.isEmpty ships then
+                []
+
+            else if coverage.oursWithGames < coverage.ours || coverage.opponentWithGames < coverage.opponent then
+                [ "Per-hull evidence is incomplete: "
+                    ++ String.fromInt coverage.oursWithGames
+                    ++ " of "
+                    ++ String.fromInt coverage.ours
+                    ++ " hulls flying for us and "
+                    ++ String.fromInt coverage.opponentWithGames
+                    ++ " of "
+                    ++ String.fromInt coverage.opponent
+                    ++ " hulls it has faced have games on this panel. The rest are unmeasured, which is not the same as losing."
+                ]
+
+            else
+                [ "Every hull reported carries games in both groupings on this panel." ]
+
+        sourceLine =
+            "Both groupings count our champion's own wins: one grouped by the hull it was piloting, the other by the hull it was facing. Neither is the enemy's win count. All of it is this frozen champion's balanced-evaluation evidence only, never an earlier champion's and never adaptive training play."
+
+        readinessSourceLine =
+            if List.any (\r -> r.source == Api.FromReadiness) ships then
+                [ "The per-hull rows currently come from the cheap balanced readiness probe, not from a gate round. A readiness result decides when an audit is worth spending; it is not audit evidence and nothing is gated on it." ]
+
+            else
+                []
+
+        timeoutLine =
+            "Every game on the panel counts, including games that time out. Those are counted as non-wins, so the figure cannot be flattered by dropping unresolved fights."
+
+        originLine =
+            case curriculum.originRunId of
+                Just origin ->
+                    [ "The population, weights and RNG state were carried over from "
+                        ++ origin
+                        ++ (case curriculum.originGeneration of
+                                Just generation ->
+                                    " at generation " ++ String.fromInt generation
+
+                                Nothing ->
+                                    ""
+                           )
+                        ++ ". No validation evidence came with them: the in-flight panel was abandoned on transition and all gate evidence restarted from nothing."
+                    ]
+
+                Nothing ->
+                    []
+
+        ladderLine =
+            case curriculum.ladder of
+                Api.Broad ->
+                    []
+
+                other ->
+                    [ "The ladder now reads \""
+                        ++ Api.ladderLabel other
+                        ++ "\", but the run is still judged on the overall balanced result and still carries its broad provenance. It did not revert to per-matchup gating."
+                    ]
+    in
+    [ rosterLine ]
+        ++ unlockedLine
+        ++ [ scopeLine, aggregateLine, correlationLine, roundLine ]
+        ++ coverageLine
+        ++ [ sourceLine ]
+        ++ readinessSourceLine
+        ++ [ timeoutLine ]
+        ++ originLine
+        ++ ladderLine

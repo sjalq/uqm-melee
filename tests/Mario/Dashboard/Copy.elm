@@ -25,10 +25,17 @@ module Mario.Dashboard.Copy exposing
     , opponentRevision
     , readiness
     , regression
+    , broadMode
     , matchupCoverage
     , meanConnections
     , meanNodes
     , nextExpansion
+    , originRun
+    , overallGate
+    , overallPanel
+    , overallRound
+    , samplerCoverage
+    , shipPerformance
     , nodesChart
     , opponentTypes
     , phase
@@ -127,6 +134,13 @@ allTips =
     , topology
     , timeline
     , controls
+    , overallGate
+    , overallPanel
+    , overallRound
+    , shipPerformance
+    , broadMode
+    , samplerCoverage
+    , originRun
     ]
 
 
@@ -674,11 +688,11 @@ structureChart =
 throughputChart : Tip
 throughputChart =
     t "chart-throughput"
-        "Episodes per generation"
-        "How many episodes each generation consumed. Sharp rises usually mean an audit ran, since audit panels are spent in addition to training play."
-        [ ( "Denominator", "Episodes attributed to each generation." )
-        , ( "Window", "Per generation, whole run." )
-        , ( "Source", "Training and audit episodes combined." )
+        "Cumulative episodes"
+        "The running total of episodes the run has resolved, plotted against generation. This is a cumulative counter, so the line only ever rises and its height is total work done, not work done in that generation. The per-generation cost is the step between two adjacent points, and a visibly steeper step usually means an audit ran, since gate panels are spent on top of training play."
+        [ ( "Denominator", "Episodes resolved since the run started, as a running total." )
+        , ( "Window", "Cumulative over the whole run, sampled once per generation." )
+        , ( "Source", "Training and gate episodes combined." )
         ]
 
 
@@ -716,4 +730,90 @@ controls =
         [ ( "Denominator", "None; actions." )
         , ( "Window", "Immediate." )
         , ( "Source", "POST to the local control endpoint on the loopback interface." )
+        ]
+
+
+
+-- BROAD MODE
+--
+-- A broad run is gated on one aggregate figure over a balanced held-out
+-- distribution, not cell by cell. These tips exist so that difference is
+-- stated wherever a broad-mode number appears, rather than left for the
+-- reader to infer from a heading.
+
+
+broadMode : Tip
+broadMode =
+    t "broad-mode"
+        "Broad any-versus-any mode"
+        "Every ship is active against every ship at once. There is no staged unlock and no per-matchup gate: the run is judged on one overall win rate against Awesome cyborgs over a balanced distribution. The per-cell grid stays on the page as a diagnostic that shows where the champion is weak, which is exactly what an aggregate target hides."
+        [ ( "Denominator", "None; a mode, not a measurement." )
+        , ( "Window", "From the operator transition onward." )
+        , ( "Source", "The trainer's declared curriculum ladder and evaluation scope." )
+        ]
+
+
+overallGate : Tip
+overallGate =
+    t "overall-gate"
+        "Overall balanced win rate"
+        "The frozen champion's win rate on a fixed held-out balanced panel: all 25 of our hulls and all 25 opponent hulls equally represented, pairings randomised, every pair played in both seats. The gate is a floor on the Wilson lower bound, cleared on an audit round and then again on an independent confirm round. Because each pair is played in both seats the outcomes are correlated, so this is an operational confidence check on the distribution, not a formal guarantee about every matchup."
+        [ ( "Denominator", "Games on the current round's balanced held-out panel. All games count, including timeouts, which count as non-wins." )
+        , ( "Window", "One round, one frozen champion. Rounds are never added together." )
+        , ( "Source", "Held-out gate evidence. Not training play, and not the readiness probe." )
+        ]
+
+
+overallPanel : Tip
+overallPanel =
+    t "overall-panel"
+        "Balanced held-out panel"
+        "The predeclared size of each gate round, built as pairs played in both seats so neither seat can be over-represented. The panel does not enumerate all 625 ordered matchups; it draws a balanced sample in which every hull appears equally often on each side."
+        [ ( "Denominator", "Games per round, and the pair count behind them." )
+        , ( "Window", "Per round; the audit and confirm rounds each get their own panel and their own trial counter." )
+        , ( "Source", "Predeclared before the round opens, never resized mid-attempt." )
+        ]
+
+
+overallRound : Tip
+overallRound =
+    t "overall-round"
+        "Gate round"
+        "Which of the two rounds is in flight. The audit round comes first; clearing it is provisional. The same frozen champion then has to clear an independent confirm round on a separate panel with its own trial counter before the gate is passed. A round can be abandoned early once the target has become arithmetically unreachable."
+        [ ( "Denominator", "None; a phase." )
+        , ( "Window", "The current attempt." )
+        , ( "Source", "The trainer's declared round." )
+        ]
+
+
+shipPerformance : Tip
+shipPerformance =
+    t "ship-performance"
+        "Per-hull blind spots"
+        "The same gate evidence broken out by hull. Both columns count OUR champion's wins: the \"when piloting\" rows group those wins by the hull our champion flew, and the \"when facing\" rows group the very same wins by the hull it flew against. A low \"when facing\" figure means our champion loses to that hull; it is not that hull's win count and not an inverse. Nothing here gates anything, and there is no per-hull minimum: this table exists to expose where an aggregate pass is hiding a weakness."
+        [ ( "Denominator", "Per hull, the games on the current round's balanced panel in that grouping. A hull with no games shows as unmeasured, never as 0%." )
+        , ( "Window", "One round, the one currently frozen champion. Never pooled across champions." )
+        , ( "Source", "Labelled per row: an audit or confirm round is gate evidence; a readiness row is the cheap 250-game probe and is a diagnostic only." )
+        ]
+
+
+samplerCoverage : Tip
+samplerCoverage =
+    t "sampler-coverage"
+        "Training sampler"
+        "How each generation's shared training panel is drawn. One part is a balanced rotation that walks own and opponent hulls evenly across generations from a checkpointed cursor, so coverage cannot drift; the rest is drawn adaptively toward cells that look uncertain or learnable. The balanced share is a property of how the panel is built, not a measurement of how much of the 625-cell board has been seen."
+        [ ( "Denominator", "Episodes per generation in the shared panel, and the share of it reserved for the balanced rotation." )
+        , ( "Window", "Per generation; the cursor and completed tours are cumulative over the run." )
+        , ( "Source", "Training sampler configuration and its checkpointed rotation state. Not gate evidence." )
+        ]
+
+
+originRun : Tip
+originRun =
+    t "origin-run"
+        "Carried-over provenance"
+        "This run did not start from scratch. Genomes, weights, mutation rates, species, the innovation counter and the RNG states were copied from an earlier run at a recorded generation. What was deliberately not copied is evidence: the in-flight panel was abandoned at the transition and every fitness, probe and gate result was cleared, because results measured under the old distribution say nothing about this one."
+        [ ( "Denominator", "None; an identifier and a generation number." )
+        , ( "Window", "Fixed at the transition." )
+        , ( "Source", "The transition event recorded in the checkpoint." )
         ]

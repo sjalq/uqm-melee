@@ -351,6 +351,27 @@ h3 { font-size: 13px; letter-spacing: 0.06em; color: var(--cream-dim); }
 .alloc-fill { position: absolute; top: 0; bottom: 0; left: 0; background: linear-gradient(90deg, var(--amber-dim), var(--amber)); }
 .alloc-share { font-family: var(--font-mono); font-size: 11.5px; text-align: right; color: var(--cream-dim); }
 
+/* ---------------- per-hull blind spot table ---------------- */
+/* Wide on purpose: five columns of numbers stay readable side by side, and
+   the wrapper scrolls rather than letting the page scroll horizontally. */
+.ship-wrap { overflow-x: auto; padding-bottom: 6px; margin-top: 8px; }
+.ships { border-collapse: collapse; width: 100%; min-width: 440px; font-size: 12.5px; }
+.ships caption { text-align: left; color: var(--muted); font-size: 12px; padding-bottom: 6px; }
+.ships th, .ships td { padding: 5px 10px; text-align: left; border-bottom: 1px solid var(--line-soft); }
+.ships thead th {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ships tbody th { font-weight: 500; color: var(--cream); white-space: nowrap; }
+.ships td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--cream-dim); }
+.ships tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+/* A hull with no games is dimmed, never coloured as a loss. */
+.ships tbody tr.is-unknown th, .ships tbody tr.is-unknown td { color: var(--unknown); }
+
 /* ---------------- heatmap ---------------- */
 .heat-wrap { overflow-x: auto; padding-bottom: 6px; }
 .heat-svg { display: block; height: auto; }

@@ -3,6 +3,8 @@ module Mario.Dashboard.Api exposing
     , Champion
     , Checkpoint
     , Curriculum
+    , EvaluationScope(..)
+    , EvidenceSource(..)
     , Event
     , Gene
     , Genome
@@ -15,24 +17,37 @@ module Mario.Dashboard.Api exposing
     , NodeKind(..)
     , NextSide(..)
     , OpponentType(..)
+    , Overall
+    , OverallRound(..)
     , Phase(..)
     , Population
     , Readiness
     , Regression
     , Resources
+    , RoundResult
+    , Sampler
+    , Seat(..)
+    , ShipPerformance
     , Status
     , decodeNetwork
     , decodeStatus
     , empty
     , emptyGenome
+    , evaluationScopeLabel
+    , evidenceIsGate
+    , evidenceSourceLabel
+    , isBroad
     , ladderLabel
     , matchupStatusLabel
     , nextSideLabel
     , nodeKindFromString
     , opponentTypeLabel
+    , overallRoundLabel
     , phaseFromString
     , phaseIsLive
     , phaseLabel
+    , seatLabel
+    , seatPhrase
     , statusFromString
     )
 
@@ -293,11 +308,14 @@ matchupStatusLabel status =
 
 
 {-| How the curriculum is currently expanding. "Climbing" adds ships one
-side at a time up the frozen order; "mixed" plays an assembled roster.
+side at a time up the frozen order; "mixed" plays an assembled roster;
+"broad" abandons staged expansion entirely and samples any ship against
+any ship, gated on one overall balanced result rather than per cell.
 -}
 type Ladder
     = Climbing
     | Mixed
+    | Broad
     | UnknownLadder String
 
 
@@ -309,6 +327,9 @@ ladderFromString raw =
 
         "mixed" ->
             Mixed
+
+        "broad" ->
+            Broad
 
         other ->
             UnknownLadder other
@@ -323,8 +344,63 @@ ladderLabel ladder =
         Mixed ->
             "mixed"
 
+        Broad ->
+            "broad, any ship versus any ship"
+
         UnknownLadder other ->
             other
+
+
+{-| What the run is actually being judged on.
+
+Per-cell gating and overall balanced gating are different claims, and
+the dashboard must never present one as the other. The scope is read
+from `evaluation_scope` where the engine publishes it, and falls back to
+the ladder when it does not, because a broad ladder that has not yet
+grown the field is still not being gated per cell.
+
+-}
+type EvaluationScope
+    = PerCellScope
+    | OverallBalancedScope
+    | UnknownScope String
+
+
+evaluationScopeFromString : String -> EvaluationScope
+evaluationScopeFromString raw =
+    case raw of
+        "per-cell-ladder" ->
+            PerCellScope
+
+        "overall-balanced" ->
+            OverallBalancedScope
+
+        other ->
+            UnknownScope other
+
+
+evaluationScopeLabel : EvaluationScope -> String
+evaluationScopeLabel scope =
+    case scope of
+        PerCellScope ->
+            "per ordered matchup"
+
+        OverallBalancedScope ->
+            "overall, balanced any-versus-any"
+
+        UnknownScope other ->
+            other
+
+
+{-| True when this run is judged on one aggregate balanced result rather
+than cell by cell. Either signal is enough on its own: an engine that
+declares the scope is believed, and a broad ladder is broad whether or
+not the scope field arrived.
+-}
+isBroad : Curriculum -> Bool
+isBroad curriculum =
+    (curriculum.evaluationScope == OverallBalancedScope)
+        || (curriculum.ladder == Broad)
 
 
 type alias Curriculum =
@@ -341,6 +417,269 @@ type alias Curriculum =
     , opponentRevision : Int
     , opponentFingerprint : Maybe String
     , selfPlayIsGated : Bool
+    , evaluationScope : EvaluationScope
+    , stageUnlockedExternally : Bool
+    , transitionReason : Maybe String
+    , originRunId : Maybe String
+    , originGeneration : Maybe Int
+    , originFingerprint : Maybe String
+    }
+
+
+{-| Which hull a per-ship row groups by.
+
+Both seats count the same thing: **wins by our champion**. `ours` groups
+those wins by the hull our champion was flying; `opponent` groups the
+very same wins by the hull it was flying against. `opponent` is not the
+enemy's win count and is not the inverse of anything, so a low figure
+there means our champion struggles against that hull, not that the hull
+is losing.
+
+Keeping the two apart matters because they answer different questions,
+and pooling them or inverting one would silently reverse the meaning of
+half the table.
+
+-}
+type Seat
+    = OurSeat
+    | OpponentSeat
+    | UnknownSeat String
+
+
+seatFromString : String -> Seat
+seatFromString raw =
+    case raw of
+        "ours" ->
+            OurSeat
+
+        "opponent" ->
+            OpponentSeat
+
+        other ->
+            UnknownSeat other
+
+
+seatLabel : Seat -> String
+seatLabel seat =
+    case seat of
+        OurSeat ->
+            "ours"
+
+        OpponentSeat ->
+            "opponent"
+
+        UnknownSeat other ->
+            other
+
+
+{-| How a row reads in a sentence, spelled out so no reader has to guess
+what "opponent" means. Always phrased from our champion's point of view,
+because that is whose wins are being counted.
+-}
+seatPhrase : Seat -> String
+seatPhrase seat =
+    case seat of
+        OurSeat ->
+            "when piloting"
+
+        OpponentSeat ->
+            "when facing"
+
+        UnknownSeat other ->
+            other
+
+
+{-| Which round of the overall gate the reported figures belong to. The
+audit round and the independent confirm round are separate panels with
+separate trial counters, so their evidence is never added together.
+-}
+type OverallRound
+    = AuditRound
+    | ConfirmRound
+    | UnknownRound String
+
+
+overallRoundFromString : String -> OverallRound
+overallRoundFromString raw =
+    case raw of
+        "audit" ->
+            AuditRound
+
+        "confirm" ->
+            ConfirmRound
+
+        other ->
+            UnknownRound other
+
+
+overallRoundLabel : OverallRound -> String
+overallRoundLabel round =
+    case round of
+        AuditRound ->
+            "audit"
+
+        ConfirmRound ->
+            "confirm"
+
+        UnknownRound other ->
+            other
+
+
+{-| One round's record on the balanced panel. Audit and confirm are kept
+as separate values with separate counters, because adding them together
+would turn two independent rounds into one larger sample and destroy the
+whole point of confirming.
+-}
+type alias RoundResult =
+    { wins : Int
+    , games : Int
+    , winRate : Maybe Float
+    , lowerBound : Maybe Float
+    , passed : Bool
+    }
+
+
+{-| The aggregate gate for a broad run: one frozen champion's record on a
+fixed held-out balanced panel in which all 25 of our hulls and all 25
+opponent hulls are equally represented, each pair played in both seats.
+
+This is an aggregate over a distribution whose paired-seat outcomes are
+correlated. It is an operational confidence check, not a formal global
+guarantee, and it is deliberately not a per-matchup claim. The view must
+never label it as either. `passed` is the engine's own verdict, true
+only once both rounds have cleared; the dashboard shows it beside the
+published bound rather than recomputing a pass of its own.
+
+-}
+type alias Overall =
+    { scope : String
+    , target : Float
+    , panel : Int
+    , pairs : Int
+    , round : Maybe OverallRound
+    , wins : Int
+    , games : Int
+    , winRate : Maybe Float
+    , lowerBound : Maybe Float
+    , championId : String
+    , passed : Bool
+    , audit : RoundResult
+    , confirm : RoundResult
+    , attempt : Int
+    }
+
+
+{-| Per-hull diagnostics from the same evidence, one entry per ship per
+seat.
+
+`wins` is always our champion's wins, in both seats. A `side = OurSeat`
+row is that record grouped by the hull our champion flew; a
+`side = OpponentSeat` row is the same record grouped by the hull it flew
+against. Neither row ever reports the enemy's wins.
+
+Every figure here comes from the current frozen policy's balanced
+evaluation evidence only. Results from an earlier champion, and plays
+from the adaptive training pool, are never mixed in.
+
+These expose blind spots; they do not gate anything, and a hull with no
+games carries `Nothing`, never a zero win rate.
+
+-}
+type alias ShipPerformance =
+    { side : Seat
+    , ship : String
+    , wins : Int
+    , games : Int
+    , winRate : Maybe Float
+    , lowerBound : Maybe Float
+    , source : EvidenceSource
+    }
+
+
+{-| Which stream produced a per-hull row.
+
+The gate rounds and the cheap readiness probe are both balanced and both
+report win rates, which is exactly why they have to be told apart on
+screen. A readiness row is a diagnostic that triggers an audit; it is
+never gate evidence, and rendering one as audit evidence would overstate
+what has actually been proved.
+
+-}
+type EvidenceSource
+    = FromAudit
+    | FromConfirm
+    | FromReadiness
+    | UnknownSource String
+
+
+evidenceSourceFromString : String -> EvidenceSource
+evidenceSourceFromString raw =
+    case raw of
+        "audit" ->
+            FromAudit
+
+        "confirm" ->
+            FromConfirm
+
+        "ready" ->
+            FromReadiness
+
+        other ->
+            UnknownSource other
+
+
+evidenceSourceLabel : EvidenceSource -> String
+evidenceSourceLabel source =
+    case source of
+        FromAudit ->
+            "audit round"
+
+        FromConfirm ->
+            "confirm round"
+
+        FromReadiness ->
+            "readiness probe"
+
+        UnknownSource other ->
+            other
+
+
+{-| True only for a stream the overall gate is actually decided on.
+Readiness rows are excluded, because a readiness result triggers an
+audit rather than standing in for one.
+-}
+evidenceIsGate : EvidenceSource -> Bool
+evidenceIsGate source =
+    case source of
+        FromAudit ->
+            True
+
+        FromConfirm ->
+            True
+
+        FromReadiness ->
+            False
+
+        UnknownSource _ ->
+            False
+
+
+{-| What the adaptive training sampler is currently drawing from.
+
+`balancedShare` is the share of each training panel reserved for the
+balanced rotation. It is a property of how the panel is built, not a
+measurement of how much of the 625-cell board has been seen, and the
+view must not present it as coverage of the board.
+
+Every field is optional, and the block is absent entirely outside broad
+mode, so the view shows nothing rather than inventing a figure.
+
+-}
+type alias Sampler =
+    { panel : Maybe Int
+    , balancedShare : Maybe Float
+    , cursor : Maybe Int
+    , tour : Maybe Int
     }
 
 
@@ -381,6 +720,7 @@ type alias Readiness =
     , period : Int
     , threshold : Float
     , lastRate : Maybe Float
+    , purpose : Maybe String
     }
 
 
@@ -474,6 +814,9 @@ type alias Status =
     , stale : Bool
     , episodesUnresolved : Int
     , regression : Maybe Regression
+    , overall : Maybe Overall
+    , shipPerformance : List ShipPerformance
+    , sampler : Maybe Sampler
     }
 
 
@@ -538,6 +881,64 @@ decodeStatus =
         |> optional "stale" Decode.bool False
         |> optional "episodes_unresolved" Decode.int 0
         |> optional "regression" (Decode.map Just decodeRegression) Nothing
+        |> optional "overall" (Decode.nullable decodeOverall) Nothing
+        |> optional "ship_performance" (Decode.list decodeShipPerformance) []
+        |> optional "sampler" (Decode.nullable decodeSampler) Nothing
+
+
+emptyRoundResult : RoundResult
+emptyRoundResult =
+    { wins = 0, games = 0, winRate = Nothing, lowerBound = Nothing, passed = False }
+
+
+decodeRoundResult : Decoder RoundResult
+decodeRoundResult =
+    Decode.succeed RoundResult
+        |> optional "wins" Decode.int 0
+        |> optional "games" Decode.int 0
+        |> optional "win_rate" finiteFloat Nothing
+        |> optional "lower_bound" finiteFloat Nothing
+        |> optional "passed" Decode.bool False
+
+
+decodeOverall : Decoder Overall
+decodeOverall =
+    Decode.succeed Overall
+        |> optional "scope" Decode.string ""
+        |> optional "target" (safeFloat 0.8) 0.8
+        |> optional "panel" Decode.int 0
+        |> optional "pairs" Decode.int 0
+        |> optional "round" (Decode.nullable (Decode.map overallRoundFromString Decode.string)) Nothing
+        |> optional "wins" Decode.int 0
+        |> optional "games" Decode.int 0
+        |> optional "win_rate" finiteFloat Nothing
+        |> optional "lower_bound" finiteFloat Nothing
+        |> optional "champion_id" Decode.string ""
+        |> optional "passed" Decode.bool False
+        |> optional "audit" decodeRoundResult emptyRoundResult
+        |> optional "confirm" decodeRoundResult emptyRoundResult
+        |> optional "attempt" Decode.int 0
+
+
+decodeShipPerformance : Decoder ShipPerformance
+decodeShipPerformance =
+    Decode.succeed ShipPerformance
+        |> optional "side" (Decode.map seatFromString Decode.string) (UnknownSeat "unreported")
+        |> optional "ship" Decode.string ""
+        |> optional "wins" Decode.int 0
+        |> optional "games" Decode.int 0
+        |> optional "win_rate" finiteFloat Nothing
+        |> optional "lower_bound" finiteFloat Nothing
+        |> optional "source" (Decode.map evidenceSourceFromString Decode.string) (UnknownSource "unreported")
+
+
+decodeSampler : Decoder Sampler
+decodeSampler =
+    Decode.succeed Sampler
+        |> optional "panel" (Decode.nullable Decode.int) Nothing
+        |> optional "coverage" finiteFloat Nothing
+        |> optional "cursor" (Decode.nullable Decode.int) Nothing
+        |> optional "tour" (Decode.nullable Decode.int) Nothing
 
 
 decodeRegression : Decoder Regression
@@ -568,7 +969,7 @@ decodeAudit =
 
 emptyReadiness : Readiness
 emptyReadiness =
-    { games = 0, period = 0, threshold = 0, lastRate = Nothing }
+    { games = 0, period = 0, threshold = 0, lastRate = Nothing, purpose = Nothing }
 
 
 decodeReadiness : Decoder Readiness
@@ -578,6 +979,7 @@ decodeReadiness =
         |> optional "period" Decode.int 0
         |> optional "threshold" (safeFloat 0) 0
         |> optional "last_rate" finiteFloat Nothing
+        |> optional "purpose" (Decode.nullable Decode.string) Nothing
 
 
 {-| The "nothing has been reported yet" status. Decoding `{}` produces
@@ -607,6 +1009,9 @@ empty =
     , stale = False
     , episodesUnresolved = 0
     , regression = Nothing
+    , overall = Nothing
+    , shipPerformance = []
+    , sampler = Nothing
     }
 
 
@@ -625,6 +1030,12 @@ emptyCurriculum =
     , opponentRevision = 0
     , opponentFingerprint = Nothing
     , selfPlayIsGated = False
+    , evaluationScope = UnknownScope "unreported"
+    , stageUnlockedExternally = False
+    , transitionReason = Nothing
+    , originRunId = Nothing
+    , originGeneration = Nothing
+    , originFingerprint = Nothing
     }
 
 
@@ -644,6 +1055,12 @@ decodeCurriculum =
         |> optional "opponent_revision" Decode.int 0
         |> optional "opponent_fingerprint" (Decode.nullable Decode.string) Nothing
         |> optional "self_play_is_gated" Decode.bool False
+        |> optional "evaluation_scope" (Decode.map evaluationScopeFromString Decode.string) (UnknownScope "unreported")
+        |> optional "stage_unlocked_externally" Decode.bool False
+        |> optional "transition_reason" (Decode.nullable Decode.string) Nothing
+        |> optional "origin_run_id" (Decode.nullable Decode.string) Nothing
+        |> optional "origin_generation" (Decode.nullable Decode.int) Nothing
+        |> optional "origin_fingerprint" (Decode.nullable Decode.string) Nothing
 
 
 emptyChampion : Champion
