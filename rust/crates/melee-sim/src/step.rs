@@ -899,25 +899,42 @@ fn postprocess_all(arena: &mut Arena) {
     arena.queue.retain(|id| arena.elements.contains_key(&id.0));
 }
 
+/// How a surviving element ends its frame: next becomes current and the
+/// per-frame flags are reset.
+#[inline]
+fn finish_post(el: &mut Element) {
+    el.current = el.next;
+    el.flags.pre_process = false;
+    el.flags.changing = false;
+    el.flags.appearing = false;
+    el.flags.post_process = true;
+}
+
 fn postprocess_one(arena: &mut Arena, id: ElementId) {
-    let Some(mut el) = get_el(arena, id) else {
+    let Some(el) = arena.elements.get_mut(&id.0) else {
         return;
     };
     if el.flags.disappearing {
         remove_element(arena, id);
         return;
     }
-    if el.flags.player_ship {
-        el = ship_post(arena, el);
+    // Weapons, crew and the planet are the bulk of the queue and none of them
+    // reach ship_post, which is the only step here that can add or remove arena
+    // elements. Settle them against the map entry: lifting the whole element
+    // out and posting the copy back spent two lookups and two copies of a
+    // couple of hundred bytes to write one image and four flags.
+    if !el.flags.player_ship {
+        finish_post(el);
+        return;
     }
+    // ship_post reaches into the arena, so the borrow has to end here and the
+    // ship has to travel through it by value, exactly as it always did.
+    let ship = *el;
+    let mut el = ship_post(arena, ship);
     if el.flags.disappearing {
         remove_element(arena, id);
     } else {
-        el.current = el.next;
-        el.flags.pre_process = false;
-        el.flags.changing = false;
-        el.flags.appearing = false;
-        el.flags.post_process = true;
+        finish_post(&mut el);
         put_el(arena, el);
     }
 }
@@ -2869,5 +2886,83 @@ mod tests {
                 assert!(!last.queue.is_empty());
             }
         }
+    }
+
+    /// `postprocess_one` verbatim as it read before the non-player fast path:
+    /// lift the whole element out of the map, settle the copy, post it back.
+    fn postprocess_one_by_copy(arena: &mut Arena, id: ElementId) {
+        let Some(mut el) = get_el(arena, id) else {
+            return;
+        };
+        if el.flags.disappearing {
+            remove_element(arena, id);
+            return;
+        }
+        if el.flags.player_ship {
+            el = ship_post(arena, el);
+        }
+        if el.flags.disappearing {
+            remove_element(arena, id);
+        } else {
+            el.current = el.next;
+            el.flags.pre_process = false;
+            el.flags.changing = false;
+            el.flags.appearing = false;
+            el.flags.post_process = true;
+            put_el(arena, el);
+        }
+    }
+
+    fn postprocess_all_by_copy(arena: &mut Arena) {
+        for id in arena.queue.clone() {
+            postprocess_one_by_copy(arena, id);
+        }
+        arena.queue.retain(|id| arena.elements.contains_key(&id.0));
+    }
+
+    /// Real battle arenas, postprocessed both ways from the same starting
+    /// state. Counts the entries the fast path actually settles and fails if
+    /// that is zero, because then the two paths would agree for no reason.
+    #[test]
+    fn postprocess_fast_path_matches_the_copy_path() {
+        let matchups = [
+            (ShipKind::Earthling, ShipKind::UrQuan),
+            (ShipKind::Chenjesu, ShipKind::Shofixti),
+            (ShipKind::Mycon, ShipKind::Arilou),
+            (ShipKind::Chmmr, ShipKind::Thraddash),
+        ];
+        let mut in_place = 0usize;
+        let mut through_ship_post = 0usize;
+        for (bottom, top) in matchups {
+            for seed in [1, 7777, 20260912] {
+                for arena in cyborg_frames(bottom, top, seed, 300) {
+                    for id in &arena.queue {
+                        match arena.elements.get(&id.0) {
+                            Some(el) if el.flags.disappearing => {}
+                            Some(el) if el.flags.player_ship => through_ship_post += 1,
+                            Some(_) => in_place += 1,
+                            None => {}
+                        }
+                    }
+                    let mut fast = arena.clone();
+                    let mut copied = arena.clone();
+                    postprocess_all(&mut fast);
+                    postprocess_all_by_copy(&mut copied);
+                    assert_eq!(
+                        fast, copied,
+                        "{bottom:?} vs {top:?} seed {seed} frame {}",
+                        arena.frame
+                    );
+                }
+            }
+        }
+        assert!(
+            in_place > 0,
+            "the fast path never settled an element, so agreement proves nothing"
+        );
+        assert!(
+            through_ship_post > 0,
+            "no ship ever took the ship_post path, so it was never compared"
+        );
     }
 }
