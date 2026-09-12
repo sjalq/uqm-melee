@@ -245,7 +245,7 @@ fn colliding(el: Element) -> bool {
     !(el.flags.nonsolid || el.flags.disappearing)
 }
 
-fn radius_world(el: Element) -> i64 {
+fn radius_world(el: &Element) -> i64 {
     match el.body {
         Body::Planet => 160,
         Body::Ship(_) => 40,
@@ -267,8 +267,8 @@ fn is_velocity_zero(vel: VelocityDesc) -> bool {
 }
 
 #[inline]
-fn displacement(turns: i64, vel: VelocityDesc) -> (i64, i64) {
-    velocity::get_next(turns.max(1), &vel).0
+fn displacement(turns: i64, vel: &VelocityDesc) -> (i64, i64) {
+    velocity::get_next(turns.max(1), vel).0
 }
 
 #[inline]
@@ -304,7 +304,13 @@ fn margin_of_error(rating: CyborgRating) -> i64 {
     }
 }
 
-fn plot_intercept(space: WorldExtent, a: Element, b: Element, max_turns: i64, margin: i64) -> i64 {
+fn plot_intercept(
+    space: WorldExtent,
+    a: &Element,
+    b: &Element,
+    max_turns: i64,
+    margin: i64,
+) -> i64 {
     if max_turns <= 0 {
         0
     } else {
@@ -314,15 +320,15 @@ fn plot_intercept(space: WorldExtent, a: Element, b: Element, max_turns: i64, ma
 
 fn plot_from(
     space: WorldExtent,
-    a: Element,
-    b: Element,
+    a: &Element,
+    b: &Element,
     margin: i64,
     max_turns: i64,
     first_turn: i64,
 ) -> i64 {
     for t in first_turn..=max_turns {
-        let (dax, day) = displacement(t, a.velocity);
-        let (dbx, dby) = displacement(t, b.velocity);
+        let (dax, day) = displacement(t, &a.velocity);
+        let (dbx, dby) = displacement(t, &b.velocity);
         let pa = wrap_loc(
             space,
             WorldPoint {
@@ -412,18 +418,18 @@ fn consider_gravity(work: &Work<'_>, el: &Element, concerns: &mut Concerns) {
     let bounds = 80;
     let hit = plot_intercept(
         work.space,
-        *el,
-        work.ship,
+        el,
+        &work.ship,
         maneuver_turn,
         display_to_world(30 + bounds * 3),
     );
     if hit > 0
         && (hit > 1
-            || plot_intercept(work.space, *el, work.ship, 1, display_to_world(35 + bounds)) > 0
+            || plot_intercept(work.space, el, &work.ship, 1, display_to_world(35 + bounds)) > 0
             || plot_intercept(
                 work.space,
-                *el,
-                work.ship,
+                el,
+                &work.ship,
                 maneuver_turn * 2,
                 display_to_world(40 + bounds),
             ) > 1)
@@ -528,8 +534,8 @@ fn consider_weapon(work: &Work<'_>, el: &Element, dx: i64, dy: i64, concerns: &m
     } else {
         let hit = plot_intercept(
             work.space,
-            *el,
-            work.ship,
+            el,
+            &work.ship,
             life_span(*el),
             display_to_world(40),
         );
@@ -717,7 +723,7 @@ fn ship_weapons(work: &Work<'_>, other: Element, margin: i64) -> bool {
     match arsenal::primary(combatant(work.side, work.arena)) {
         Weapon::Missile(kind) => {
             let spec = kind.spec();
-            let (dx, dy) = displacement(1, work.velocity);
+            let (dx, dy) = displacement(1, &work.velocity);
             let origin = WorldPoint {
                 x: work.ship.current.location.x + dx,
                 y: work.ship.current.location.y + dy,
@@ -738,7 +744,7 @@ fn ship_weapons(work: &Work<'_>, other: Element, margin: i64) -> bool {
                 ghost.velocity = launch.velocity;
                 ghost.body = arsenal::missile_body(spec.kind);
                 ghost.flags.player_ship = false;
-                plot_intercept(work.space, ghost, other, spec.life, margin) > 0
+                plot_intercept(work.space, &ghost, &other, spec.life, margin) > 0
             })
         }
         _ => {
@@ -773,8 +779,8 @@ fn pursue(mut work: Work<'_>, eval: Eval) -> Work<'_> {
     let Some(other) = eval.object else {
         return work;
     };
-    let (ship_dx, ship_dy) = displacement(eval.which_turn, work.velocity);
-    let (other_dx, other_dy) = displacement(eval.which_turn, other.velocity);
+    let (ship_dx, ship_dy) = displacement(eval.which_turn, &work.velocity);
+    let (other_dx, other_dy) = displacement(eval.which_turn, &other.velocity);
     let next = trig::wrap_point(
         work.space,
         WorldPoint {
@@ -809,8 +815,8 @@ fn entice(mut work: Work<'_>, eval: Eval) -> Work<'_> {
     let Some(other) = eval.object else {
         return work;
     };
-    let (ship_dx, ship_dy) = displacement(eval.which_turn, work.velocity);
-    let (other_dx, other_dy) = displacement(eval.which_turn, other.velocity);
+    let (ship_dx, ship_dy) = displacement(eval.which_turn, &work.velocity);
+    let (other_dx, other_dy) = displacement(eval.which_turn, &other.velocity);
     let next = trig::wrap_point(
         work.space,
         WorldPoint {
@@ -917,8 +923,8 @@ fn entice_target(
     can_thrust: bool,
 ) -> Work<'_> {
     let at_speed = motion::at_limit(&work.velocity, &work.core.flags);
-    let (ship_dx, ship_dy) = displacement(eval.which_turn, work.velocity);
-    let (other_dx, other_dy) = displacement(eval.which_turn, other.velocity);
+    let (ship_dx, ship_dy) = displacement(eval.which_turn, &work.velocity);
+    let (other_dx, other_dy) = displacement(eval.which_turn, &other.velocity);
     let ship_travel = trig::arctan(ship_dx, ship_dy);
     let enemy = enemy_ability(&work);
     let fire_directions = [
@@ -943,8 +949,8 @@ fn entice_target(
     }
     let in_range = plot_intercept(
         work.space,
-        work.ship,
-        other,
+        &work.ship,
+        &other,
         10,
         work.range - idiv(work.range, 4),
     );
@@ -961,7 +967,7 @@ fn entice_target(
                 .max_thrust
     {
         maneuver(work, toward, true, can_turn, can_thrust)
-    } else if !at_speed && plot_intercept(work.space, work.ship, other, 40, CLOSE_RANGE * 2) > 0 {
+    } else if !at_speed && plot_intercept(work.space, &work.ship, &other, 40, CLOSE_RANGE * 2) > 0 {
         if trig::normalize_angle(toward - facing_to_angle(work.facing) + OCTANT) <= QUADRANT
             || cone > QUADRANT
         {
@@ -974,7 +980,7 @@ fn entice_target(
         if uses_inertia
             && at_speed
             && (trig::normalize_angle(away - ship_travel + 10) <= 20
-                || plot_intercept(work.space, work.ship, other, 30, CLOSE_RANGE * 2) == 0)
+                || plot_intercept(work.space, &work.ship, &other, 30, CLOSE_RANGE * 2) == 0)
         {
             maneuver(work, toward, false, can_turn, can_thrust)
         } else if in_range == 1 || uses_inertia {
@@ -1127,7 +1133,7 @@ fn shofixti(work: Work<'_>, concerns: Concerns) -> Work<'_> {
     let ship_close = concerns.enemy.object.is_some() && concerns.enemy.which_turn <= 4;
     let weapon_hit = concerns.weapon.object.is_some_and(|el| {
         (el.flags.player_ship && work.ship.points == 1)
-            || (plot_intercept(work.space, el, work.ship, 2, 0) > 0
+            || (plot_intercept(work.space, &el, &work.ship, 2, 0) > 0
                 && el.mass >= work.ship.points
                 && flip)
     });
