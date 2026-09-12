@@ -15,11 +15,10 @@ use melee_core::units::{
 use melee_core::velocity;
 use melee_core::{idiv, mod_by};
 
-const CLOSE_RANGE: i64 = 200;
-const LONG_RANGE: i64 = 4000;
-#[allow(dead_code)]
-const FAST_SHIP: i64 = 150;
-const MEDIUM_SHIP: i64 = 45;
+pub const CLOSE_RANGE: i64 = 200;
+pub const LONG_RANGE: i64 = 4000;
+pub const FAST_SHIP: i64 = 150;
+pub const MEDIUM_SHIP: i64 = 45;
 const SLOW_SHIP: i64 = 25;
 #[allow(dead_code)]
 const FULL_CIRCLE: i64 = 64;
@@ -119,23 +118,16 @@ const fn idle() -> BattleInput {
     }
 }
 
-fn decide(
-    rating: CyborgRating,
-    side: Side,
-    arena: &Arena,
-    seed: Seed,
-) -> (BattleInput, Seed, Characteristics) {
+/// The seat's opening decision state, before any concern has been consulted.
+/// Extracted so that a caller who only wants one of the cyborg's predicates
+/// asks it with the very state the cyborg would have used.
+fn work_of<'a>(rating: CyborgRating, side: Side, arena: &'a Arena, seed: Seed) -> Option<Work<'a>> {
     let original = combatant(side, arena);
     let core = *original.core();
-    let Some(ship) = arena.elements.get(&core.element.0).copied() else {
-        return (idle(), seed, core.characteristics);
-    };
-    if ship.points == 0 {
-        return (idle(), seed, core.characteristics);
-    }
+    let ship = arena.elements.get(&core.element.0).copied()?;
     let kind = original.kind();
     let spec = kind.stock();
-    let work0 = Work {
+    Some(Work {
         ship,
         core,
         kind,
@@ -159,7 +151,84 @@ fn decide(
         fired: core.weapon_wait > 0 || spec.ability.seeking_weapon,
         arena,
         side,
+    })
+}
+
+/// The cyborg's firing predicate for one seat against one element, asked from
+/// the seat's CURRENT facing rather than the post-turn facing `move_and_fire`
+/// would use. Exposed so an observation encoder asks the cyborg's own question
+/// instead of restating it and drifting.
+pub fn firing_solution(arena: &Arena, side: Side, target: &Element, margin: i64) -> bool {
+    // `ship_weapons` never draws from the seed, so handing it the arena's is
+    // inert; it cannot advance the battle RNG from here.
+    match work_of(CyborgRating::AwesomeCyborg, side, arena, arena.seed) {
+        None => false,
+        Some(work) => ship_weapons(&work, *target, margin),
+    }
+}
+
+/// `entice_target`'s range probe: the turn within the next ten at which the
+/// seat's own weapon range, less a quarter, would close on `other`, or 0.
+pub fn range_probe(space: WorldExtent, ship: &Element, other: &Element, range: i64) -> i64 {
+    plot_intercept(space, ship, other, 10, range - idiv(range, 4))
+}
+
+/// The gravity battery of `consider_gravity`: the maneuver-horizon probe, kept
+/// only when the conjunction that promotes a planet to a concern holds. Returns
+/// that probe's turn, or 0 when the planet is not a concern. The `moved` latch
+/// the concern also depends on is deliberately not applied here; it is
+/// `turn_wait > 0 && thrust_wait > 0`, which an encoder already carries.
+pub fn gravity_intercept(
+    space: WorldExtent,
+    planet: &Element,
+    ship: &Element,
+    chars: &Characteristics,
+) -> i64 {
+    let maneuver_turn = if is_ultra(chars) {
+        16
+    } else if maneuverability(chars) <= MEDIUM_SHIP {
+        48
+    } else {
+        32
     };
+    let bounds = 80;
+    let hit = plot_intercept(
+        space,
+        planet,
+        ship,
+        maneuver_turn,
+        display_to_world(30 + bounds * 3),
+    );
+    if hit > 0
+        && (hit > 1
+            || plot_intercept(space, planet, ship, 1, display_to_world(35 + bounds)) > 0
+            || plot_intercept(
+                space,
+                planet,
+                ship,
+                maneuver_turn * 2,
+                display_to_world(40 + bounds),
+            ) > 1)
+    {
+        hit
+    } else {
+        0
+    }
+}
+
+fn decide(
+    rating: CyborgRating,
+    side: Side,
+    arena: &Arena,
+    seed: Seed,
+) -> (BattleInput, Seed, Characteristics) {
+    let core = *combatant(side, arena).core();
+    let Some(work0) = work_of(rating, side, arena, seed) else {
+        return (idle(), seed, core.characteristics);
+    };
+    if work0.ship.points == 0 {
+        return (idle(), seed, core.characteristics);
+    }
     let concerns = fill_concerns(&work0);
     let work1 = race_intelligence(work0, concerns);
     let input = BattleInput {
@@ -176,7 +245,7 @@ fn decide(
     };
     // Only Umgah's adjusted characteristics escape the decision. Avoid
     // returning a copy of the entire combatant just to read this field.
-    let characteristics = if matches!(original, Combatant::LiveUmgah(..)) {
+    let characteristics = if matches!(combatant(side, arena), Combatant::LiveUmgah(..)) {
         work1.core.characteristics
     } else {
         core.characteristics
@@ -209,19 +278,26 @@ fn special_ready(work: &Work<'_>) -> bool {
     wait_n(work.core.special_wait) <= 0 && work.rating != CyborgRating::StandardCyborg
 }
 
-#[inline]
-fn ultra(work: &Work<'_>) -> bool {
-    work.core.characteristics.thrust_increment == work.core.characteristics.max_thrust
-        && work.mi >= MEDIUM_SHIP
+/// `ultra` for a hull that is not mid-decision. `Work::mi` is exactly
+/// `maneuverability(work.core.characteristics)` and nothing the per-ship arms
+/// write back changes it, so this is the same predicate the cyborg applies to
+/// itself, reachable without a `Work`.
+pub fn is_ultra(chars: &Characteristics) -> bool {
+    chars.thrust_increment == chars.max_thrust && maneuverability(chars) >= MEDIUM_SHIP
 }
 
 #[inline]
-fn is_gravity(el: Element) -> bool {
+fn ultra(work: &Work<'_>) -> bool {
+    is_ultra(&work.core.characteristics)
+}
+
+#[inline]
+pub fn is_gravity(el: Element) -> bool {
     el.mass > GRAVITY_MASS_THRESHOLD
 }
 
 #[inline]
-fn is_crew(el: Element) -> bool {
+pub fn is_crew(el: Element) -> bool {
     el.flags.crew_object || is_crew_body(el.body)
 }
 
@@ -241,11 +317,11 @@ fn same_player(a: Element, b: Element) -> bool {
 }
 
 #[inline]
-fn colliding(el: Element) -> bool {
+pub fn colliding(el: Element) -> bool {
     !(el.flags.nonsolid || el.flags.disappearing)
 }
 
-fn radius_world(el: &Element) -> i64 {
+pub fn radius_world(el: &Element) -> i64 {
     match el.body {
         Body::Planet => 160,
         Body::Ship(_) => 40,
@@ -287,12 +363,12 @@ fn facing_to_angle(facing: i64) -> i64 {
 }
 
 #[inline]
-fn display_to_world(n: i64) -> i64 {
+pub fn display_to_world(n: i64) -> i64 {
     n * 4
 }
 
 #[inline]
-fn world_to_turn(d: i64) -> i64 {
+pub fn world_to_turn(d: i64) -> i64 {
     idiv(d, 64)
 }
 
@@ -304,7 +380,7 @@ fn margin_of_error(rating: CyborgRating) -> i64 {
     }
 }
 
-fn plot_intercept(
+pub fn plot_intercept(
     space: WorldExtent,
     a: &Element,
     b: &Element,
@@ -354,7 +430,7 @@ fn plot_from(
 }
 
 #[inline]
-fn life_span(el: Element) -> i64 {
+pub fn life_span(el: Element) -> i64 {
     el.life.ticks()
 }
 
@@ -408,32 +484,8 @@ fn consider_gravity(work: &Work<'_>, el: &Element, concerns: &mut Concerns) {
     if work.moved {
         return;
     }
-    let maneuver_turn = if ultra(work) {
-        16
-    } else if work.mi <= MEDIUM_SHIP {
-        48
-    } else {
-        32
-    };
-    let bounds = 80;
-    let hit = plot_intercept(
-        work.space,
-        el,
-        &work.ship,
-        maneuver_turn,
-        display_to_world(30 + bounds * 3),
-    );
-    if hit > 0
-        && (hit > 1
-            || plot_intercept(work.space, el, &work.ship, 1, display_to_world(35 + bounds)) > 0
-            || plot_intercept(
-                work.space,
-                el,
-                &work.ship,
-                maneuver_turn * 2,
-                display_to_world(40 + bounds),
-            ) > 1)
-    {
+    let hit = gravity_intercept(work.space, el, &work.ship, &work.core.characteristics);
+    if hit > 0 {
         concerns.gravity = Eval {
             object: Some(*el),
             movement: if ultra(work) {
@@ -598,7 +650,7 @@ fn seeking_weapon(work: &Work<'_>, el: &Element, dx: i64, dy: i64) -> Eval {
     }
 }
 
-fn is_special_body(body: Body) -> bool {
+pub fn is_special_body(body: Body) -> bool {
     matches!(
         body,
         Body::ChenjesuDogi
@@ -947,13 +999,7 @@ fn entice_target(
             }
         }
     }
-    let in_range = plot_intercept(
-        work.space,
-        &work.ship,
-        &other,
-        10,
-        work.range - idiv(work.range, 4),
-    );
+    let in_range = range_probe(work.space, &work.ship, &other, work.range);
     let uses_inertia =
         work.core.characteristics.thrust_increment != work.core.characteristics.max_thrust;
     if is_ship(other) && backing && work.range < LONG_RANGE && eval.which_turn <= 32 {

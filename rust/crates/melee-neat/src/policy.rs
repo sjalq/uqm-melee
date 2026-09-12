@@ -1,8 +1,8 @@
 use melee_sim::input::{BattleInput, Turn};
 
-pub const N_OBS: usize = 43;
+pub const N_OBS: usize = 103;
 pub const N_FEEDBACK: usize = 13;
-pub const N_IN: usize = 57;
+pub const N_IN: usize = N_OBS + N_FEEDBACK + 1;
 pub const N_HIDDEN: usize = 16;
 pub const N_OUT: usize = 13;
 pub const N_WEIGHTS: usize = N_HIDDEN * N_IN + N_OUT * (N_HIDDEN + 1);

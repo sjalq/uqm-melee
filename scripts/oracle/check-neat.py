@@ -18,7 +18,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-N_WEIGHTS = 1133
+# 16 hidden rows of N_IN, then 13 output rows of 17. N_IN is the 103 encoder
+# observations plus 13 feedback slots plus the bias.
+N_IN = 103 + 13 + 1
+N_WEIGHTS = 16 * N_IN + 13 * 17
 ALL_SHIPS = [
     "Androsynth", "Arilou", "Chenjesu", "Chmmr", "Druuge", "Earthling",
     "Ilwrath", "KohrAh", "Melnorme", "Mmrnmhrm", "Mycon", "Orz", "Pkunk",
@@ -75,7 +78,7 @@ def jobs(args):
     policies = [[0.0] * N_WEIGHTS, [rng.gauss(0, 0.12) for _ in range(N_WEIGHTS)]]
     controls = [0.0] * N_WEIGHTS
     for output in (2, 3, 4):
-        controls[16 * 57 + output * 17 + 16] = 1.0
+        controls[16 * N_IN + output * 17 + 16] = 1.0
     policies.append(controls)
     for path in args.weights:
         weights = json.loads(path.read_text())["weights"]

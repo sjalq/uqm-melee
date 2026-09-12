@@ -12,7 +12,7 @@ module Mario.Dashboard.Topology exposing
 
 {-| Champion network topology.
 
-The point of this view is that the 57 inputs are not an anonymous
+The point of this view is that the 117 inputs are not an anonymous
 column. They are laid out in their six contract groups, each band is
 labelled, and every node carries its own name, so our ship's five
 identity bits, the opponent's five identity bits and the eight memory

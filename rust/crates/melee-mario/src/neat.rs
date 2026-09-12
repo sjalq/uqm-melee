@@ -895,7 +895,10 @@ mod tests {
         assert_eq!(b.node(), HIDDEN_BASE + 1);
         let saved = b.to_json();
         assert_eq!(Innovations::from_json(&saved).unwrap().to_json(), saved);
-        assert!(Innovations::from_json(&json!({"next_innovation": 0, "next_node": 70})).is_none());
+        assert!(
+            Innovations::from_json(&json!({"next_innovation": 0, "next_node": HIDDEN_BASE}))
+                .is_none()
+        );
         assert!(Innovations::from_json(&json!({"next_innovation": 1, "next_node": 3})).is_none());
     }
 

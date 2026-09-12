@@ -164,7 +164,17 @@ fn a_run_resumes_exactly_through_training_probing_and_a_held_out_round() {
 #[test]
 fn training_spreads_over_the_whole_board_and_plays_both_seats() {
     let mut trainer = Trainer::fresh(config("spread"));
-    run_units(&mut trainer, 200);
+    // Whether a panel happens to be open on any given unit depends on how the
+    // fights fall out, so watch every panel the run opens rather than asserting
+    // one is open at an arbitrary stopping point.
+    let (mut swapped, mut straight) = (false, false);
+    for _ in 0..200 {
+        trainer.step();
+        if let Some(panel) = trainer.panel.as_ref() {
+            swapped |= panel.tasks.iter().any(|t| t.swap);
+            straight |= panel.tasks.iter().any(|t| !t.swap);
+        }
+    }
 
     // Coverage walked, and every fight it drew was a real cyborg matchup.
     assert!(trainer.coverage_cursor > 0, "the rotation never advanced");
@@ -187,10 +197,12 @@ fn training_spreads_over_the_whole_board_and_plays_both_seats() {
     let ours: std::collections::BTreeSet<u8> = played.iter().map(|(c, _)| c.us).collect();
     let theirs: std::collections::BTreeSet<u8> = played.iter().map(|(c, _)| c.them).collect();
     assert!(ours.len() > 4 && theirs.len() > 4, "the board barely moved");
-    // And a panel of a generation covers both seats.
-    let panel = trainer.panel.as_ref().expect("a panel is open");
-    assert!(panel.tasks.iter().any(|t| t.swap));
-    assert!(panel.tasks.iter().any(|t| !t.swap));
+    // And the panels of a generation cover both seats.
+    assert!(swapped, "no panel ever put the candidate in the top seat");
+    assert!(
+        straight,
+        "no panel ever put the candidate in the bottom seat"
+    );
 }
 
 #[test]

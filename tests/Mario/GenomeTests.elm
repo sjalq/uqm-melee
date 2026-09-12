@@ -67,7 +67,7 @@ setAt index value values =
         values
 
 
-{-| Place one value in the flat 57 slot input vector and split it back into the
+{-| Place one value in the flat 117 slot input vector and split it back into the
 three request fields. This is the packing the Rust port must agree with.
 -}
 stepWithSlot : Int -> Float -> Step
@@ -325,23 +325,23 @@ suite =
 shapeSuite : Test
 shapeSuite =
     describe "slot layout"
-        [ test "the input band is 43 observations, 5 controls, 8 memory and a bias" <|
+        [ test "the input band is 103 observations, 5 controls, 8 memory and a bias" <|
             \() ->
-                Expect.equal [ 43, 5, 8, 57 ]
+                Expect.equal [ 103, 5, 8, 117 ]
                     [ Genome.observationCount, Genome.controlCount, Genome.memoryCount, Genome.inputCount ]
         , test "observation width matches the existing encoder" <|
             \() -> Expect.equal Encode.size Genome.observationCount
-        , test "ids are banded 0..56 inputs, 57..69 outputs, 70 and up hidden" <|
+        , test "ids are banded 0..116 inputs, 117..129 outputs, 130 and up hidden" <|
             \() ->
-                Expect.equal [ 56, 57, 69, 70 ]
+                Expect.equal [ 116, 117, 129, 130 ]
                     [ Genome.biasId, Genome.firstOutputId, Genome.lastOutputId, Genome.firstHiddenId ]
         , test "feedback bands start right after the observations" <|
             \() ->
-                Expect.equal [ 43, 48 ]
+                Expect.equal [ 103, 108 ]
                     [ Genome.firstControlFeedbackId, Genome.firstMemoryFeedbackId ]
         , test "outputs are five controls then eight memory channels" <|
             \() ->
-                Expect.equal ( 13, 62 ) ( Genome.outputCount, Genome.firstMemoryOutputId )
+                Expect.equal ( 13, 122 ) ( Genome.outputCount, Genome.firstMemoryOutputId )
         , fuzz2 shipFuzzer shipFuzzer "hull bits are five low bit first bits per side" <|
             \us them ->
                 Expect.equal
@@ -554,9 +554,9 @@ evaluationSuite =
                 let
                     genome =
                         forceBuild 2
-                            [ gene 1 Genome.biasId 71 1
-                            , gene 2 71 70 1
-                            , gene 3 70 Genome.firstOutputId 1
+                            [ gene 1 Genome.biasId (Genome.firstHiddenId + 1) 1
+                            , gene 2 (Genome.firstHiddenId + 1) Genome.firstHiddenId 1
+                            , gene 3 Genome.firstHiddenId Genome.firstOutputId 1
                             ]
 
                     innerFirst =
@@ -577,9 +577,9 @@ recurrenceSuite =
                 let
                     genome =
                         forceBuild 1
-                            [ gene 1 Genome.biasId 70 1
-                            , gene 2 70 70 1
-                            , gene 3 70 Genome.firstOutputId 1
+                            [ gene 1 Genome.biasId Genome.firstHiddenId 1
+                            , gene 2 Genome.firstHiddenId Genome.firstHiddenId 1
+                            , gene 3 Genome.firstHiddenId Genome.firstOutputId 1
                             ]
 
                     first =
@@ -599,14 +599,15 @@ recurrenceSuite =
                 let
                     genome =
                         forceBuild 2
-                            [ gene 1 Genome.biasId 70 1
-                            , gene 2 70 71 1
-                            , gene 3 71 70 1
-                            , gene 4 71 Genome.firstOutputId 1
+                            [ gene 1 Genome.biasId Genome.firstHiddenId 1
+                            , gene 2 Genome.firstHiddenId (Genome.firstHiddenId + 1) 1
+                            , gene 3 (Genome.firstHiddenId + 1) Genome.firstHiddenId 1
+                            , gene 4 (Genome.firstHiddenId + 1) Genome.firstOutputId 1
                             ]
 
-                    -- Node 70 sums bias plus the previous node 71, node 71 sees
-                    -- only the previous node 70, and the output reads node 71
+                    -- The first hidden node sums bias plus the previous value of
+                    -- the second, the second sees only the previous value of the
+                    -- first, and the output reads the second.
                     -- from this decision because it sits in a later component.
                     a =
                         Genome.sigmoid 1
@@ -667,17 +668,17 @@ recurrenceSuite =
                 let
                     cyclic =
                         forceBuild 2
-                            [ gene 1 Genome.biasId 70 1
-                            , gene 2 70 71 1
-                            , gene 3 71 70 1
-                            , gene 4 71 Genome.firstOutputId 1
+                            [ gene 1 Genome.biasId Genome.firstHiddenId 1
+                            , gene 2 Genome.firstHiddenId (Genome.firstHiddenId + 1) 1
+                            , gene 3 (Genome.firstHiddenId + 1) Genome.firstHiddenId 1
+                            , gene 4 (Genome.firstHiddenId + 1) Genome.firstOutputId 1
                             ]
 
                     feedForward =
                         forceBuild 2
-                            [ gene 1 Genome.biasId 70 1
-                            , gene 2 70 71 1
-                            , gene 4 71 Genome.firstOutputId 1
+                            [ gene 1 Genome.biasId Genome.firstHiddenId 1
+                            , gene 2 Genome.firstHiddenId (Genome.firstHiddenId + 1) 1
+                            , gene 4 (Genome.firstHiddenId + 1) Genome.firstOutputId 1
                             ]
                 in
                 Expect.equal ( 2, 0 )
@@ -746,11 +747,11 @@ validationSuite =
                     |> Expect.equal (Ok ())
         , test "a duplicate node id is rejected" <|
             \() ->
-                Genome.fromParts ({ id = 70, kind = Hidden } :: { id = 70, kind = Hidden } :: baseNodes) []
-                    |> expectError (Genome.DuplicateNode 70)
+                Genome.fromParts ({ id = Genome.firstHiddenId, kind = Hidden } :: { id = Genome.firstHiddenId, kind = Hidden } :: baseNodes) []
+                    |> expectError (Genome.DuplicateNode Genome.firstHiddenId)
         , test "a duplicate innovation is rejected" <|
             \() ->
-                build 1 [ gene 1 Genome.biasId 70 1, gene 1 Genome.biasId Genome.firstOutputId 1 ]
+                build 1 [ gene 1 Genome.biasId Genome.firstHiddenId 1, gene 1 Genome.biasId Genome.firstOutputId 1 ]
                     |> expectError (Genome.DuplicateInnovation 1)
         , test "a duplicate link is rejected" <|
             \() ->
@@ -770,19 +771,21 @@ validationSuite =
                     |> expectError (Genome.UnknownNodeId 999)
         , test "a genome may omit fixed slots it never uses" <|
             \() ->
-                Genome.fromParts (List.filter (\n -> n.id /= 12 && n.id /= 65) baseNodes) []
+                Genome.fromParts
+                    (List.filter (\n -> n.id /= 12 && n.id /= Genome.firstMemoryOutputId) baseNodes)
+                    []
                     |> Result.map Genome.nodeCount
-                    |> Expect.equal (Ok 68)
+                    |> Expect.equal (Ok (Genome.inputCount + Genome.outputCount - 2))
         , test "an undeclared output reads as zero" <|
             \() ->
-                Genome.fromParts (List.filter (\n -> n.id /= 69) baseNodes)
+                Genome.fromParts (List.filter (\n -> n.id /= Genome.lastOutputId) baseNodes)
                     [ gene 1 Genome.biasId Genome.firstOutputId 1 ]
                     |> Result.map (\g -> outputsOf g blankStep)
                     |> Expect.equal (Ok (Genome.sigmoid 1 :: zeros 12))
         , test "a node whose kind contradicts its id is rejected" <|
             \() ->
-                Genome.fromParts (List.map (\n -> ifId 70 Output n) ({ id = 70, kind = Hidden } :: baseNodes)) []
-                    |> expectError (Genome.KindOutOfRange 70)
+                Genome.fromParts (List.map (\n -> ifId Genome.firstHiddenId Output n) ({ id = Genome.firstHiddenId, kind = Hidden } :: baseNodes)) []
+                    |> expectError (Genome.KindOutOfRange Genome.firstHiddenId)
         , test "an input declared as hidden is rejected" <|
             \() ->
                 Genome.fromParts (List.map (ifId 5 Hidden) baseNodes) []
@@ -808,7 +811,7 @@ validationSuite =
             \() ->
                 let
                     genome =
-                        forceBuild 1 [ gene 4 Genome.biasId 70 0.25, gene 9 70 Genome.firstOutputId -1.5 ]
+                        forceBuild 1 [ gene 4 Genome.biasId Genome.firstHiddenId 0.25, gene 9 Genome.firstHiddenId Genome.firstOutputId -1.5 ]
                 in
                 Genome.fromJson (E.encode 0 (Genome.encode genome))
                     |> Result.map Genome.genes

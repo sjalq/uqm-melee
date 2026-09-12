@@ -749,17 +749,17 @@ slotSuite =
                     , outputs = Slots.outputCount
                     , hiddenFirst = Slots.hiddenFirst
                     }
-                    { sensors = 33
-                    , observations = 43
-                    , bias = 56
-                    , inputs = 57
-                    , outputFirst = 57
+                    { sensors = 93
+                    , observations = 103
+                    , bias = 116
+                    , inputs = 117
+                    , outputFirst = 117
                     , outputs = 13
-                    , hiddenFirst = 70
+                    , hiddenFirst = 130
                     }
         , test "group boundaries land where the contract says" <|
             \() ->
-                Expect.equal (List.map Slots.groupOf [ 0, 32, 33, 37, 38, 42, 43, 47, 48, 55, 56, 57, 61, 62, 69, 70 ])
+                Expect.equal (List.map Slots.groupOf [ 0, 92, 93, 97, 98, 102, 103, 107, 108, 115, 116, 117, 121, 122, 129, 130 ])
                     [ Slots.Sensors
                     , Slots.Sensors
                     , Slots.OurShipBits
@@ -780,18 +780,18 @@ slotSuite =
         , test "ship identity bits are labelled least significant first" <|
             \() ->
                 Expect.equal
-                    (List.map (\i -> (Slots.slot i).short) [ 33, 34, 35, 36, 37, 38, 42 ])
+                    (List.map (\i -> (Slots.slot i).short) [ 93, 94, 95, 96, 97, 98, 102 ])
                     [ "us b0", "us b1", "us b2", "us b3", "us b4", "them b0", "them b4" ]
         , test "control outputs keep the encoder's order" <|
             \() ->
-                Expect.equal (List.map (\i -> (Slots.slot i).short) (List.range 57 61))
+                Expect.equal (List.map (\i -> (Slots.slot i).short) (List.range 117 121))
                     Slots.controlNames
         , test "memory outputs name the input they feed on the next step" <|
             \() ->
-                Expect.equal True (String.contains "input 48" (Slots.slot 62).detail)
+                Expect.equal True (String.contains "input 108" (Slots.slot 122).detail)
         , test "the sensor constant and the extra bias are described as different things" <|
             \() ->
-                Expect.equal True (String.contains "Distinct from the extra bias" (Slots.slot 32).detail)
+                Expect.equal True (String.contains "Distinct from the extra bias" (Slots.slot 92).detail)
         , fuzz (Fuzz.intRange 0 400) "every node id resolves to a named slot" <|
             \id ->
                 Expect.equal False (String.isEmpty (Slots.slot id).short)
@@ -800,6 +800,24 @@ slotSuite =
 
 
 -- TOPOLOGY
+
+
+{-| Named landmarks so these topology tests stay about the graph rather than
+about how wide the observation vector happens to be.
+-}
+out0 : Int
+out0 =
+    Slots.outputFirst
+
+
+h0 : Int
+h0 =
+    Slots.hiddenFirst
+
+
+h1 : Int
+h1 =
+    Slots.hiddenFirst + 1
 
 
 genome : List ( Int, String ) -> List Api.Gene -> Api.Genome
@@ -828,36 +846,36 @@ topologySuite =
                 let
                     cyclic =
                         genome
-                            [ ( 0, "input" ), ( 70, "hidden" ), ( 71, "hidden" ), ( 57, "output" ) ]
-                            [ link 1 0 70 1
-                            , link 2 70 71 1
-                            , link 3 71 70 1
-                            , link 4 71 57 1
+                            [ ( 0, "input" ), ( h0, "hidden" ), ( h1, "hidden" ), ( out0, "output" ) ]
+                            [ link 1 0 h0 1
+                            , link 2 h0 h1 1
+                            , link 3 h1 h0 1
+                            , link 4 h1 out0 1
                             ]
                 in
                 Topology.hiddenDepths cyclic
-                    |> (\depths -> ( Dict.get 70 depths, Dict.get 71 depths ))
+                    |> (\depths -> ( Dict.get h0 depths, Dict.get h1 depths ))
                     |> Expect.equal ( Just 1, Just 2 )
         , test "a node referenced only by a gene is still placed, not silently dropped" <|
             \() ->
                 let
                     partial =
-                        genome [ ( 0, "input" ) ] [ link 1 0 99 1 ]
+                        genome [ ( 0, "input" ) ] [ link 1 0 (Slots.hiddenFirst + 29) 1 ]
                 in
                 Topology.orderedIds partial
-                    |> List.member 99
+                    |> List.member (Slots.hiddenFirst + 29)
                     |> Expect.equal True
         , test "an undeclared node is counted so an invalid genome cannot look clean" <|
             \() ->
-                Topology.summarize (genome [ ( 0, "input" ) ] [ link 1 0 99 1 ])
+                Topology.summarize (genome [ ( 0, "input" ) ] [ link 1 0 (Slots.hiddenFirst + 29) 1 ])
                     |> .undeclared
                     |> Expect.equal 1
         , test "disabled genes are counted separately from enabled ones" <|
             \() ->
                 Topology.summarize
                     (genome
-                        [ ( 0, "input" ), ( 57, "output" ) ]
-                        [ link 1 0 57 1, disabledLink 2 0 57 -1 ]
+                        [ ( 0, "input" ), ( out0, "output" ) ]
+                        [ link 1 0 out0 1, disabledLink 2 0 out0 -1 ]
                     )
                     |> (\s -> ( s.enabled, s.disabled ))
                     |> Expect.equal ( 1, 1 )
@@ -865,8 +883,8 @@ topologySuite =
             \() ->
                 Topology.summarize
                     (genome
-                        [ ( 0, "input" ), ( 70, "hidden" ), ( 57, "output" ) ]
-                        [ link 1 0 70 1, link 2 70 57 1, link 3 57 70 1 ]
+                        [ ( 0, "input" ), ( h0, "hidden" ), ( out0, "output" ) ]
+                        [ link 1 0 h0 1, link 2 h0 out0 1, link 3 out0 h0 1 ]
                     )
                     |> .recurrent
                     |> Expect.equal 1

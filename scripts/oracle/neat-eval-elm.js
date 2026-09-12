@@ -3027,7 +3027,7 @@ var $author$project$Neat$Policy$nHidden = 16;
 var $author$project$Neat$Policy$nControls = 5;
 var $author$project$Neat$Policy$nExtra = 8;
 var $author$project$Neat$Policy$nFeedback = $author$project$Neat$Policy$nControls + $author$project$Neat$Policy$nExtra;
-var $author$project$Neat$Encode$combatSize = 33;
+var $author$project$Neat$Encode$combatSize = 93;
 var $author$project$Neat$Encode$kindBits = 5;
 var $author$project$Neat$Encode$kindSize = $author$project$Neat$Encode$kindBits * 2;
 var $author$project$Neat$Encode$size = $author$project$Neat$Encode$combatSize + $author$project$Neat$Encode$kindSize;
@@ -3782,27 +3782,736 @@ var $author$project$Neat$Policy$step$ = function (net, obs, feedback) {
 	};
 };
 var $author$project$Neat$Policy$step = F3($author$project$Neat$Policy$step$);
+var $author$project$Neat$Encode$ifElse$ = function (condition, yes, no) {
+	return condition ? yes : no;
+};
+var $author$project$Neat$Encode$ifElse = F3($author$project$Neat$Encode$ifElse$);
+var $author$project$Neat$Encode$flag = function (b) {
+	return $author$project$Neat$Encode$ifElse$(b, 1, 0);
+};
+var $author$project$Neat$Encode$abilityOf = function (ability) {
+	return _List_fromArray(
+		[
+			$author$project$Neat$Encode$flag(ability.seekingWeapon),
+			$author$project$Neat$Encode$flag(ability.seekingSpecial),
+			$author$project$Neat$Encode$flag(ability.immediateWeapon),
+			$author$project$Neat$Encode$flag(ability.firesFore),
+			$author$project$Neat$Encode$flag(ability.firesRight),
+			$author$project$Neat$Encode$flag(ability.firesAft),
+			$author$project$Neat$Encode$flag(ability.firesLeft)
+		]);
+};
+var $elm$core$Basics$identity = function (x) {
+	return x;
+};
+var $author$project$Melee$Units$Wait = function (a) {
+	return {$: 'Wait', a: a};
+};
+var $author$project$Melee$Ship$none = {crewImmune: false, dontChase: false, firesAft: false, firesFore: false, firesLeft: false, firesRight: false, immediateWeapon: false, pointDefense: false, seekingSpecial: false, seekingWeapon: false, shieldDefense: false};
+var $author$project$Melee$Ship$fore = _Utils_update(
+	$author$project$Melee$Ship$none,
+	{firesFore: true});
+var $author$project$Melee$Ship$stock = function (kind) {
+	switch (kind.$) {
+		case 'Androsynth':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{seekingWeapon: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(8),
+					maxThrust: 24,
+					shipMass: 6,
+					specialEnergyCost: 2,
+					specialWait: $author$project$Melee$Units$Wait(0),
+					thrustIncrement: 3,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(4),
+					weaponEnergyCost: 3,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 15,
+				kind: $author$project$Melee$Ship$Androsynth,
+				maxCrew: 20,
+				maxEnergy: 24,
+				startingCrew: 20,
+				startingEnergy: 24
+			};
+		case 'Arilou':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$none,
+					{immediateWeapon: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(6),
+					maxThrust: 40,
+					shipMass: 1,
+					specialEnergyCost: 3,
+					specialWait: $author$project$Melee$Units$Wait(2),
+					thrustIncrement: 40,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(0),
+					weaponEnergyCost: 2,
+					weaponWait: $author$project$Melee$Units$Wait(1)
+				},
+				cost: 16,
+				kind: $author$project$Melee$Ship$Arilou,
+				maxCrew: 6,
+				maxEnergy: 20,
+				startingCrew: 6,
+				startingEnergy: 20
+			};
+		case 'Chenjesu':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{seekingSpecial: true, seekingWeapon: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(4),
+					maxThrust: 27,
+					shipMass: 10,
+					specialEnergyCost: 30,
+					specialWait: $author$project$Melee$Units$Wait(0),
+					thrustIncrement: 3,
+					thrustWait: $author$project$Melee$Units$Wait(4),
+					turnWait: $author$project$Melee$Units$Wait(6),
+					weaponEnergyCost: 5,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 28,
+				kind: $author$project$Melee$Ship$Chenjesu,
+				maxCrew: 36,
+				maxEnergy: 30,
+				startingCrew: 36,
+				startingEnergy: 30
+			};
+		case 'Chmmr':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{immediateWeapon: true, pointDefense: true, seekingSpecial: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(1),
+					maxThrust: 35,
+					shipMass: 10,
+					specialEnergyCost: 1,
+					specialWait: $author$project$Melee$Units$Wait(0),
+					thrustIncrement: 7,
+					thrustWait: $author$project$Melee$Units$Wait(5),
+					turnWait: $author$project$Melee$Units$Wait(3),
+					weaponEnergyCost: 2,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 30,
+				kind: $author$project$Melee$Ship$Chmmr,
+				maxCrew: 42,
+				maxEnergy: 42,
+				startingCrew: 42,
+				startingEnergy: 42
+			};
+		case 'Druuge':
+			return {
+				ability: $author$project$Melee$Ship$fore,
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(50),
+					maxThrust: 20,
+					shipMass: 5,
+					specialEnergyCost: 16,
+					specialWait: $author$project$Melee$Units$Wait(30),
+					thrustIncrement: 2,
+					thrustWait: $author$project$Melee$Units$Wait(1),
+					turnWait: $author$project$Melee$Units$Wait(4),
+					weaponEnergyCost: 4,
+					weaponWait: $author$project$Melee$Units$Wait(10)
+				},
+				cost: 17,
+				kind: $author$project$Melee$Ship$Druuge,
+				maxCrew: 14,
+				maxEnergy: 32,
+				startingCrew: 14,
+				startingEnergy: 32
+			};
+		case 'Earthling':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{pointDefense: true, seekingWeapon: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(8),
+					maxThrust: 24,
+					shipMass: 6,
+					specialEnergyCost: 4,
+					specialWait: $author$project$Melee$Units$Wait(9),
+					thrustIncrement: 3,
+					thrustWait: $author$project$Melee$Units$Wait(4),
+					turnWait: $author$project$Melee$Units$Wait(1),
+					weaponEnergyCost: 9,
+					weaponWait: $author$project$Melee$Units$Wait(10)
+				},
+				cost: 11,
+				kind: $author$project$Melee$Ship$Earthling,
+				maxCrew: 18,
+				maxEnergy: 18,
+				startingCrew: 18,
+				startingEnergy: 18
+			};
+		case 'Ilwrath':
+			return {
+				ability: $author$project$Melee$Ship$fore,
+				characteristics: {
+					energyRegeneration: 4,
+					energyWait: $author$project$Melee$Units$Wait(4),
+					maxThrust: 25,
+					shipMass: 7,
+					specialEnergyCost: 3,
+					specialWait: $author$project$Melee$Units$Wait(13),
+					thrustIncrement: 5,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(2),
+					weaponEnergyCost: 1,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 10,
+				kind: $author$project$Melee$Ship$Ilwrath,
+				maxCrew: 22,
+				maxEnergy: 16,
+				startingCrew: 22,
+				startingEnergy: 16
+			};
+		case 'KohrAh':
+			return {
+				ability: $author$project$Melee$Ship$fore,
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(4),
+					maxThrust: 30,
+					shipMass: 10,
+					specialEnergyCost: 21,
+					specialWait: $author$project$Melee$Units$Wait(9),
+					thrustIncrement: 6,
+					thrustWait: $author$project$Melee$Units$Wait(6),
+					turnWait: $author$project$Melee$Units$Wait(4),
+					weaponEnergyCost: 6,
+					weaponWait: $author$project$Melee$Units$Wait(6)
+				},
+				cost: 30,
+				kind: $author$project$Melee$Ship$KohrAh,
+				maxCrew: 42,
+				maxEnergy: 42,
+				startingCrew: 42,
+				startingEnergy: 42
+			};
+		case 'Melnorme':
+			return {
+				ability: $author$project$Melee$Ship$fore,
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(4),
+					maxThrust: 36,
+					shipMass: 7,
+					specialEnergyCost: 20,
+					specialWait: $author$project$Melee$Units$Wait(20),
+					thrustIncrement: 6,
+					thrustWait: $author$project$Melee$Units$Wait(4),
+					turnWait: $author$project$Melee$Units$Wait(4),
+					weaponEnergyCost: 5,
+					weaponWait: $author$project$Melee$Units$Wait(1)
+				},
+				cost: 18,
+				kind: $author$project$Melee$Ship$Melnorme,
+				maxCrew: 20,
+				maxEnergy: 42,
+				startingCrew: 20,
+				startingEnergy: 42
+			};
+		case 'Mmrnmhrm':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{immediateWeapon: true}),
+				characteristics: {
+					energyRegeneration: 2,
+					energyWait: $author$project$Melee$Units$Wait(6),
+					maxThrust: 20,
+					shipMass: 3,
+					specialEnergyCost: 10,
+					specialWait: $author$project$Melee$Units$Wait(0),
+					thrustIncrement: 5,
+					thrustWait: $author$project$Melee$Units$Wait(1),
+					turnWait: $author$project$Melee$Units$Wait(2),
+					weaponEnergyCost: 1,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 19,
+				kind: $author$project$Melee$Ship$Mmrnmhrm,
+				maxCrew: 20,
+				maxEnergy: 10,
+				startingCrew: 20,
+				startingEnergy: 10
+			};
+		case 'Mycon':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{seekingWeapon: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(4),
+					maxThrust: 27,
+					shipMass: 7,
+					specialEnergyCost: 40,
+					specialWait: $author$project$Melee$Units$Wait(0),
+					thrustIncrement: 9,
+					thrustWait: $author$project$Melee$Units$Wait(6),
+					turnWait: $author$project$Melee$Units$Wait(6),
+					weaponEnergyCost: 20,
+					weaponWait: $author$project$Melee$Units$Wait(5)
+				},
+				cost: 21,
+				kind: $author$project$Melee$Ship$Mycon,
+				maxCrew: 20,
+				maxEnergy: 40,
+				startingCrew: 20,
+				startingEnergy: 40
+			};
+		case 'Orz':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{seekingSpecial: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(6),
+					maxThrust: 35,
+					shipMass: 4,
+					specialEnergyCost: 0,
+					specialWait: $author$project$Melee$Units$Wait(12),
+					thrustIncrement: 5,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(1),
+					weaponEnergyCost: 6,
+					weaponWait: $author$project$Melee$Units$Wait(4)
+				},
+				cost: 23,
+				kind: $author$project$Melee$Ship$Orz,
+				maxCrew: 16,
+				maxEnergy: 20,
+				startingCrew: 16,
+				startingEnergy: 20
+			};
+		case 'Pkunk':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{firesLeft: true, firesRight: true}),
+				characteristics: {
+					energyRegeneration: 0,
+					energyWait: $author$project$Melee$Units$Wait(0),
+					maxThrust: 64,
+					shipMass: 1,
+					specialEnergyCost: 2,
+					specialWait: $author$project$Melee$Units$Wait(16),
+					thrustIncrement: 16,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(0),
+					weaponEnergyCost: 1,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 20,
+				kind: $author$project$Melee$Ship$Pkunk,
+				maxCrew: 8,
+				maxEnergy: 12,
+				startingCrew: 8,
+				startingEnergy: 12
+			};
+		case 'Shofixti':
+			return {
+				ability: $author$project$Melee$Ship$fore,
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(9),
+					maxThrust: 35,
+					shipMass: 1,
+					specialEnergyCost: 0,
+					specialWait: $author$project$Melee$Units$Wait(0),
+					thrustIncrement: 5,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(1),
+					weaponEnergyCost: 1,
+					weaponWait: $author$project$Melee$Units$Wait(3)
+				},
+				cost: 5,
+				kind: $author$project$Melee$Ship$Shofixti,
+				maxCrew: 6,
+				maxEnergy: 4,
+				startingCrew: 6,
+				startingEnergy: 4
+			};
+		case 'Slylandro':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$none,
+					{crewImmune: true, seekingWeapon: true}),
+				characteristics: {
+					energyRegeneration: 0,
+					energyWait: $author$project$Melee$Units$Wait(10),
+					maxThrust: 60,
+					shipMass: 1,
+					specialEnergyCost: 0,
+					specialWait: $author$project$Melee$Units$Wait(20),
+					thrustIncrement: 60,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(0),
+					weaponEnergyCost: 2,
+					weaponWait: $author$project$Melee$Units$Wait(17)
+				},
+				cost: 17,
+				kind: $author$project$Melee$Ship$Slylandro,
+				maxCrew: 12,
+				maxEnergy: 20,
+				startingCrew: 12,
+				startingEnergy: 20
+			};
+		case 'Spathi':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{dontChase: true, firesAft: true, seekingSpecial: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(10),
+					maxThrust: 48,
+					shipMass: 5,
+					specialEnergyCost: 3,
+					specialWait: $author$project$Melee$Units$Wait(7),
+					thrustIncrement: 12,
+					thrustWait: $author$project$Melee$Units$Wait(1),
+					turnWait: $author$project$Melee$Units$Wait(1),
+					weaponEnergyCost: 2,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 18,
+				kind: $author$project$Melee$Ship$Spathi,
+				maxCrew: 30,
+				maxEnergy: 10,
+				startingCrew: 30,
+				startingEnergy: 10
+			};
+		case 'Supox':
+			return {
+				ability: $author$project$Melee$Ship$fore,
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(4),
+					maxThrust: 40,
+					shipMass: 4,
+					specialEnergyCost: 1,
+					specialWait: $author$project$Melee$Units$Wait(0),
+					thrustIncrement: 8,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(1),
+					weaponEnergyCost: 1,
+					weaponWait: $author$project$Melee$Units$Wait(2)
+				},
+				cost: 16,
+				kind: $author$project$Melee$Ship$Supox,
+				maxCrew: 12,
+				maxEnergy: 16,
+				startingCrew: 12,
+				startingEnergy: 16
+			};
+		case 'Syreen':
+			return {
+				ability: $author$project$Melee$Ship$fore,
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(6),
+					maxThrust: 36,
+					shipMass: 2,
+					specialEnergyCost: 5,
+					specialWait: $author$project$Melee$Units$Wait(20),
+					thrustIncrement: 9,
+					thrustWait: $author$project$Melee$Units$Wait(1),
+					turnWait: $author$project$Melee$Units$Wait(1),
+					weaponEnergyCost: 1,
+					weaponWait: $author$project$Melee$Units$Wait(8)
+				},
+				cost: 13,
+				kind: $author$project$Melee$Ship$Syreen,
+				maxCrew: 42,
+				maxEnergy: 16,
+				startingCrew: 12,
+				startingEnergy: 16
+			};
+		case 'Thraddash':
+			return {
+				ability: $author$project$Melee$Ship$fore,
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(6),
+					maxThrust: 28,
+					shipMass: 7,
+					specialEnergyCost: 1,
+					specialWait: $author$project$Melee$Units$Wait(0),
+					thrustIncrement: 7,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(1),
+					weaponEnergyCost: 2,
+					weaponWait: $author$project$Melee$Units$Wait(12)
+				},
+				cost: 10,
+				kind: $author$project$Melee$Ship$Thraddash,
+				maxCrew: 8,
+				maxEnergy: 24,
+				startingCrew: 8,
+				startingEnergy: 24
+			};
+		case 'Umgah':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{immediateWeapon: true}),
+				characteristics: {
+					energyRegeneration: 30,
+					energyWait: $author$project$Melee$Units$Wait(150),
+					maxThrust: 18,
+					shipMass: 1,
+					specialEnergyCost: 1,
+					specialWait: $author$project$Melee$Units$Wait(2),
+					thrustIncrement: 6,
+					thrustWait: $author$project$Melee$Units$Wait(3),
+					turnWait: $author$project$Melee$Units$Wait(4),
+					weaponEnergyCost: 0,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 7,
+				kind: $author$project$Melee$Ship$Umgah,
+				maxCrew: 10,
+				maxEnergy: 30,
+				startingCrew: 10,
+				startingEnergy: 30
+			};
+		case 'UrQuan':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{seekingSpecial: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(4),
+					maxThrust: 30,
+					shipMass: 10,
+					specialEnergyCost: 8,
+					specialWait: $author$project$Melee$Units$Wait(9),
+					thrustIncrement: 6,
+					thrustWait: $author$project$Melee$Units$Wait(6),
+					turnWait: $author$project$Melee$Units$Wait(4),
+					weaponEnergyCost: 6,
+					weaponWait: $author$project$Melee$Units$Wait(6)
+				},
+				cost: 30,
+				kind: $author$project$Melee$Ship$UrQuan,
+				maxCrew: 42,
+				maxEnergy: 42,
+				startingCrew: 42,
+				startingEnergy: 42
+			};
+		case 'Utwig':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{pointDefense: true, shieldDefense: true}),
+				characteristics: {
+					energyRegeneration: 0,
+					energyWait: $author$project$Melee$Units$Wait(255),
+					maxThrust: 36,
+					shipMass: 8,
+					specialEnergyCost: 1,
+					specialWait: $author$project$Melee$Units$Wait(12),
+					thrustIncrement: 6,
+					thrustWait: $author$project$Melee$Units$Wait(6),
+					turnWait: $author$project$Melee$Units$Wait(1),
+					weaponEnergyCost: 0,
+					weaponWait: $author$project$Melee$Units$Wait(7)
+				},
+				cost: 22,
+				kind: $author$project$Melee$Ship$Utwig,
+				maxCrew: 20,
+				maxEnergy: 20,
+				startingCrew: 20,
+				startingEnergy: 10
+			};
+		case 'Vux':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{immediateWeapon: true, seekingSpecial: true}),
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(8),
+					maxThrust: 21,
+					shipMass: 6,
+					specialEnergyCost: 2,
+					specialWait: $author$project$Melee$Units$Wait(7),
+					thrustIncrement: 7,
+					thrustWait: $author$project$Melee$Units$Wait(4),
+					turnWait: $author$project$Melee$Units$Wait(6),
+					weaponEnergyCost: 1,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 12,
+				kind: $author$project$Melee$Ship$Vux,
+				maxCrew: 20,
+				maxEnergy: 40,
+				startingCrew: 20,
+				startingEnergy: 40
+			};
+		case 'Yehat':
+			return {
+				ability: _Utils_update(
+					$author$project$Melee$Ship$fore,
+					{shieldDefense: true}),
+				characteristics: {
+					energyRegeneration: 2,
+					energyWait: $author$project$Melee$Units$Wait(6),
+					maxThrust: 30,
+					shipMass: 3,
+					specialEnergyCost: 3,
+					specialWait: $author$project$Melee$Units$Wait(2),
+					thrustIncrement: 6,
+					thrustWait: $author$project$Melee$Units$Wait(2),
+					turnWait: $author$project$Melee$Units$Wait(2),
+					weaponEnergyCost: 1,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 23,
+				kind: $author$project$Melee$Ship$Yehat,
+				maxCrew: 20,
+				maxEnergy: 10,
+				startingCrew: 20,
+				startingEnergy: 10
+			};
+		default:
+			return {
+				ability: $author$project$Melee$Ship$fore,
+				characteristics: {
+					energyRegeneration: 1,
+					energyWait: $author$project$Melee$Units$Wait(4),
+					maxThrust: 40,
+					shipMass: 5,
+					specialEnergyCost: 7,
+					specialWait: $author$project$Melee$Units$Wait(6),
+					thrustIncrement: 10,
+					thrustWait: $author$project$Melee$Units$Wait(0),
+					turnWait: $author$project$Melee$Units$Wait(1),
+					weaponEnergyCost: 1,
+					weaponWait: $author$project$Melee$Units$Wait(0)
+				},
+				cost: 6,
+				kind: $author$project$Melee$Ship$ZoqFotPik,
+				maxCrew: 10,
+				maxEnergy: 10,
+				startingCrew: 10,
+				startingEnergy: 10
+			};
+	}
+};
+var $author$project$Neat$Encode$abilitiesOf$ = function (ours, theirs) {
+	return _Utils_ap(
+		$author$project$Neat$Encode$abilityOf(
+			$author$project$Melee$Ship$stock(ours).ability),
+		$author$project$Neat$Encode$abilityOf(
+			$author$project$Melee$Ship$stock(theirs).ability));
+};
+var $author$project$Neat$Encode$abilitiesOf = F2($author$project$Neat$Encode$abilitiesOf$);
 var $author$project$Neat$Encode$combatant$ = function (side, arena) {
 	return _Utils_eq(side, $author$project$Melee$Units$Bottom) ? arena.combatants.bottom : arena.combatants.top;
 };
 var $author$project$Neat$Encode$combatant = F2($author$project$Neat$Encode$combatant$);
-var $author$project$Melee$Trig$fullCircle = 64;
-var $elm$core$Basics$modBy = _Basics_modBy;
-var $author$project$Melee$Trig$normalizeAngle = function (a) {
-	return A2($elm$core$Basics$modBy, $author$project$Melee$Trig$fullCircle, a);
+var $elm$core$Basics$not = _Basics_not;
+var $author$project$Melee$Cyborg$colliding = function (el) {
+	return !(el.flags.nonsolid || el.flags.disappearing);
 };
-var $author$project$Melee$Trig$normalizeFacing = function (f) {
-	return A2($elm$core$Basics$modBy, 16, f);
+var $author$project$Melee$Cyborg$isCrewBody = function (body) {
+	if (body.$ === 'CrewBody') {
+		return true;
+	} else {
+		return false;
+	}
 };
-var $author$project$Neat$Encode$angleToFacing = function (a) {
-	return $author$project$Melee$Trig$normalizeFacing(
-		(($author$project$Melee$Trig$normalizeAngle(a) + 2) / 4) | 0);
+var $author$project$Melee$Cyborg$isCrew = function (el) {
+	return el.flags.crewObject || $author$project$Melee$Cyborg$isCrewBody(el.body);
+};
+var $author$project$Melee$Units$gravityMassThreshold = 100;
+var $author$project$Melee$Cyborg$isGravity = function (el) {
+	return _Utils_cmp(el.mass, $author$project$Melee$Units$gravityMassThreshold) > 0;
+};
+var $author$project$Melee$Cyborg$lifeSpan = function (el) {
+	var _v0 = el.life;
+	if (_v0.$ === 'Finite') {
+		var n = _v0.a;
+		return n;
+	} else {
+		var n = _v0.a;
+		return n;
+	}
+};
+var $author$project$Melee$Trig$wrapDelta$ = function (d, w) {
+	if (w <= 0) {
+		return d;
+	} else {
+		var half = (w / 2) | 0;
+		return (d < 0) ? ((_Utils_cmp(-d, half) < 1) ? d : (w + d)) : ((_Utils_cmp(d, half) < 1) ? d : (d - w));
+	}
+};
+var $author$project$Melee$Trig$wrapDelta = F2($author$project$Melee$Trig$wrapDelta$);
+var $author$project$Neat$Encode$nextDelta$ = function (space, a, b) {
+	return _Utils_Tuple2(
+		$author$project$Melee$Trig$wrapDelta$(b.next.location.x - a.next.location.x, space.width),
+		$author$project$Melee$Trig$wrapDelta$(b.next.location.y - a.next.location.y, space.height));
+};
+var $author$project$Neat$Encode$nextDelta = F3($author$project$Neat$Encode$nextDelta$);
+var $author$project$Melee$Trig$isqrt$ = function (lo, hi, n) {
+	isqrt:
+	while (true) {
+		if (_Utils_cmp(lo, hi) > -1) {
+			return lo;
+		} else {
+			var mid = (((lo + hi) + 1) / 2) | 0;
+			if (mid > 46340) {
+				var $temp$hi = mid - 1;
+				hi = $temp$hi;
+				continue isqrt;
+			} else {
+				if (_Utils_cmp(mid * mid, n) > 0) {
+					var $temp$hi = mid - 1;
+					hi = $temp$hi;
+					continue isqrt;
+				} else {
+					var $temp$lo = mid;
+					lo = $temp$lo;
+					continue isqrt;
+				}
+			}
+		}
+	}
+};
+var $author$project$Melee$Trig$isqrt = F3($author$project$Melee$Trig$isqrt$);
+var $author$project$Melee$Trig$squareRoot = function (value) {
+	return (value <= 0) ? 0 : $author$project$Melee$Trig$isqrt$(0, value, value);
 };
 var $elm$core$Basics$abs = function (n) {
 	return (n < 0) ? (-n) : n;
 };
 var $author$project$Melee$Trig$atantab = _List_fromArray(
 	[0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 8, 8, 8]);
+var $author$project$Melee$Trig$fullCircle = 64;
 var $author$project$Melee$Trig$halfCircle = 32;
 var $elm$core$List$drop$ = function (n, list) {
 	drop:
@@ -3841,6 +4550,10 @@ var $author$project$Melee$Trig$listAt$ = function (i, xs) {
 			$elm$core$List$drop$(i, xs)));
 };
 var $author$project$Melee$Trig$listAt = F2($author$project$Melee$Trig$listAt$);
+var $elm$core$Basics$modBy = _Basics_modBy;
+var $author$project$Melee$Trig$normalizeAngle = function (a) {
+	return A2($elm$core$Basics$modBy, $author$project$Melee$Trig$fullCircle, a);
+};
 var $author$project$Melee$Trig$quadrant = 16;
 var $author$project$Melee$Trig$arctan$ = function (deltaX, deltaY) {
 	if ((!deltaX) && (!deltaY)) {
@@ -3855,119 +4568,397 @@ var $author$project$Melee$Trig$arctan$ = function (deltaX, deltaY) {
 	}
 };
 var $author$project$Melee$Trig$arctan = F2($author$project$Melee$Trig$arctan$);
+var $author$project$Melee$Cyborg$displayToWorld = function (n) {
+	return n * 4;
+};
+var $author$project$Melee$Cyborg$isSpecialBody = function (body) {
+	switch (body.$) {
+		case 'ChenjesuDogi':
+			return true;
+		case 'ChmmrSatellite':
+			return true;
+		case 'ChmmrZap':
+			return true;
+		case 'EarthlingPointDefense':
+			return true;
+		case 'KohrAhFried':
+			return true;
+		case 'MelnormeConfusion':
+			return true;
+		case 'OrzMarine':
+			return true;
+		case 'ShofixtiGlory':
+			return true;
+		case 'SpathiButt':
+			return true;
+		case 'ThraddashAfterburn':
+			return true;
+		case 'UrQuanFighter':
+			return true;
+		case 'VuxLimpet':
+			return true;
+		default:
+			return false;
+	}
+};
+var $author$project$Melee$Velocity$loByte = function (x) {
+	return A2($elm$core$Basics$modBy, 256, x);
+};
+var $author$project$Melee$Velocity$velocityScale = 32;
+var $author$project$Melee$Velocity$remainder = function (v) {
+	return A2($elm$core$Basics$modBy, $author$project$Melee$Velocity$velocityScale, v);
+};
+var $author$project$Melee$Velocity$sByte = function (b) {
+	return (b >= 128) ? (b - 256) : b;
+};
+var $author$project$Melee$Velocity$getNext$ = function (numFrames, v) {
+	var axis = F4(
+		function (err, fract, vector, incr) {
+			var e = err + (fract * numFrames);
+			var d = (vector * numFrames) + ($author$project$Melee$Velocity$sByte(
+				$author$project$Melee$Velocity$loByte(incr)) * ((e / $author$project$Melee$Velocity$velocityScale) | 0));
+			return _Utils_Tuple2(
+				d,
+				$author$project$Melee$Velocity$remainder(e));
+		});
+	var _v0 = A4(axis, v.error.height, v.fract.height, v.vector.height, v.incr.height);
+	var dy = _v0.a;
+	var errY = _v0.b;
+	var _v1 = A4(axis, v.error.width, v.fract.width, v.vector.width, v.incr.width);
+	var dx = _v1.a;
+	var errX = _v1.b;
+	return _Utils_Tuple2(
+		_Utils_Tuple2(dx, dy),
+		_Utils_update(
+			v,
+			{
+				error: {height: errY, width: errX}
+			}));
+};
+var $author$project$Melee$Velocity$getNext = F2($author$project$Melee$Velocity$getNext$);
+var $author$project$Melee$Cyborg$displacement$ = function (turns, vel) {
+	return $author$project$Melee$Velocity$getNext$(
+		$elm$core$Basics$max$(1, turns),
+		vel).a;
+};
+var $author$project$Melee$Cyborg$displacement = F2($author$project$Melee$Cyborg$displacement$);
+var $author$project$Melee$Cyborg$radiusWorld = function (el) {
+	var _v0 = el.body;
+	switch (_v0.$) {
+		case 'PlanetBody':
+			return 160;
+		case 'ShipBody':
+			return 40;
+		case 'AsteroidBody':
+			return 24;
+		case 'CrewBody':
+			return 16;
+		default:
+			return 12;
+	}
+};
+var $author$project$Melee$Trig$wrap$ = function (v, w) {
+	return (w <= 0) ? v : ((v < 0) ? (v + w) : ((_Utils_cmp(v, w) > -1) ? (v - w) : v));
+};
+var $author$project$Melee$Trig$wrap = F2($author$project$Melee$Trig$wrap$);
+var $author$project$Melee$Trig$wrapPoint$ = function (space, p) {
+	return {
+		x: $author$project$Melee$Trig$wrap$(p.x, space.width),
+		y: $author$project$Melee$Trig$wrap$(p.y, space.height)
+	};
+};
+var $author$project$Melee$Trig$wrapPoint = F2($author$project$Melee$Trig$wrapPoint$);
+var $author$project$Melee$Cyborg$wrapLoc = $author$project$Melee$Trig$wrapPoint;
+var $author$project$Melee$Cyborg$plotFrom$ = function (space, a, b, margin, maxTurns, t) {
+	plotFrom:
+	while (true) {
+		if (_Utils_cmp(t, maxTurns) > 0) {
+			return 0;
+		} else {
+			var r = ($author$project$Melee$Cyborg$radiusWorld(a) + $author$project$Melee$Cyborg$radiusWorld(b)) + margin;
+			var _v0 = $author$project$Melee$Cyborg$displacement$(t, b.velocity);
+			var dbx = _v0.a;
+			var dby = _v0.b;
+			var pb = A2(
+				$author$project$Melee$Cyborg$wrapLoc,
+				space,
+				{x: b.current.location.x + dbx, y: b.current.location.y + dby});
+			var _v1 = $author$project$Melee$Cyborg$displacement$(t, a.velocity);
+			var dax = _v1.a;
+			var day = _v1.b;
+			var pa = A2(
+				$author$project$Melee$Cyborg$wrapLoc,
+				space,
+				{x: a.current.location.x + dax, y: a.current.location.y + day});
+			var dx = $author$project$Melee$Trig$wrapDelta$(pa.x - pb.x, space.width);
+			var dy = $author$project$Melee$Trig$wrapDelta$(pa.y - pb.y, space.height);
+			if (_Utils_cmp((dx * dx) + (dy * dy), r * r) < 1) {
+				return t;
+			} else {
+				var $temp$t = t + 1;
+				t = $temp$t;
+				continue plotFrom;
+			}
+		}
+	}
+};
+var $author$project$Melee$Cyborg$plotFrom = F6($author$project$Melee$Cyborg$plotFrom$);
+var $author$project$Melee$Cyborg$plotIntercept$ = function (space, a, b, maxTurns, margin) {
+	return (maxTurns <= 0) ? 0 : $author$project$Melee$Cyborg$plotFrom$(space, a, b, margin, maxTurns, 1);
+};
+var $author$project$Melee$Cyborg$plotIntercept = F5($author$project$Melee$Cyborg$plotIntercept$);
+var $author$project$Melee$Id$toInt = function (_v0) {
+	var n = _v0.a;
+	return n;
+};
+var $author$project$Neat$Encode$travelAngle = function (vel) {
+	var _v0 = vel.travelAngle;
+	var a = _v0.a;
+	return a;
+};
+var $author$project$Neat$Encode$threatOf$ = function (arena, own, el, dx, dy, turns) {
+	var ability = function () {
+		var _v0 = el.parent;
+		if (_v0.$ === 'Just') {
+			var side = _v0.a;
+			return $author$project$Melee$Ship$stock(
+				$author$project$Melee$ShipState$kind(
+					$author$project$Neat$Encode$combatant$(side, arena))).ability;
+		} else {
+			return $author$project$Melee$Ship$stock($author$project$Melee$Ship$Shofixti).ability;
+		}
+	}();
+	return {
+		bearingBack: $author$project$Melee$Trig$arctan$(-dx, -dy),
+		finiteLife: el.flags.finiteLife,
+		hit: $author$project$Melee$Cyborg$plotIntercept$(
+			arena.space,
+			el,
+			own,
+			$author$project$Melee$Cyborg$lifeSpan(el),
+			$author$project$Melee$Cyborg$displayToWorld(40)),
+		id: $author$project$Melee$Id$toInt(el.id),
+		life: $author$project$Melee$Cyborg$lifeSpan(el),
+		mass: el.mass,
+		seeking: (ability.seekingWeapon && (!$author$project$Melee$Cyborg$isSpecialBody(el.body))) || (ability.seekingSpecial && $author$project$Melee$Cyborg$isSpecialBody(el.body)),
+		travel: $author$project$Neat$Encode$travelAngle(el.velocity),
+		turns: turns
+	};
+};
+var $author$project$Neat$Encode$threatOf = F6($author$project$Neat$Encode$threatOf$);
+var $author$project$Melee$Cyborg$worldToTurn = function (d) {
+	return (d / 64) | 0;
+};
+var $author$project$Neat$Encode$consider$ = function (arena, own, el, scan) {
+	if (_Utils_eq(el.id, own.id) || (!$author$project$Melee$Cyborg$colliding(el))) {
+		return scan;
+	} else {
+		var _v0 = $author$project$Neat$Encode$nextDelta$(arena.space, own, el);
+		var dx = _v0.a;
+		var dy = _v0.b;
+		var turns = $author$project$Melee$Cyborg$worldToTurn(
+			$author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy)));
+		var nearer = function (existing) {
+			if (existing.$ === 'Nothing') {
+				return true;
+			} else {
+				var best = existing.a;
+				return _Utils_cmp(turns, best.turns) < 0;
+			}
+		};
+		return $author$project$Melee$Cyborg$isGravity(el) ? _Utils_update(
+			scan,
+			{
+				planet: $elm$core$Maybe$Just(el)
+			}) : (el.flags.playerShip ? scan : ($author$project$Melee$Cyborg$isCrew(el) ? (nearer(scan.crew) ? _Utils_update(
+			scan,
+			{
+				crew: $elm$core$Maybe$Just(
+					{element: el, turns: turns})
+			}) : scan) : (_Utils_eq(el.parent, $elm$core$Maybe$Nothing) ? (nearer(scan.empty) ? _Utils_update(
+			scan,
+			{
+				empty: $elm$core$Maybe$Just(
+					{element: el, turns: turns})
+			}) : scan) : (((!_Utils_eq(el.parent, own.parent)) && ($author$project$Melee$Cyborg$lifeSpan(el) > 0)) ? _Utils_update(
+			scan,
+			{
+				threats: A2(
+					$elm$core$List$cons,
+					$author$project$Neat$Encode$threatOf$(arena, own, el, dx, dy, turns),
+					scan.threats)
+			}) : scan))));
+	}
+};
+var $author$project$Neat$Encode$consider = F4($author$project$Neat$Encode$consider$);
 var $elm$core$Basics$min$ = function (x, y) {
 	return (_Utils_cmp(x, y) < 0) ? x : y;
 };
 var $elm$core$Basics$min = F2($elm$core$Basics$min$);
-var $author$project$Neat$Encode$clamp01 = function (x) {
-	return $elm$core$Basics$max$(
-		0,
-		$elm$core$Basics$min$(1, x));
-};
 var $author$project$Neat$Encode$clamp11 = function (x) {
 	return $elm$core$Basics$max$(
 		-1,
 		$elm$core$Basics$min$(1, x));
 };
-var $author$project$Melee$Trig$isqrt$ = function (lo, hi, n) {
-	isqrt:
+var $author$project$Neat$Encode$urgency = function (t) {
+	return (t <= 0) ? 0 : (1 / (1 + t));
+};
+var $author$project$Neat$Encode$crewBlock$ = function (space, own, near) {
+	if (near.$ === 'Nothing') {
+		return _List_fromArray(
+			[0, 0, 0, 0]);
+	} else {
+		var element = near.a.element;
+		var turns = near.a.turns;
+		var _v1 = $author$project$Neat$Encode$nextDelta$(space, own, element);
+		var dx = _v1.a;
+		var dy = _v1.b;
+		return _List_fromArray(
+			[
+				$author$project$Neat$Encode$clamp11(dx / (space.width / 2)),
+				$author$project$Neat$Encode$clamp11(dy / (space.height / 2)),
+				$author$project$Neat$Encode$urgency(
+				$elm$core$Basics$max$(1, turns)),
+				$author$project$Neat$Encode$flag(
+				_Utils_eq(
+					own.target,
+					$elm$core$Maybe$Just(element.id)))
+			]);
+	}
+};
+var $author$project$Neat$Encode$crewBlock = F3($author$project$Neat$Encode$crewBlock$);
+var $elm$core$Dict$foldl$ = function (func, acc, dict) {
+	foldl:
 	while (true) {
-		if (_Utils_cmp(lo, hi) > -1) {
-			return lo;
+		if (dict.$ === 'RBEmpty_elm_builtin') {
+			return acc;
 		} else {
-			var mid = (((lo + hi) + 1) / 2) | 0;
-			if (mid > 46340) {
-				var $temp$hi = mid - 1;
-				hi = $temp$hi;
-				continue isqrt;
-			} else {
-				if (_Utils_cmp(mid * mid, n) > 0) {
-					var $temp$hi = mid - 1;
-					hi = $temp$hi;
-					continue isqrt;
-				} else {
-					var $temp$lo = mid;
-					lo = $temp$lo;
-					continue isqrt;
-				}
-			}
+			var key = dict.b;
+			var value = dict.c;
+			var left = dict.d;
+			var right = dict.e;
+			var $temp$acc = A3(
+				func,
+				key,
+				value,
+				$elm$core$Dict$foldl$(func, acc, left)),
+				$temp$dict = right;
+			acc = $temp$acc;
+			dict = $temp$dict;
+			continue foldl;
 		}
 	}
 };
-var $author$project$Melee$Trig$isqrt = F3($author$project$Melee$Trig$isqrt$);
-var $author$project$Melee$Trig$squareRoot = function (value) {
-	return (value <= 0) ? 0 : $author$project$Melee$Trig$isqrt$(0, value, value);
+var $elm$core$Dict$foldl = F3($elm$core$Dict$foldl$);
+var $author$project$Melee$Cyborg$waitN = function (_v0) {
+	var n = _v0.a;
+	return n;
 };
-var $author$project$Neat$Encode$closing$ = function (a, b, dx, dy) {
-	var n = $elm$core$Basics$max$(
+var $author$project$Melee$Cyborg$maneuverability = function (chars) {
+	var index = chars.maxThrust * chars.thrustIncrement;
+	var divisor = $author$project$Melee$Cyborg$waitN(chars.turnWait) + $author$project$Melee$Cyborg$waitN(chars.thrustWait);
+	return (divisor > 0) ? ((index / divisor) | 0) : ((index / 2) | 0);
+};
+var $author$project$Melee$Cyborg$mediumShip = 45;
+var $author$project$Melee$Cyborg$isUltra = function (chars) {
+	return _Utils_eq(chars.thrustIncrement, chars.maxThrust) && (_Utils_cmp(
+		$author$project$Melee$Cyborg$maneuverability(chars),
+		$author$project$Melee$Cyborg$mediumShip) > -1);
+};
+var $author$project$Melee$Cyborg$gravityIntercept$ = function (space, planet, ship, chars) {
+	var maneuverTurn = $author$project$Melee$Cyborg$isUltra(chars) ? 16 : ((_Utils_cmp(
+		$author$project$Melee$Cyborg$maneuverability(chars),
+		$author$project$Melee$Cyborg$mediumShip) < 1) ? 48 : 32);
+	var bounds = 80;
+	var hit = $author$project$Melee$Cyborg$plotIntercept$(
+		space,
+		planet,
+		ship,
+		maneuverTurn,
+		$author$project$Melee$Cyborg$displayToWorld(30 + (bounds * 3)));
+	return ((hit > 0) && ((hit > 1) || (($author$project$Melee$Cyborg$plotIntercept$(
+		space,
+		planet,
+		ship,
 		1,
-		$author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy)));
-	return (((b.vector.width - a.vector.width) * dx) + ((b.vector.height - a.vector.height) * dy)) / n;
+		$author$project$Melee$Cyborg$displayToWorld(35 + bounds)) > 0) || ($author$project$Melee$Cyborg$plotIntercept$(
+		space,
+		planet,
+		ship,
+		maneuverTurn * 2,
+		$author$project$Melee$Cyborg$displayToWorld(40 + bounds)) > 1)))) ? hit : 0;
 };
-var $author$project$Neat$Encode$closing = F4($author$project$Neat$Encode$closing$);
-var $author$project$Neat$Encode$flag = function (b) {
-	return b ? 1 : 0;
-};
-var $elm$core$Basics$identity = function (x) {
-	return x;
-};
-var $author$project$Melee$Units$Facing = function (a) {
-	return {$: 'Facing', a: a};
-};
-var $author$project$Melee$Ship$intelRange = function (kind) {
-	switch (kind.$) {
-		case 'Androsynth':
-			return 1000;
-		case 'Arilou':
-			return 218;
-		case 'Chenjesu':
-			return 4000;
-		case 'Chmmr':
-			return 200;
-		case 'Druuge':
-			return 2400;
-		case 'Earthling':
-			return 4000;
-		case 'Ilwrath':
-			return 200;
-		case 'KohrAh':
-			return 200;
-		case 'Melnorme':
-			return 1800;
-		case 'Mmrnmhrm':
-			return 200;
-		case 'Mycon':
-			return 3200;
-		case 'Orz':
-			return 1440;
-		case 'Pkunk':
-			return 201;
-		case 'Shofixti':
-			return 960;
-		case 'Slylandro':
-			return 400;
-		case 'Spathi':
-			return 1200;
-		case 'Supox':
-			return 600;
-		case 'Syreen':
-			return 800;
-		case 'Thraddash':
-			return 900;
-		case 'Umgah':
-			return 16000;
-		case 'UrQuan':
-			return 1600;
-		case 'Utwig':
-			return 200;
-		case 'Vux':
-			return 200;
-		case 'Yehat':
-			return 266;
-		default:
-			return 400;
+var $author$project$Melee$Cyborg$gravityIntercept = F4($author$project$Melee$Cyborg$gravityIntercept$);
+var $author$project$Neat$Encode$gravityBlock$ = function (space, core, own, planet) {
+	if (planet.$ === 'Nothing') {
+		return _List_fromArray(
+			[0, 0, 0]);
+	} else {
+		var p = planet.a;
+		var _v1 = $author$project$Neat$Encode$nextDelta$(space, own, p);
+		var dx = _v1.a;
+		var dy = _v1.b;
+		return _List_fromArray(
+			[
+				$author$project$Neat$Encode$clamp11(dx / 4000),
+				$author$project$Neat$Encode$clamp11(dy / 4000),
+				$author$project$Neat$Encode$urgency(
+				$author$project$Melee$Cyborg$gravityIntercept$(space, p, own, core.characteristics))
+			]);
 	}
 };
+var $author$project$Neat$Encode$gravityBlock = F4($author$project$Neat$Encode$gravityBlock$);
+var $author$project$Neat$Encode$neutralBlock$ = function (space, own, near) {
+	if (near.$ === 'Nothing') {
+		return _List_fromArray(
+			[0, 0, 0]);
+	} else {
+		var element = near.a.element;
+		var turns = near.a.turns;
+		var _v1 = $author$project$Neat$Encode$nextDelta$(space, own, element);
+		var dx = _v1.a;
+		var dy = _v1.b;
+		return _List_fromArray(
+			[
+				$author$project$Neat$Encode$clamp11(dx / 4000),
+				$author$project$Neat$Encode$clamp11(dy / 4000),
+				$author$project$Neat$Encode$urgency(
+				$elm$core$Basics$max$(1, turns))
+			]);
+	}
+};
+var $author$project$Neat$Encode$neutralBlock = F3($author$project$Neat$Encode$neutralBlock$);
+var $elm$core$List$append$ = function (xs, ys) {
+	if (!ys.b) {
+		return xs;
+	} else {
+		return $elm$core$List$foldr$($elm$core$List$cons, ys, xs);
+	}
+};
+var $elm$core$List$append = F2($elm$core$List$append$);
+var $elm$core$List$concat = function (lists) {
+	return $elm$core$List$foldr$($elm$core$List$append, _List_Nil, lists);
+};
+var $elm$core$List$concatMap$ = function (f, list) {
+	return $elm$core$List$concat(
+		$elm$core$List$map$(f, list));
+};
+var $elm$core$List$concatMap = F2($elm$core$List$concatMap$);
+var $elm$core$List$sortBy = _List_sortBy;
+var $elm$core$Basics$clamp$ = function (low, high, number) {
+	return (_Utils_cmp(number, low) < 0) ? low : ((_Utils_cmp(number, high) > 0) ? high : number);
+};
+var $elm$core$Basics$clamp = F3($elm$core$Basics$clamp$);
+var $author$project$Neat$Encode$clamp01 = function (x) {
+	return $elm$core$Basics$max$(
+		0,
+		$elm$core$Basics$min$(1, x));
+};
+var $author$project$Neat$Encode$ratio$ = function (numerator, denominator) {
+	return $author$project$Neat$Encode$clamp01(
+		numerator / $elm$core$Basics$max$(1, denominator));
+};
+var $author$project$Neat$Encode$ratio = F2($author$project$Neat$Encode$ratio$);
 var $author$project$Melee$Trig$sinShift = 14;
 var $author$project$Melee$Trig$sinetab = _List_fromArray(
 	[-16384, -16305, -16069, -15678, -15136, -14449, -13622, -12664, -11585, -10393, -9102, -7723, -6269, -4756, -3196, -1605, 0, 1605, 3196, 4756, 6269, 7723, 9102, 10393, 11585, 12664, 13622, 14449, 15136, 15678, 16069, 16305, 16384, 16305, 16069, 15678, 15136, 14449, 13622, 12664, 11585, 10393, 9102, 7723, 6269, 4756, 3196, 1605, 0, -1605, -3196, -4756, -6269, -7723, -9102, -10393, -11585, -12664, -13622, -14449, -15136, -15678, -16069, -16305]);
@@ -3986,10 +4977,138 @@ var $author$project$Melee$Trig$cosine$ = function (a, m) {
 	return $author$project$Melee$Trig$sine$(a + $author$project$Melee$Trig$quadrant, m);
 };
 var $author$project$Melee$Trig$cosine = F2($author$project$Melee$Trig$cosine$);
+var $author$project$Neat$Encode$unit = function (ang) {
+	return $author$project$Melee$Trig$cosine$(ang, 100) / 100;
+};
+var $author$project$Neat$Encode$unitS = function (ang) {
+	return $author$project$Melee$Trig$sine$(ang, 100) / 100;
+};
+var $author$project$Neat$Encode$threatRecord$ = function (core, faceAng, t) {
+	var relative = $author$project$Melee$Trig$normalizeAngle(t.travel - faceAng);
+	var closingAngle = $author$project$Melee$Trig$normalizeAngle(t.travel - t.bearingBack);
+	return _List_fromArray(
+		[
+			$author$project$Neat$Encode$urgency(t.hit),
+			$author$project$Neat$Encode$unit(relative),
+			$author$project$Neat$Encode$unitS(relative),
+			$author$project$Neat$Encode$unit(closingAngle),
+			$author$project$Neat$Encode$flag(t.seeking),
+			$author$project$Neat$Encode$flag(t.finiteLife),
+			$author$project$Neat$Encode$ratio$(t.mass, core.maxCrew),
+			$author$project$Neat$Encode$ratio$(
+			$elm$core$Basics$clamp$(0, 64, t.life),
+			64)
+		]);
+};
+var $author$project$Neat$Encode$threatRecord = F3($author$project$Neat$Encode$threatRecord$);
+var $author$project$Neat$Encode$threatSlots = 3;
+var $author$project$Neat$Encode$threatWidth = 8;
+var $author$project$Neat$Encode$threatBlock$ = function (core, threats) {
+	var ranked = $elm$core$List$take$(
+		$author$project$Neat$Encode$threatSlots,
+		A2(
+			$elm$core$List$sortBy,
+			function (t) {
+				return _Utils_Tuple2(
+					_Utils_Tuple2(
+						$author$project$Neat$Encode$ifElse$(t.hit <= 0, 1, 0),
+						t.hit),
+					_Utils_Tuple2(t.turns, t.id));
+			},
+			threats));
+	var _v0 = core.facing;
+	var facing = _v0.a;
+	var emitted = $elm$core$List$concatMap$(
+		A2($author$project$Neat$Encode$threatRecord, core, facing * 4),
+		ranked);
+	return _Utils_ap(
+		emitted,
+		$elm$core$List$repeat$(
+			($author$project$Neat$Encode$threatSlots - $elm$core$List$length(ranked)) * $author$project$Neat$Encode$threatWidth,
+			0));
+};
+var $author$project$Neat$Encode$threatBlock = F2($author$project$Neat$Encode$threatBlock$);
+var $author$project$Neat$Encode$concernBlocks$ = function (arena, core, own) {
+	if (!$author$project$Melee$Cyborg$colliding(own)) {
+		return $elm$core$List$repeat$(((3 + ($author$project$Neat$Encode$threatSlots * $author$project$Neat$Encode$threatWidth)) + 4) + 3, 0);
+	} else {
+		var scan = $elm$core$Dict$foldl$(
+			F3(
+				function (_v0, el, acc) {
+					return $author$project$Neat$Encode$consider$(arena, own, el, acc);
+				}),
+			{crew: $elm$core$Maybe$Nothing, empty: $elm$core$Maybe$Nothing, planet: $elm$core$Maybe$Nothing, threats: _List_Nil},
+			arena.elements);
+		return _Utils_ap(
+			$author$project$Neat$Encode$gravityBlock$(arena.space, core, own, scan.planet),
+			_Utils_ap(
+				$author$project$Neat$Encode$threatBlock$(core, scan.threats),
+				_Utils_ap(
+					$author$project$Neat$Encode$crewBlock$(arena.space, own, scan.crew),
+					$author$project$Neat$Encode$neutralBlock$(arena.space, own, scan.empty))));
+	}
+};
+var $author$project$Neat$Encode$concernBlocks = F3($author$project$Neat$Encode$concernBlocks$);
+var $author$project$Melee$Trig$normalizeFacing = function (f) {
+	return A2($elm$core$Basics$modBy, 16, f);
+};
+var $author$project$Neat$Encode$angleToFacing = function (a) {
+	return $author$project$Melee$Trig$normalizeFacing(
+		(($author$project$Melee$Trig$normalizeAngle(a) + 2) / 4) | 0);
+};
+var $author$project$Neat$Encode$closing$ = function (a, b, dx, dy) {
+	var n = $elm$core$Basics$max$(
+		1,
+		$author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy)));
+	return (((b.vector.width - a.vector.width) * dx) + ((b.vector.height - a.vector.height) * dy)) / n;
+};
+var $author$project$Neat$Encode$closing = F4($author$project$Neat$Encode$closing$);
+var $author$project$Melee$Units$Facing = function (a) {
+	return {$: 'Facing', a: a};
+};
+var $author$project$Melee$Cyborg$angleToFacing = function (a) {
+	return $author$project$Melee$Trig$normalizeFacing(
+		(($author$project$Melee$Trig$normalizeAngle(a) + 2) / 4) | 0);
+};
+var $elm$core$List$any$ = function (isOkay, list) {
+	any:
+	while (true) {
+		if (!list.b) {
+			return false;
+		} else {
+			var x = list.a;
+			var xs = list.b;
+			if (isOkay(x)) {
+				return true;
+			} else {
+				var $temp$list = xs;
+				list = $temp$list;
+				continue any;
+			}
+		}
+	}
+};
+var $elm$core$List$any = F2($elm$core$List$any$);
+var $author$project$Melee$Cyborg$combatant$ = function (side, arena) {
+	if (side.$ === 'Bottom') {
+		return arena.combatants.bottom;
+	} else {
+		return arena.combatants.top;
+	}
+};
+var $author$project$Melee$Cyborg$combatant = F2($author$project$Melee$Cyborg$combatant$);
+var $author$project$Melee$Cyborg$facingAligned$ = function (work, other) {
+	var dy = $author$project$Melee$Trig$wrapDelta$(other.current.location.y - work.ship.current.location.y, work.space.height);
+	var dx = $author$project$Melee$Trig$wrapDelta$(other.current.location.x - work.ship.current.location.x, work.space.width);
+	var wanted = $author$project$Melee$Cyborg$angleToFacing(
+		$author$project$Melee$Trig$arctan$(dx, dy));
+	var delta = $author$project$Melee$Trig$normalizeFacing(wanted - work.facing);
+	return (delta <= 2) || (delta >= 14);
+};
+var $author$project$Melee$Cyborg$facingAligned = F2($author$project$Melee$Cyborg$facingAligned$);
 var $author$project$Melee$Velocity$hiByte = function (x) {
 	return A2($elm$core$Basics$modBy, 256, (x / 256) | 0);
 };
-var $author$project$Melee$Velocity$velocityScale = 32;
 var $author$project$Melee$Velocity$worldToVelocity = function (w) {
 	return w * $author$project$Melee$Velocity$velocityScale;
 };
@@ -4000,9 +5119,6 @@ var $author$project$Melee$Velocity$getCurrent = function (v) {
 };
 var $author$project$Melee$Units$Angle = function (a) {
 	return {$: 'Angle', a: a};
-};
-var $author$project$Melee$Velocity$remainder = function (v) {
-	return A2($elm$core$Basics$modBy, $author$project$Melee$Velocity$velocityScale, v);
 };
 var $author$project$Melee$Velocity$makeWord$ = function (lo, hi) {
 	return A2($elm$core$Basics$modBy, 256, lo) + (A2($elm$core$Basics$modBy, 256, hi) * 256);
@@ -4086,6 +5202,97 @@ var $author$project$Melee$Arsenal$launchState$ = function (missile, _v0, parent,
 	};
 };
 var $author$project$Melee$Arsenal$launchState = F4($author$project$Melee$Arsenal$launchState$);
+var $author$project$Melee$Element$AndrosynthBubble = {$: 'AndrosynthBubble'};
+var $author$project$Melee$Element$ChenjesuDogi = {$: 'ChenjesuDogi'};
+var $author$project$Melee$Element$ChenjesuFragment = {$: 'ChenjesuFragment'};
+var $author$project$Melee$Element$ChenjesuPhoton = {$: 'ChenjesuPhoton'};
+var $author$project$Melee$Element$DruugeHotShot = {$: 'DruugeHotShot'};
+var $author$project$Melee$Element$EarthlingNuke = {$: 'EarthlingNuke'};
+var $author$project$Melee$Element$IlwrathFlame = {$: 'IlwrathFlame'};
+var $author$project$Melee$Element$KohrAhFried = {$: 'KohrAhFried'};
+var $author$project$Melee$Element$KohrAhSaw = {$: 'KohrAhSaw'};
+var $author$project$Melee$Element$MelnormeCharge = {$: 'MelnormeCharge'};
+var $author$project$Melee$Element$MelnormeConfusion = {$: 'MelnormeConfusion'};
+var $author$project$Melee$Element$MmrnmhrmMissile = {$: 'MmrnmhrmMissile'};
+var $author$project$Melee$Element$MyconPlasma = {$: 'MyconPlasma'};
+var $author$project$Melee$Element$OrzHowitzer = {$: 'OrzHowitzer'};
+var $author$project$Melee$Element$OrzMarine = {$: 'OrzMarine'};
+var $author$project$Melee$Element$PkunkSpread = {$: 'PkunkSpread'};
+var $author$project$Melee$Element$ShofixtiDart = {$: 'ShofixtiDart'};
+var $author$project$Melee$Element$SpathiButt = {$: 'SpathiButt'};
+var $author$project$Melee$Element$SpathiForward = {$: 'SpathiForward'};
+var $author$project$Melee$Element$SupoxPellet = {$: 'SupoxPellet'};
+var $author$project$Melee$Element$SyreenMissile = {$: 'SyreenMissile'};
+var $author$project$Melee$Element$ThraddashAfterburn = {$: 'ThraddashAfterburn'};
+var $author$project$Melee$Element$ThraddashBlaster = {$: 'ThraddashBlaster'};
+var $author$project$Melee$Element$UrQuanFighter = {$: 'UrQuanFighter'};
+var $author$project$Melee$Element$UrQuanFusion = {$: 'UrQuanFusion'};
+var $author$project$Melee$Element$UtwigGizmo = {$: 'UtwigGizmo'};
+var $author$project$Melee$Element$VuxLimpet = {$: 'VuxLimpet'};
+var $author$project$Melee$Element$YehatMissile = {$: 'YehatMissile'};
+var $author$project$Melee$Element$ZoqSpit = {$: 'ZoqSpit'};
+var $author$project$Melee$Arsenal$missileBody = function (missile) {
+	switch (missile.$) {
+		case 'Bubble':
+			return $author$project$Melee$Element$AndrosynthBubble;
+		case 'Crystal':
+			return $author$project$Melee$Element$ChenjesuPhoton;
+		case 'Shard':
+			return $author$project$Melee$Element$ChenjesuFragment;
+		case 'Dogi':
+			return $author$project$Melee$Element$ChenjesuDogi;
+		case 'Cannon':
+			return $author$project$Melee$Element$DruugeHotShot;
+		case 'Nuke':
+			return $author$project$Melee$Element$EarthlingNuke;
+		case 'Flame':
+			return $author$project$Melee$Element$IlwrathFlame;
+		case 'Saw':
+			return $author$project$Melee$Element$KohrAhSaw;
+		case 'Fried':
+			return $author$project$Melee$Element$KohrAhFried;
+		case 'Charge':
+			return $author$project$Melee$Element$MelnormeCharge;
+		case 'Confusion':
+			return $author$project$Melee$Element$MelnormeConfusion;
+		case 'Torpedo':
+			return $author$project$Melee$Element$MmrnmhrmMissile;
+		case 'Plasma':
+			return $author$project$Melee$Element$MyconPlasma;
+		case 'Howitzer':
+			return $author$project$Melee$Element$OrzHowitzer;
+		case 'Marine':
+			return $author$project$Melee$Element$OrzMarine;
+		case 'Bug':
+			return $author$project$Melee$Element$PkunkSpread;
+		case 'Dart':
+			return $author$project$Melee$Element$ShofixtiDart;
+		case 'SpathiShot':
+			return $author$project$Melee$Element$SpathiForward;
+		case 'Butt':
+			return $author$project$Melee$Element$SpathiButt;
+		case 'Pellet':
+			return $author$project$Melee$Element$SupoxPellet;
+		case 'Dagger':
+			return $author$project$Melee$Element$SyreenMissile;
+		case 'Blaster':
+			return $author$project$Melee$Element$ThraddashBlaster;
+		case 'Napalm':
+			return $author$project$Melee$Element$ThraddashAfterburn;
+		case 'Fusion':
+			return $author$project$Melee$Element$UrQuanFusion;
+		case 'Fighter':
+			return $author$project$Melee$Element$UrQuanFighter;
+		case 'Lance':
+			return $author$project$Melee$Element$UtwigGizmo;
+		case 'Limpet':
+			return $author$project$Melee$Element$VuxLimpet;
+		case 'YehatShot':
+			return $author$project$Melee$Element$YehatMissile;
+		default:
+			return $author$project$Melee$Element$ZoqSpit;
+	}
+};
 var $author$project$Melee$Arsenal$mountPosition$ = function (missile, facing, origin, mount) {
 	var angle = (($elm$core$List$length(missile.directions) > 1) ? (facing + mount.facingOffset) : facing) * 4;
 	return {
@@ -4108,102 +5315,6 @@ var $author$project$Melee$Arsenal$mounts = function (missile) {
 		return ports;
 	}
 };
-var $author$project$Melee$Velocity$loByte = function (x) {
-	return A2($elm$core$Basics$modBy, 256, x);
-};
-var $author$project$Melee$Velocity$sByte = function (b) {
-	return (b >= 128) ? (b - 256) : b;
-};
-var $author$project$Melee$Velocity$getNext$ = function (numFrames, v) {
-	var axis = F4(
-		function (err, fract, vector, incr) {
-			var e = err + (fract * numFrames);
-			var d = (vector * numFrames) + ($author$project$Melee$Velocity$sByte(
-				$author$project$Melee$Velocity$loByte(incr)) * ((e / $author$project$Melee$Velocity$velocityScale) | 0));
-			return _Utils_Tuple2(
-				d,
-				$author$project$Melee$Velocity$remainder(e));
-		});
-	var _v0 = A4(axis, v.error.height, v.fract.height, v.vector.height, v.incr.height);
-	var dy = _v0.a;
-	var errY = _v0.b;
-	var _v1 = A4(axis, v.error.width, v.fract.width, v.vector.width, v.incr.width);
-	var dx = _v1.a;
-	var errX = _v1.b;
-	return _Utils_Tuple2(
-		_Utils_Tuple2(dx, dy),
-		_Utils_update(
-			v,
-			{
-				error: {height: errY, width: errX}
-			}));
-};
-var $author$project$Melee$Velocity$getNext = F2($author$project$Melee$Velocity$getNext$);
-var $author$project$Neat$Encode$displacement$ = function (turns, vel) {
-	return $author$project$Melee$Velocity$getNext$(
-		$elm$core$Basics$max$(1, turns),
-		vel).a;
-};
-var $author$project$Neat$Encode$displacement = F2($author$project$Neat$Encode$displacement$);
-var $author$project$Melee$Trig$wrap$ = function (v, w) {
-	return (w <= 0) ? v : ((v < 0) ? (v + w) : ((_Utils_cmp(v, w) > -1) ? (v - w) : v));
-};
-var $author$project$Melee$Trig$wrap = F2($author$project$Melee$Trig$wrap$);
-var $author$project$Melee$Trig$wrapPoint$ = function (space, p) {
-	return {
-		x: $author$project$Melee$Trig$wrap$(p.x, space.width),
-		y: $author$project$Melee$Trig$wrap$(p.y, space.height)
-	};
-};
-var $author$project$Melee$Trig$wrapPoint = F2($author$project$Melee$Trig$wrapPoint$);
-var $author$project$Neat$Encode$wrap = $author$project$Melee$Trig$wrapPoint;
-var $author$project$Melee$Trig$wrapDelta$ = function (d, w) {
-	if (w <= 0) {
-		return d;
-	} else {
-		var half = (w / 2) | 0;
-		return (d < 0) ? ((_Utils_cmp(-d, half) < 1) ? d : (w + d)) : ((_Utils_cmp(d, half) < 1) ? d : (d - w));
-	}
-};
-var $author$project$Melee$Trig$wrapDelta = F2($author$project$Melee$Trig$wrapDelta$);
-var $author$project$Neat$Encode$plotFrom$ = function (space, a, b, margin, maxTurns, t) {
-	plotFrom:
-	while (true) {
-		if (_Utils_cmp(t, maxTurns) > 0) {
-			return 0;
-		} else {
-			var r = (40 + 40) + margin;
-			var _v0 = $author$project$Neat$Encode$displacement$(t, b.velocity);
-			var dbx = _v0.a;
-			var dby = _v0.b;
-			var pb = A2(
-				$author$project$Neat$Encode$wrap,
-				space,
-				{x: b.current.location.x + dbx, y: b.current.location.y + dby});
-			var _v1 = $author$project$Neat$Encode$displacement$(t, a.velocity);
-			var dax = _v1.a;
-			var day = _v1.b;
-			var pa = A2(
-				$author$project$Neat$Encode$wrap,
-				space,
-				{x: a.current.location.x + dax, y: a.current.location.y + day});
-			var dx = $author$project$Melee$Trig$wrapDelta$(pa.x - pb.x, space.width);
-			var dy = $author$project$Melee$Trig$wrapDelta$(pa.y - pb.y, space.height);
-			if (_Utils_cmp((dx * dx) + (dy * dy), r * r) < 1) {
-				return t;
-			} else {
-				var $temp$t = t + 1;
-				t = $temp$t;
-				continue plotFrom;
-			}
-		}
-	}
-};
-var $author$project$Neat$Encode$plotFrom = F6($author$project$Neat$Encode$plotFrom$);
-var $author$project$Neat$Encode$plotIntercept$ = function (space, a, b, maxTurns, margin) {
-	return (maxTurns <= 0) ? 0 : $author$project$Neat$Encode$plotFrom$(space, a, b, margin, maxTurns, 1);
-};
-var $author$project$Neat$Encode$plotIntercept = F5($author$project$Neat$Encode$plotIntercept$);
 var $author$project$Melee$Projectile$Beam = function (a) {
 	return {$: 'Beam', a: a};
 };
@@ -4859,240 +5970,70 @@ var $author$project$Melee$Arsenal$primary = function (ship) {
 			$author$project$Melee$ShipState$kind(ship));
 	}
 };
-var $author$project$Neat$Encode$hitHints$ = function (arena, shipEl, origin, facing, target) {
-	var _v0 = $author$project$Melee$Arsenal$primary(shipEl);
-	if (_v0.$ === 'Missile') {
-		var spec = _v0.a;
-		var best = $elm$core$List$foldl$(
-			F2(
-				function (mount, acc) {
-					var flags = origin.flags;
-					var f = $author$project$Melee$Units$Facing(
-						A2($elm$core$Basics$modBy, 16, facing + mount.facingOffset));
-					var launch = $author$project$Melee$Arsenal$launchState$(
-						spec,
-						f,
-						origin.velocity,
-						$author$project$Melee$Arsenal$mountPosition$(spec, facing, origin.current.location, mount));
-					var ghost = _Utils_update(
-						origin,
-						{
-							current: {frameIndex: facing, location: launch.position},
-							flags: _Utils_update(
-								flags,
-								{playerShip: false}),
-							velocity: launch.velocity
-						});
-					var t = $author$project$Neat$Encode$plotIntercept$(arena.space, ghost, target, spec.life, 0);
-					return ((t > 0) && ((!acc) || (_Utils_cmp(t, acc) < 0))) ? t : acc;
-				}),
-			0,
-			$author$project$Melee$Arsenal$mounts(spec));
-		return (best <= 0) ? _Utils_Tuple2(0, 0) : _Utils_Tuple2(
-			1 / (1 + best),
-			(_Utils_cmp(best, spec.life) < 1) ? 1 : 0);
-	} else {
-		var dy = $author$project$Melee$Trig$wrapDelta$(target.current.location.y - origin.current.location.y, arena.space.height);
-		var dx = $author$project$Melee$Trig$wrapDelta$(target.current.location.x - origin.current.location.x, arena.space.width);
-		var wanted = $author$project$Neat$Encode$angleToFacing(
-			$author$project$Melee$Trig$arctan$(dx, dy));
-		var dist = $author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy));
-		var delta = $author$project$Melee$Trig$normalizeFacing(wanted - facing);
-		var lined = (_Utils_cmp(
-			dist,
-			$author$project$Melee$Ship$intelRange(
-				$author$project$Melee$ShipState$kind(shipEl))) < 1) && ((delta <= 2) || (delta >= 14));
-		return lined ? _Utils_Tuple2(1, 1) : _Utils_Tuple2(0, 0);
-	}
+var $author$project$Melee$Cyborg$weaponReady = function (work) {
+	return $author$project$Melee$Cyborg$waitN(work.core.weaponWait) <= 0;
 };
-var $author$project$Neat$Encode$hitHints = F5($author$project$Neat$Encode$hitHints$);
-var $elm$core$Dict$foldl$ = function (func, acc, dict) {
-	foldl:
-	while (true) {
-		if (dict.$ === 'RBEmpty_elm_builtin') {
-			return acc;
+var $author$project$Melee$Cyborg$shipWeapons$ = function (work, other, margin) {
+	if (work.ability.seekingWeapon) {
+		return false;
+	} else {
+		if (!$author$project$Melee$Cyborg$weaponReady(work)) {
+			return false;
 		} else {
-			var key = dict.b;
-			var value = dict.c;
-			var left = dict.d;
-			var right = dict.e;
-			var $temp$acc = A3(
-				func,
-				key,
-				value,
-				$elm$core$Dict$foldl$(func, acc, left)),
-				$temp$dict = right;
-			acc = $temp$acc;
-			dict = $temp$dict;
-			continue foldl;
+			if (work.ability.immediateWeapon) {
+				var dy = $author$project$Melee$Trig$wrapDelta$(other.current.location.y - work.ship.current.location.y, work.space.height);
+				var dx = $author$project$Melee$Trig$wrapDelta$(other.current.location.x - work.ship.current.location.x, work.space.width);
+				var wanted = $author$project$Melee$Cyborg$angleToFacing(
+					$author$project$Melee$Trig$arctan$(dx, dy));
+				var dist = $author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy));
+				var delta = $author$project$Melee$Trig$normalizeFacing(wanted - work.facing);
+				return (_Utils_cmp(dist, work.range) < 1) && ((delta <= 1) || (delta >= 15));
+			} else {
+				var _v0 = $author$project$Melee$Arsenal$primary(
+					$author$project$Melee$Cyborg$combatant$(work.side, work.arena));
+				if (_v0.$ === 'Missile') {
+					var spec = _v0.a;
+					var _v1 = $author$project$Melee$Cyborg$displacement$(1, work.velocity);
+					var dx = _v1.a;
+					var dy = _v1.b;
+					var origin = {x: work.ship.current.location.x + dx, y: work.ship.current.location.y + dy};
+					var hits = function (mount) {
+						var ship = work.ship;
+						var flags = ship.flags;
+						var facing = $author$project$Melee$Units$Facing(
+							A2($elm$core$Basics$modBy, 16, work.facing + mount.facingOffset));
+						var launch = $author$project$Melee$Arsenal$launchState$(
+							spec,
+							facing,
+							work.velocity,
+							$author$project$Melee$Arsenal$mountPosition$(spec, work.facing, origin, mount));
+						var ghost = _Utils_update(
+							ship,
+							{
+								body: $author$project$Melee$Arsenal$missileBody(spec.kind),
+								current: {frameIndex: work.facing, location: launch.position},
+								flags: _Utils_update(
+									flags,
+									{playerShip: false}),
+								velocity: launch.velocity
+							});
+						return $author$project$Melee$Cyborg$plotIntercept$(work.space, ghost, other, spec.life, margin) > 0;
+					};
+					return $elm$core$List$any$(
+						hits,
+						$author$project$Melee$Arsenal$mounts(spec));
+				} else {
+					var dy = $author$project$Melee$Trig$wrapDelta$(other.current.location.y - work.ship.current.location.y, work.space.height);
+					var dx = $author$project$Melee$Trig$wrapDelta$(other.current.location.x - work.ship.current.location.x, work.space.width);
+					return (_Utils_cmp(
+						$author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy)),
+						work.range) < 1) && $author$project$Melee$Cyborg$facingAligned$(work, other);
+				}
+			}
 		}
 	}
 };
-var $elm$core$Dict$foldl = F3($elm$core$Dict$foldl$);
-var $author$project$Neat$Encode$unit = function (ang) {
-	return $author$project$Melee$Trig$cosine$(ang, 100) / 100;
-};
-var $author$project$Neat$Encode$unitS = function (ang) {
-	return $author$project$Melee$Trig$sine$(ang, 100) / 100;
-};
-var $author$project$Neat$Encode$incoming$ = function (arena, side, own) {
-	var pick = $elm$core$Dict$foldl$(
-		F3(
-			function (_v1, el, acc) {
-				if (el.flags.playerShip || (el.flags.nonsolid || (_Utils_eq(
-					el.parent,
-					$elm$core$Maybe$Just(side)) || _Utils_eq(el.parent, $elm$core$Maybe$Nothing)))) {
-					return acc;
-				} else {
-					var dy = $author$project$Melee$Trig$wrapDelta$(el.current.location.y - own.current.location.y, arena.space.height);
-					var dx = $author$project$Melee$Trig$wrapDelta$(el.current.location.x - own.current.location.x, arena.space.width);
-					var d2 = (dx * dx) + (dy * dy);
-					var cand = {d2: d2, dx: dx, dy: dy, el: el};
-					if (acc.$ === 'Nothing') {
-						return $elm$core$Maybe$Just(cand);
-					} else {
-						var best = acc.a;
-						return (_Utils_cmp(d2, best.d2) < 0) ? $elm$core$Maybe$Just(cand) : acc;
-					}
-				}
-			}),
-		$elm$core$Maybe$Nothing,
-		arena.elements);
-	if (pick.$ === 'Nothing') {
-		return _Utils_Tuple3(0, 0, 0);
-	} else {
-		var p = pick.a;
-		var hit = $author$project$Neat$Encode$plotIntercept$(arena.space, p.el, own, 16, 40);
-		var ang = $author$project$Melee$Trig$arctan$(p.dx, p.dy);
-		return _Utils_Tuple3(
-			(hit <= 0) ? 0 : (1 / (1 + hit)),
-			$author$project$Neat$Encode$unit(ang),
-			$author$project$Neat$Encode$unitS(ang));
-	}
-};
-var $author$project$Neat$Encode$incoming = F3($author$project$Neat$Encode$incoming$);
-var $author$project$Melee$Element$PlanetBody = {$: 'PlanetBody'};
-var $author$project$Neat$Encode$planetVec$ = function (arena, own) {
-	var planet = $elm$core$Dict$foldl$(
-		F3(
-			function (_v1, el, acc) {
-				return _Utils_eq(el.body, $author$project$Melee$Element$PlanetBody) ? $elm$core$Maybe$Just(el) : acc;
-			}),
-		$elm$core$Maybe$Nothing,
-		arena.elements);
-	if (planet.$ === 'Nothing') {
-		return _Utils_Tuple3(0, 0, 0);
-	} else {
-		var p = planet.a;
-		var hit = $author$project$Neat$Encode$plotIntercept$(arena.space, own, p, 32, 160);
-		var dy = $author$project$Melee$Trig$wrapDelta$(p.current.location.y - own.current.location.y, arena.space.height);
-		var dx = $author$project$Melee$Trig$wrapDelta$(p.current.location.x - own.current.location.x, arena.space.width);
-		return _Utils_Tuple3(
-			$author$project$Neat$Encode$clamp11(dx / 4000),
-			$author$project$Neat$Encode$clamp11(dy / 4000),
-			(hit <= 0) ? 0 : (1 / (1 + hit)));
-	}
-};
-var $author$project$Neat$Encode$planetVec = F2($author$project$Neat$Encode$planetVec$);
-var $author$project$Neat$Encode$shortestFacing = function (d0) {
-	var d = $author$project$Melee$Trig$normalizeFacing(d0);
-	return (d > 8) ? (d - 16) : d;
-};
-var $author$project$Neat$Encode$speed = function (vel) {
-	return $author$project$Melee$Trig$squareRoot((vel.vector.width * vel.vector.width) + (vel.vector.height * vel.vector.height));
-};
-var $author$project$Neat$Encode$travelAngle = function (vel) {
-	var _v0 = vel.travelAngle;
-	var a = _v0.a;
-	return a;
-};
-var $author$project$Neat$Encode$encode$ = function (arena, side, ownC, foeC, ownCore, foeCore, own, foe) {
-	var travel = $author$project$Neat$Encode$travelAngle(own.velocity);
-	var ownSpeed = $author$project$Neat$Encode$speed(own.velocity);
-	var maxT = $elm$core$Basics$max$(1, ownCore.characteristics.maxThrust);
-	var halfW = arena.space.width / 2;
-	var halfH = arena.space.height / 2;
-	var foeSpeed = $author$project$Neat$Encode$speed(foe.velocity);
-	var foeMaxT = $elm$core$Basics$max$(1, foeCore.characteristics.maxThrust);
-	var dy = $author$project$Melee$Trig$wrapDelta$(foe.current.location.y - own.current.location.y, arena.space.height);
-	var dx = $author$project$Melee$Trig$wrapDelta$(foe.current.location.x - own.current.location.x, arena.space.width);
-	var toward = $author$project$Melee$Trig$arctan$(dx, dy);
-	var dist = $author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy));
-	var _v0 = ownCore.weaponWait;
-	var wWait = _v0.a;
-	var _v1 = own.thrustWait;
-	var thWait = _v1.a;
-	var _v2 = own.turnWait;
-	var tWait = _v2.a;
-	var _v3 = $author$project$Neat$Encode$incoming$(arena, side, own);
-	var sh = _v3.a;
-	var sc = _v3.b;
-	var ss = _v3.c;
-	var _v4 = ownCore.specialWait;
-	var sWait = _v4.a;
-	var _v5 = $author$project$Neat$Encode$planetVec$(arena, own);
-	var pdx = _v5.a;
-	var pdy = _v5.b;
-	var phit = _v5.c;
-	var _v6 = foeCore.facing;
-	var foeFacing = _v6.a;
-	var _v7 = $author$project$Neat$Encode$hitHints$(arena, foeC, foe, foeFacing, own);
-	var theirNow = _v7.a;
-	var theirSoon = _v7.b;
-	var _v8 = ownCore.facing;
-	var facing = _v8.a;
-	var _v9 = $author$project$Neat$Encode$hitHints$(arena, ownC, own, facing, foe);
-	var myNow = _v9.a;
-	var mySoon = _v9.b;
-	var faceAng = facing * 4;
-	var relFace = $author$project$Melee$Trig$normalizeAngle((foeFacing * 4) - faceAng);
-	var turnErr = $author$project$Neat$Encode$shortestFacing(
-		$author$project$Neat$Encode$angleToFacing(toward) - facing);
-	return _List_fromArray(
-		[
-			$author$project$Neat$Encode$clamp01(
-			ownCore.energy / $elm$core$Basics$max$(1, ownCore.maxEnergy)),
-			$author$project$Neat$Encode$clamp01(
-			own.points / $elm$core$Basics$max$(1, ownCore.maxCrew)),
-			$author$project$Neat$Encode$unit(faceAng),
-			$author$project$Neat$Encode$unitS(faceAng),
-			$author$project$Neat$Encode$clamp01(ownSpeed / maxT),
-			$author$project$Neat$Encode$unit(
-			$author$project$Melee$Trig$normalizeAngle(travel - faceAng)),
-			$author$project$Neat$Encode$unitS(
-			$author$project$Melee$Trig$normalizeAngle(travel - faceAng)),
-			$author$project$Neat$Encode$flag(wWait <= 0),
-			$author$project$Neat$Encode$flag(sWait <= 0),
-			$author$project$Neat$Encode$flag(tWait <= 0),
-			$author$project$Neat$Encode$flag(thWait <= 0),
-			$author$project$Neat$Encode$clamp11(dx / halfW),
-			$author$project$Neat$Encode$clamp11(dy / halfH),
-			$author$project$Neat$Encode$clamp01(dist / 4000),
-			$author$project$Neat$Encode$clamp11(
-			$author$project$Neat$Encode$closing$(own.velocity, foe.velocity, dx, dy) / 200),
-			$author$project$Neat$Encode$unit(relFace),
-			$author$project$Neat$Encode$unitS(relFace),
-			$author$project$Neat$Encode$clamp01(
-			foeCore.energy / $elm$core$Basics$max$(1, foeCore.maxEnergy)),
-			$author$project$Neat$Encode$clamp01(
-			foe.points / $elm$core$Basics$max$(1, foeCore.maxCrew)),
-			$author$project$Neat$Encode$clamp01(foeSpeed / foeMaxT),
-			$author$project$Neat$Encode$flag(ownCore.cloaked),
-			myNow,
-			mySoon,
-			$author$project$Neat$Encode$clamp11(turnErr / 8),
-			theirNow,
-			theirSoon,
-			pdx,
-			pdy,
-			phit,
-			sh,
-			sc,
-			ss,
-			1
-		]);
-};
-var $author$project$Neat$Encode$encode = F8($author$project$Neat$Encode$encode$);
+var $author$project$Melee$Cyborg$shipWeapons = F3($author$project$Melee$Cyborg$shipWeapons$);
 var $elm$core$Basics$compare = _Utils_compare;
 var $elm$core$Dict$get$ = function (targetKey, dict) {
 	get:
@@ -5121,6 +6062,216 @@ var $elm$core$Dict$get$ = function (targetKey, dict) {
 	}
 };
 var $elm$core$Dict$get = F2($elm$core$Dict$get$);
+var $author$project$Melee$Ship$intelRange = function (kind) {
+	switch (kind.$) {
+		case 'Androsynth':
+			return 1000;
+		case 'Arilou':
+			return 218;
+		case 'Chenjesu':
+			return 4000;
+		case 'Chmmr':
+			return 200;
+		case 'Druuge':
+			return 2400;
+		case 'Earthling':
+			return 4000;
+		case 'Ilwrath':
+			return 200;
+		case 'KohrAh':
+			return 200;
+		case 'Melnorme':
+			return 1800;
+		case 'Mmrnmhrm':
+			return 200;
+		case 'Mycon':
+			return 3200;
+		case 'Orz':
+			return 1440;
+		case 'Pkunk':
+			return 201;
+		case 'Shofixti':
+			return 960;
+		case 'Slylandro':
+			return 400;
+		case 'Spathi':
+			return 1200;
+		case 'Supox':
+			return 600;
+		case 'Syreen':
+			return 800;
+		case 'Thraddash':
+			return 900;
+		case 'Umgah':
+			return 16000;
+		case 'UrQuan':
+			return 1600;
+		case 'Utwig':
+			return 200;
+		case 'Vux':
+			return 200;
+		case 'Yehat':
+			return 266;
+		default:
+			return 400;
+	}
+};
+var $author$project$Melee$Cyborg$workOf$ = function (rating, side, arena, seed) {
+	var _v0 = $elm$core$Dict$get$(
+		$author$project$Melee$Id$toInt(
+			$author$project$Melee$ShipState$core(
+				$author$project$Melee$Cyborg$combatant$(side, arena)).element),
+		arena.elements);
+	if (_v0.$ === 'Nothing') {
+		return $elm$core$Maybe$Nothing;
+	} else {
+		var ship = _v0.a;
+		var kind = $author$project$Melee$ShipState$kind(
+			$author$project$Melee$Cyborg$combatant$(side, arena));
+		var spec = $author$project$Melee$Ship$stock(kind);
+		var core = $author$project$Melee$ShipState$core(
+			$author$project$Melee$Cyborg$combatant$(side, arena));
+		var _v1 = core.facing;
+		var facing = _v1.a;
+		return $elm$core$Maybe$Just(
+			{
+				ability: spec.ability,
+				arena: arena,
+				core: core,
+				facing: facing,
+				fired: ($author$project$Melee$Cyborg$waitN(core.weaponWait) > 0) || spec.ability.seekingWeapon,
+				kind: kind,
+				left: false,
+				mi: $author$project$Melee$Cyborg$maneuverability(core.characteristics),
+				moved: ($author$project$Melee$Cyborg$waitN(ship.turnWait) > 0) && ($author$project$Melee$Cyborg$waitN(ship.thrustWait) > 0),
+				next: ship.next.location,
+				range: $author$project$Melee$Ship$intelRange(kind),
+				rating: rating,
+				right: false,
+				seed: seed,
+				ship: ship,
+				side: side,
+				space: arena.space,
+				special: false,
+				thrust: false,
+				thrustWait: $author$project$Melee$Cyborg$waitN(ship.thrustWait),
+				turnWait: $author$project$Melee$Cyborg$waitN(ship.turnWait),
+				velocity: ship.velocity,
+				weapon: false
+			});
+	}
+};
+var $author$project$Melee$Cyborg$workOf = F4($author$project$Melee$Cyborg$workOf$);
+var $author$project$Melee$Cyborg$firingSolution$ = function (arena, side, other, margin) {
+	var _v0 = $author$project$Melee$Cyborg$workOf$($author$project$Melee$Input$AwesomeCyborg, side, arena, arena.seed);
+	if (_v0.$ === 'Nothing') {
+		return false;
+	} else {
+		var work = _v0.a;
+		return $author$project$Melee$Cyborg$shipWeapons$(work, other, margin);
+	}
+};
+var $author$project$Melee$Cyborg$firingSolution = F4($author$project$Melee$Cyborg$firingSolution$);
+var $author$project$Melee$Units$maxShipMass = 10;
+var $author$project$Neat$Encode$hullMass = function (el) {
+	return $author$project$Neat$Encode$ratio$(el.mass, 2 * $author$project$Melee$Units$maxShipMass);
+};
+var $author$project$Melee$Cyborg$longRange = 4000;
+var $author$project$Melee$Element$objectCloaked = function (prim) {
+	switch (prim.$) {
+		case 'NoPrim':
+			return true;
+		case 'StampFill':
+			var black = prim.a.black;
+			return black;
+		case 'Stamp':
+			return false;
+		default:
+			return false;
+	}
+};
+var $author$project$Neat$Encode$other = function (side) {
+	return _Utils_eq(side, $author$project$Melee$Units$Bottom) ? $author$project$Melee$Units$Top : $author$project$Melee$Units$Bottom;
+};
+var $author$project$Melee$Cyborg$rangeProbe$ = function (space, ship, other, range) {
+	return $author$project$Melee$Cyborg$plotIntercept$(space, ship, other, 10, range - ((range / 4) | 0));
+};
+var $author$project$Melee$Cyborg$rangeProbe = F4($author$project$Melee$Cyborg$rangeProbe$);
+var $author$project$Neat$Encode$shortestFacing = function (d0) {
+	var d = $author$project$Melee$Trig$normalizeFacing(d0);
+	return (d > 8) ? (d - 16) : d;
+};
+var $author$project$Neat$Encode$speed = function (vel) {
+	return $author$project$Melee$Trig$squareRoot((vel.vector.width * vel.vector.width) + (vel.vector.height * vel.vector.height));
+};
+var $author$project$Neat$Encode$enemyBlock$ = function (arena, side, ownCore, foeCore, own, foe) {
+	var theirAbility = $author$project$Melee$Ship$stock(
+		$author$project$Melee$ShipState$kind(
+			$author$project$Neat$Encode$combatant$(
+				$author$project$Neat$Encode$other(side),
+				arena))).ability;
+	var space = arena.space;
+	var _v0 = foeCore.facing;
+	var foeFacing = _v0.a;
+	var _v1 = ownCore.facing;
+	var facing = _v1.a;
+	var faceAng = facing * 4;
+	var relFace = $author$project$Melee$Trig$normalizeAngle((foeFacing * 4) - faceAng);
+	var _v2 = $author$project$Neat$Encode$nextDelta$(space, own, foe);
+	var dx = _v2.a;
+	var dy = _v2.b;
+	var dist = $author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy));
+	var turnErr = $author$project$Neat$Encode$shortestFacing(
+		$author$project$Neat$Encode$angleToFacing(
+			$author$project$Melee$Trig$arctan$(dx, dy)) - facing);
+	return _List_fromArray(
+		[
+			$author$project$Neat$Encode$clamp11(dx / (space.width / 2)),
+			$author$project$Neat$Encode$clamp11(dy / (space.height / 2)),
+			$author$project$Neat$Encode$clamp01(dist / $author$project$Melee$Cyborg$longRange),
+			$author$project$Neat$Encode$clamp11(
+			$author$project$Neat$Encode$closing$(own.velocity, foe.velocity, dx, dy) / 200),
+			$author$project$Neat$Encode$unit(relFace),
+			$author$project$Neat$Encode$unitS(relFace),
+			$author$project$Neat$Encode$clamp01(
+			$author$project$Neat$Encode$speed(foe.velocity) / $elm$core$Basics$max$(1, foeCore.characteristics.maxThrust)),
+			$author$project$Neat$Encode$clamp11(turnErr / 8),
+			$author$project$Neat$Encode$hullMass(foe),
+			$author$project$Neat$Encode$flag(
+			$author$project$Melee$Element$objectCloaked(foe.prim)),
+			$author$project$Neat$Encode$flag(ownCore.cloaked),
+			$author$project$Neat$Encode$ratio$(foeCore.energy, foeCore.maxEnergy),
+			$author$project$Neat$Encode$ratio$(foe.points, foeCore.maxCrew),
+			$author$project$Neat$Encode$flag(
+			$author$project$Melee$Cyborg$firingSolution$(arena, side, foe, 0)),
+			$author$project$Neat$Encode$urgency(
+			$author$project$Melee$Cyborg$rangeProbe$(
+				space,
+				own,
+				foe,
+				$author$project$Melee$Ship$intelRange(
+					$author$project$Melee$ShipState$kind(
+						$author$project$Neat$Encode$combatant$(side, arena))))),
+			$author$project$Neat$Encode$flag(
+			$author$project$Melee$Cyborg$firingSolution$(
+				arena,
+				$author$project$Neat$Encode$other(side),
+				own,
+				0)),
+			$author$project$Neat$Encode$urgency(
+			$author$project$Melee$Cyborg$rangeProbe$(
+				space,
+				foe,
+				own,
+				$author$project$Melee$Ship$intelRange(
+					$author$project$Melee$ShipState$kind(
+						$author$project$Neat$Encode$combatant$(
+							$author$project$Neat$Encode$other(side),
+							arena))))),
+			$author$project$Neat$Encode$flag(theirAbility.immediateWeapon)
+		]);
+};
+var $author$project$Neat$Encode$enemyBlock = F6($author$project$Neat$Encode$enemyBlock$);
 var $author$project$Neat$Encode$fiveBits = function (n) {
 	return $elm$core$List$map$(
 		function (i) {
@@ -5178,13 +6329,144 @@ var $author$project$Neat$Encode$kinds$ = function (us, them) {
 			$author$project$Neat$Encode$indexOf(them)));
 };
 var $author$project$Neat$Encode$kinds = F2($author$project$Neat$Encode$kinds$);
-var $author$project$Neat$Encode$other = function (side) {
-	return _Utils_eq(side, $author$project$Melee$Units$Bottom) ? $author$project$Melee$Units$Top : $author$project$Melee$Units$Bottom;
+var $author$project$Melee$Motion$BelowLimit = {$: 'BelowLimit'};
+var $author$project$Melee$Motion$AtLimit = {$: 'AtLimit'};
+var $author$project$Melee$Motion$BeyondLimit = {$: 'BeyondLimit'};
+var $author$project$Melee$Motion$GravityBoosted = {$: 'GravityBoosted'};
+var $author$project$Melee$Motion$Moving$ = function (a, b) {
+	return {$: 'Moving', a: a, b: b};
 };
-var $author$project$Melee$Id$toInt = function (_v0) {
+var $author$project$Melee$Motion$Moving = F2($author$project$Melee$Motion$Moving$);
+var $author$project$Melee$Motion$Stationary = {$: 'Stationary'};
+var $author$project$Melee$Motion$fromVelocity$ = function (v, speed) {
+	return _Utils_eq(
+		$author$project$Melee$Velocity$getCurrent(v),
+		_Utils_Tuple2(0, 0)) ? $author$project$Melee$Motion$Stationary : $author$project$Melee$Motion$Moving$(v, speed);
+};
+var $author$project$Melee$Motion$fromVelocity = F2($author$project$Melee$Motion$fromVelocity$);
+var $author$project$Melee$Motion$current$ = function (v, state) {
+	return $author$project$Melee$Motion$fromVelocity$(
+		v,
+		function () {
+			var _v0 = _Utils_Tuple2(state.atMaxSpeed, state.beyondMaxSpeed);
+			if (!_v0.a) {
+				if (!_v0.b) {
+					return $author$project$Melee$Motion$BelowLimit;
+				} else {
+					return $author$project$Melee$Motion$GravityBoosted;
+				}
+			} else {
+				if (!_v0.b) {
+					return $author$project$Melee$Motion$AtLimit;
+				} else {
+					return $author$project$Melee$Motion$BeyondLimit;
+				}
+			}
+		}());
+};
+var $author$project$Melee$Motion$current = F2($author$project$Melee$Motion$current$);
+var $author$project$Melee$Motion$atLimit$ = function (v, state) {
+	var _v0 = $author$project$Melee$Motion$current$(v, state);
+	if (_v0.$ === 'Stationary') {
+		return false;
+	} else {
+		var speed = _v0.b;
+		return !_Utils_eq(speed, $author$project$Melee$Motion$BelowLimit);
+	}
+};
+var $author$project$Melee$Motion$atLimit = F2($author$project$Melee$Motion$atLimit$);
+var $author$project$Melee$Motion$flags = function (motion) {
+	if (motion.$ === 'Stationary') {
+		return {atMaxSpeed: false, beyondMaxSpeed: false};
+	} else {
+		var speed = motion.b;
+		return {
+			atMaxSpeed: _Utils_eq(speed, $author$project$Melee$Motion$AtLimit) || _Utils_eq(speed, $author$project$Melee$Motion$BeyondLimit),
+			beyondMaxSpeed: _Utils_eq(speed, $author$project$Melee$Motion$GravityBoosted) || _Utils_eq(speed, $author$project$Melee$Motion$BeyondLimit)
+		};
+	}
+};
+var $author$project$Melee$Motion$beyondLimit$ = function (v, state) {
+	return $author$project$Melee$Motion$flags(
+		$author$project$Melee$Motion$current$(v, state)).beyondMaxSpeed;
+};
+var $author$project$Melee$Motion$beyondLimit = F2($author$project$Melee$Motion$beyondLimit$);
+var $author$project$Neat$Encode$waitN = function (_v0) {
 	var n = _v0.a;
 	return n;
 };
+var $author$project$Neat$Encode$ownState$ = function (core, own) {
+	var chars = core.characteristics;
+	var _v0 = core.facing;
+	var facing = _v0.a;
+	var faceAng = facing * 4;
+	var travel = $author$project$Melee$Trig$normalizeAngle(
+		$author$project$Neat$Encode$travelAngle(own.velocity) - faceAng);
+	return _List_fromArray(
+		[
+			$author$project$Neat$Encode$ratio$(core.energy, core.maxEnergy),
+			$author$project$Neat$Encode$ratio$(own.points, core.maxCrew),
+			$author$project$Neat$Encode$unit(faceAng),
+			$author$project$Neat$Encode$unitS(faceAng),
+			$author$project$Neat$Encode$clamp01(
+			$author$project$Neat$Encode$speed(own.velocity) / $elm$core$Basics$max$(1, chars.maxThrust)),
+			$author$project$Neat$Encode$unit(travel),
+			$author$project$Neat$Encode$unitS(travel),
+			$author$project$Neat$Encode$flag(
+			$author$project$Neat$Encode$waitN(core.weaponWait) <= 0),
+			$author$project$Neat$Encode$flag(
+			$author$project$Neat$Encode$waitN(core.specialWait) <= 0),
+			$author$project$Neat$Encode$flag(
+			$author$project$Neat$Encode$waitN(own.turnWait) <= 0),
+			$author$project$Neat$Encode$flag(
+			$author$project$Neat$Encode$waitN(own.thrustWait) <= 0),
+			$author$project$Neat$Encode$flag(
+			$author$project$Melee$Motion$atLimit$(own.velocity, core.flags)),
+			$author$project$Neat$Encode$flag(
+			$author$project$Melee$Motion$beyondLimit$(own.velocity, core.flags)),
+			$author$project$Neat$Encode$flag(core.flags.inGravityWell),
+			$author$project$Neat$Encode$flag(
+			!_Utils_eq(chars.thrustIncrement, chars.maxThrust)),
+			$author$project$Neat$Encode$flag(
+			$author$project$Melee$Cyborg$isUltra(chars)),
+			$author$project$Neat$Encode$flag(
+			_Utils_cmp(core.energy, chars.weaponEnergyCost) > -1),
+			$author$project$Neat$Encode$flag(
+			_Utils_cmp(core.energy, chars.specialEnergyCost) > -1),
+			$author$project$Neat$Encode$ratio$(
+			$author$project$Melee$Cyborg$worldToTurn(
+				((160 * core.energy) / $elm$core$Basics$max$(1, chars.specialEnergyCost)) | 0),
+			64),
+			$author$project$Neat$Encode$ratio$(
+			$elm$core$Basics$clamp$(
+				0,
+				64,
+				$author$project$Neat$Encode$waitN(core.specialWait)),
+			64),
+			$author$project$Neat$Encode$hullMass(own)
+		]);
+};
+var $author$project$Neat$Encode$ownState = F2($author$project$Neat$Encode$ownState$);
+var $author$project$Melee$Cyborg$fastShip = 150;
+var $author$project$Neat$Encode$scalars$ = function (ours, theirs, ownCore, foeCore) {
+	return _List_fromArray(
+		[
+			$author$project$Neat$Encode$ratio$(
+			$author$project$Melee$Ship$intelRange(ours),
+			$author$project$Melee$Cyborg$longRange),
+			$author$project$Neat$Encode$ratio$(
+			$author$project$Melee$Ship$intelRange(theirs),
+			$author$project$Melee$Cyborg$longRange),
+			$author$project$Neat$Encode$ratio$(
+			$author$project$Melee$Cyborg$maneuverability(ownCore.characteristics),
+			$author$project$Melee$Cyborg$fastShip),
+			$author$project$Neat$Encode$ratio$(
+			$author$project$Melee$Cyborg$maneuverability(foeCore.characteristics),
+			$author$project$Melee$Cyborg$fastShip),
+			$author$project$Neat$Encode$clamp11((ownCore.characteristics.maxThrust - foeCore.characteristics.maxThrust) / 64)
+		]);
+};
+var $author$project$Neat$Encode$scalars = F4($author$project$Neat$Encode$scalars$);
 var $author$project$Neat$Encode$vector$ = function (side, arena) {
 	var ownC = $author$project$Neat$Encode$combatant$(side, arena);
 	var ownCore = $author$project$Melee$ShipState$core(ownC);
@@ -5192,6 +6474,12 @@ var $author$project$Neat$Encode$vector$ = function (side, arena) {
 		$author$project$Neat$Encode$other(side),
 		arena);
 	var foeCore = $author$project$Melee$ShipState$core(foeC);
+	var identity_ = A2(
+		$elm$core$List$cons,
+		1,
+		$author$project$Neat$Encode$kinds$(
+			$author$project$Melee$ShipState$kind(ownC),
+			$author$project$Melee$ShipState$kind(foeC)));
 	var _v0 = _Utils_Tuple2(
 		$elm$core$Dict$get$(
 			$author$project$Melee$Id$toInt(ownCore.element),
@@ -5203,16 +6491,26 @@ var $author$project$Neat$Encode$vector$ = function (side, arena) {
 		var own = _v0.a.a;
 		var foe = _v0.b.a;
 		return _Utils_ap(
-			$author$project$Neat$Encode$encode$(arena, side, ownC, foeC, ownCore, foeCore, own, foe),
-			$author$project$Neat$Encode$kinds$(
-				$author$project$Melee$ShipState$kind(ownC),
-				$author$project$Melee$ShipState$kind(foeC)));
+			$author$project$Neat$Encode$ownState$(ownCore, own),
+			_Utils_ap(
+				$author$project$Neat$Encode$enemyBlock$(arena, side, ownCore, foeCore, own, foe),
+				_Utils_ap(
+					$author$project$Neat$Encode$scalars$(
+						$author$project$Melee$ShipState$kind(ownC),
+						$author$project$Melee$ShipState$kind(foeC),
+						ownCore,
+						foeCore),
+					_Utils_ap(
+						$author$project$Neat$Encode$abilitiesOf$(
+							$author$project$Melee$ShipState$kind(ownC),
+							$author$project$Melee$ShipState$kind(foeC)),
+						_Utils_ap(
+							$author$project$Neat$Encode$concernBlocks$(arena, ownCore, own),
+							identity_)))));
 	} else {
 		return _Utils_ap(
-			$elm$core$List$repeat$($author$project$Neat$Encode$combatSize, 0),
-			$author$project$Neat$Encode$kinds$(
-				$author$project$Melee$ShipState$kind(ownC),
-				$author$project$Melee$ShipState$kind(foeC)));
+			$elm$core$List$repeat$($author$project$Neat$Encode$combatSize - 1, 0),
+			identity_);
 	}
 };
 var $author$project$Neat$Encode$vector = F2($author$project$Neat$Encode$vector$);
@@ -5337,10 +6635,6 @@ var $author$project$Helpers$LongGame$health = function (game) {
 var $author$project$Melee$Local$Combat = function (a) {
 	return {$: 'Combat', a: a};
 };
-var $elm$core$Basics$clamp$ = function (low, high, number) {
-	return (_Utils_cmp(number, low) < 0) ? low : ((_Utils_cmp(number, high) > 0) ? high : number);
-};
-var $elm$core$Basics$clamp = F3($elm$core$Basics$clamp$);
 var $author$project$Melee$Rate$repeat$ = function (count, step, value) {
 	repeat:
 	while (true) {
@@ -5587,14 +6881,8 @@ var $author$project$Melee$Step$applyInputs$ = function (inputs, arena) {
 };
 var $author$project$Melee$Step$applyInputs = F2($author$project$Melee$Step$applyInputs$);
 var $author$project$Melee$Element$BlastBody = {$: 'BlastBody'};
-var $author$project$Melee$Element$ChenjesuDogi = {$: 'ChenjesuDogi'};
-var $author$project$Melee$Element$OrzMarine = {$: 'OrzMarine'};
 var $author$project$Melee$Element$Owned = function (a) {
 	return {$: 'Owned', a: a};
-};
-var $author$project$Melee$Element$UrQuanFighter = {$: 'UrQuanFighter'};
-var $author$project$Melee$Units$Wait = function (a) {
-	return {$: 'Wait', a: a};
 };
 var $author$project$Melee$Step$bearing$ = function (arena, from, to) {
 	return A2(
@@ -5999,25 +7287,6 @@ var $author$project$Melee$Arsenal$isProjectile = function (body) {
 var $author$project$Melee$Step$isWeapon = function (el) {
 	return $author$project$Melee$Arsenal$isProjectile(el.body);
 };
-var $elm$core$List$any$ = function (isOkay, list) {
-	any:
-	while (true) {
-		if (!list.b) {
-			return false;
-		} else {
-			var x = list.a;
-			var xs = list.b;
-			if (isOkay(x)) {
-				return true;
-			} else {
-				var $temp$list = xs;
-				list = $temp$list;
-				continue any;
-			}
-		}
-	}
-};
-var $elm$core$List$any = F2($elm$core$List$any$);
 var $elm$core$List$member$ = function (x, xs) {
 	return $elm$core$List$any$(
 		function (a) {
@@ -6026,7 +7295,6 @@ var $elm$core$List$member$ = function (x, xs) {
 		xs);
 };
 var $elm$core$List$member = F2($elm$core$List$member$);
-var $elm$core$Basics$not = _Basics_not;
 var $elm$core$Dict$getMin = function (dict) {
 	getMin:
 	while (true) {
@@ -6619,8 +7887,7 @@ var $elm$core$Maybe$andThen$ = function (callback, maybeValue) {
 };
 var $elm$core$Maybe$andThen = F2($elm$core$Maybe$andThen$);
 var $author$project$Melee$Element$AsteroidBody = {$: 'AsteroidBody'};
-var $author$project$Melee$Element$MelnormeConfusion = {$: 'MelnormeConfusion'};
-var $author$project$Melee$Element$VuxLimpet = {$: 'VuxLimpet'};
+var $author$project$Melee$Element$PlanetBody = {$: 'PlanetBody'};
 var $author$project$Melee$Element$WeaponImpact = function (a) {
 	return {$: 'WeaponImpact', a: a};
 };
@@ -116112,92 +117379,6 @@ var $author$project$Melee$Masks$masks = $elm$core$Dict$fromList(
 var $author$project$Melee$Masks$get = function (path) {
 	return $elm$core$Dict$get$(path, $author$project$Melee$Masks$masks);
 };
-var $author$project$Melee$Element$AndrosynthBubble = {$: 'AndrosynthBubble'};
-var $author$project$Melee$Element$ChenjesuFragment = {$: 'ChenjesuFragment'};
-var $author$project$Melee$Element$ChenjesuPhoton = {$: 'ChenjesuPhoton'};
-var $author$project$Melee$Element$DruugeHotShot = {$: 'DruugeHotShot'};
-var $author$project$Melee$Element$EarthlingNuke = {$: 'EarthlingNuke'};
-var $author$project$Melee$Element$IlwrathFlame = {$: 'IlwrathFlame'};
-var $author$project$Melee$Element$KohrAhFried = {$: 'KohrAhFried'};
-var $author$project$Melee$Element$KohrAhSaw = {$: 'KohrAhSaw'};
-var $author$project$Melee$Element$MelnormeCharge = {$: 'MelnormeCharge'};
-var $author$project$Melee$Element$MmrnmhrmMissile = {$: 'MmrnmhrmMissile'};
-var $author$project$Melee$Element$MyconPlasma = {$: 'MyconPlasma'};
-var $author$project$Melee$Element$OrzHowitzer = {$: 'OrzHowitzer'};
-var $author$project$Melee$Element$PkunkSpread = {$: 'PkunkSpread'};
-var $author$project$Melee$Element$ShofixtiDart = {$: 'ShofixtiDart'};
-var $author$project$Melee$Element$SpathiButt = {$: 'SpathiButt'};
-var $author$project$Melee$Element$SpathiForward = {$: 'SpathiForward'};
-var $author$project$Melee$Element$SupoxPellet = {$: 'SupoxPellet'};
-var $author$project$Melee$Element$SyreenMissile = {$: 'SyreenMissile'};
-var $author$project$Melee$Element$ThraddashAfterburn = {$: 'ThraddashAfterburn'};
-var $author$project$Melee$Element$ThraddashBlaster = {$: 'ThraddashBlaster'};
-var $author$project$Melee$Element$UrQuanFusion = {$: 'UrQuanFusion'};
-var $author$project$Melee$Element$UtwigGizmo = {$: 'UtwigGizmo'};
-var $author$project$Melee$Element$YehatMissile = {$: 'YehatMissile'};
-var $author$project$Melee$Element$ZoqSpit = {$: 'ZoqSpit'};
-var $author$project$Melee$Arsenal$missileBody = function (missile) {
-	switch (missile.$) {
-		case 'Bubble':
-			return $author$project$Melee$Element$AndrosynthBubble;
-		case 'Crystal':
-			return $author$project$Melee$Element$ChenjesuPhoton;
-		case 'Shard':
-			return $author$project$Melee$Element$ChenjesuFragment;
-		case 'Dogi':
-			return $author$project$Melee$Element$ChenjesuDogi;
-		case 'Cannon':
-			return $author$project$Melee$Element$DruugeHotShot;
-		case 'Nuke':
-			return $author$project$Melee$Element$EarthlingNuke;
-		case 'Flame':
-			return $author$project$Melee$Element$IlwrathFlame;
-		case 'Saw':
-			return $author$project$Melee$Element$KohrAhSaw;
-		case 'Fried':
-			return $author$project$Melee$Element$KohrAhFried;
-		case 'Charge':
-			return $author$project$Melee$Element$MelnormeCharge;
-		case 'Confusion':
-			return $author$project$Melee$Element$MelnormeConfusion;
-		case 'Torpedo':
-			return $author$project$Melee$Element$MmrnmhrmMissile;
-		case 'Plasma':
-			return $author$project$Melee$Element$MyconPlasma;
-		case 'Howitzer':
-			return $author$project$Melee$Element$OrzHowitzer;
-		case 'Marine':
-			return $author$project$Melee$Element$OrzMarine;
-		case 'Bug':
-			return $author$project$Melee$Element$PkunkSpread;
-		case 'Dart':
-			return $author$project$Melee$Element$ShofixtiDart;
-		case 'SpathiShot':
-			return $author$project$Melee$Element$SpathiForward;
-		case 'Butt':
-			return $author$project$Melee$Element$SpathiButt;
-		case 'Pellet':
-			return $author$project$Melee$Element$SupoxPellet;
-		case 'Dagger':
-			return $author$project$Melee$Element$SyreenMissile;
-		case 'Blaster':
-			return $author$project$Melee$Element$ThraddashBlaster;
-		case 'Napalm':
-			return $author$project$Melee$Element$ThraddashAfterburn;
-		case 'Fusion':
-			return $author$project$Melee$Element$UrQuanFusion;
-		case 'Fighter':
-			return $author$project$Melee$Element$UrQuanFighter;
-		case 'Lance':
-			return $author$project$Melee$Element$UtwigGizmo;
-		case 'Limpet':
-			return $author$project$Melee$Element$VuxLimpet;
-		case 'YehatShot':
-			return $author$project$Melee$Element$YehatMissile;
-		default:
-			return $author$project$Melee$Element$ZoqSpit;
-	}
-};
 var $elm$core$String$cons = _String_cons;
 var $elm$core$String$fromChar = function (_char) {
 	return A2($elm$core$String$cons, _char, '');
@@ -117343,7 +118524,6 @@ var $author$project$Melee$Step$rayIntersection$ = function (arena, origin, end, 
 };
 var $author$project$Melee$Step$rayIntersection = F4($author$project$Melee$Step$rayIntersection$);
 var $elm$core$Basics$round = _Basics_round;
-var $elm$core$List$sortBy = _List_sortBy;
 var $author$project$Melee$Step$spawnDart$ = function (arena, ship, c) {
 	var speed = 24 * 4;
 	var pix = 15 * 4;
@@ -117895,63 +119075,6 @@ var $author$project$Melee$Step$glory$ = function (arena, el, c, combatant) {
 		deadShip);
 };
 var $author$project$Melee$Step$glory = F4($author$project$Melee$Step$glory$);
-var $author$project$Melee$Motion$AtLimit = {$: 'AtLimit'};
-var $author$project$Melee$Motion$BeyondLimit = {$: 'BeyondLimit'};
-var $author$project$Melee$Motion$GravityBoosted = {$: 'GravityBoosted'};
-var $author$project$Melee$Motion$flags = function (motion) {
-	if (motion.$ === 'Stationary') {
-		return {atMaxSpeed: false, beyondMaxSpeed: false};
-	} else {
-		var speed = motion.b;
-		return {
-			atMaxSpeed: _Utils_eq(speed, $author$project$Melee$Motion$AtLimit) || _Utils_eq(speed, $author$project$Melee$Motion$BeyondLimit),
-			beyondMaxSpeed: _Utils_eq(speed, $author$project$Melee$Motion$GravityBoosted) || _Utils_eq(speed, $author$project$Melee$Motion$BeyondLimit)
-		};
-	}
-};
-var $author$project$Melee$Motion$BelowLimit = {$: 'BelowLimit'};
-var $author$project$Melee$Motion$Moving$ = function (a, b) {
-	return {$: 'Moving', a: a, b: b};
-};
-var $author$project$Melee$Motion$Moving = F2($author$project$Melee$Motion$Moving$);
-var $author$project$Melee$Motion$Stationary = {$: 'Stationary'};
-var $author$project$Melee$Motion$fromVelocity$ = function (v, speed) {
-	return _Utils_eq(
-		$author$project$Melee$Velocity$getCurrent(v),
-		_Utils_Tuple2(0, 0)) ? $author$project$Melee$Motion$Stationary : $author$project$Melee$Motion$Moving$(v, speed);
-};
-var $author$project$Melee$Motion$fromVelocity = F2($author$project$Melee$Motion$fromVelocity$);
-var $author$project$Melee$Motion$current$ = function (v, state) {
-	return $author$project$Melee$Motion$fromVelocity$(
-		v,
-		function () {
-			var _v0 = _Utils_Tuple2(state.atMaxSpeed, state.beyondMaxSpeed);
-			if (!_v0.a) {
-				if (!_v0.b) {
-					return $author$project$Melee$Motion$BelowLimit;
-				} else {
-					return $author$project$Melee$Motion$GravityBoosted;
-				}
-			} else {
-				if (!_v0.b) {
-					return $author$project$Melee$Motion$AtLimit;
-				} else {
-					return $author$project$Melee$Motion$BeyondLimit;
-				}
-			}
-		}());
-};
-var $author$project$Melee$Motion$current = F2($author$project$Melee$Motion$current$);
-var $author$project$Melee$Motion$atLimit$ = function (v, state) {
-	var _v0 = $author$project$Melee$Motion$current$(v, state);
-	if (_v0.$ === 'Stationary') {
-		return false;
-	} else {
-		var speed = _v0.b;
-		return !_Utils_eq(speed, $author$project$Melee$Motion$BelowLimit);
-	}
-};
-var $author$project$Melee$Motion$atLimit = F2($author$project$Melee$Motion$atLimit$);
 var $author$project$Melee$Motion$thrust$ = function (v, c) {
 	var chars = c.characteristics;
 	var increment = chars.thrustIncrement * 32;
@@ -119712,37 +120835,13 @@ var $author$project$Melee$Keys$inputs = function (held) {
 		}
 	};
 };
-var $author$project$Melee$Cyborg$combatant$ = function (side, arena) {
-	if (side.$ === 'Bottom') {
-		return arena.combatants.bottom;
-	} else {
-		return arena.combatants.top;
-	}
-};
-var $author$project$Melee$Cyborg$combatant = F2($author$project$Melee$Cyborg$combatant$);
 var $author$project$Melee$Cyborg$NoMovement = {$: 'NoMovement'};
 var $author$project$Melee$Cyborg$blank = {facing: 0, move: $author$project$Melee$Cyborg$NoMovement, object: $elm$core$Maybe$Nothing, whichTurn: 65535};
-var $author$project$Melee$Cyborg$colliding = function (el) {
-	return !(el.flags.nonsolid || el.flags.disappearing);
-};
 var $author$project$Melee$Cyborg$Pursue = {$: 'Pursue'};
-var $author$project$Melee$Cyborg$isCrewBody = function (body) {
-	if (body.$ === 'CrewBody') {
-		return true;
-	} else {
-		return false;
-	}
-};
-var $author$project$Melee$Cyborg$isCrew = function (el) {
-	return el.flags.crewObject || $author$project$Melee$Cyborg$isCrewBody(el.body);
-};
 var $author$project$Melee$Cyborg$samePlayer$ = function (a, b) {
 	return _Utils_eq(a.parent, b.parent) && (!_Utils_eq(a.parent, $elm$core$Maybe$Nothing));
 };
 var $author$project$Melee$Cyborg$samePlayer = F2($author$project$Melee$Cyborg$samePlayer$);
-var $author$project$Melee$Cyborg$worldToTurn = function (d) {
-	return (d / 64) | 0;
-};
 var $author$project$Melee$Cyborg$considerCrew$ = function (work, el, dx, dy, concerns) {
 	var turns = $elm$core$Basics$max$(
 		1,
@@ -119793,774 +120892,11 @@ var $author$project$Melee$Cyborg$closeRange = 200;
 var $author$project$Melee$Cyborg$facingToAngle = function (f) {
 	return $author$project$Melee$Trig$normalizeFacing(f) * 4;
 };
-var $author$project$Melee$Cyborg$longRange = 4000;
-var $author$project$Melee$Cyborg$waitN = function (_v0) {
-	var n = _v0.a;
-	return n;
-};
-var $author$project$Melee$Cyborg$maneuverability = function (chars) {
-	var index = chars.maxThrust * chars.thrustIncrement;
-	var divisor = $author$project$Melee$Cyborg$waitN(chars.turnWait) + $author$project$Melee$Cyborg$waitN(chars.thrustWait);
-	return (divisor > 0) ? ((index / divisor) | 0) : ((index / 2) | 0);
-};
-var $author$project$Melee$Units$maxShipMass = 10;
 var $author$project$Melee$Cyborg$otherSide = function (side) {
 	if (side.$ === 'Bottom') {
 		return $author$project$Melee$Units$Top;
 	} else {
 		return $author$project$Melee$Units$Bottom;
-	}
-};
-var $author$project$Melee$Cyborg$angleToFacing = function (a) {
-	return $author$project$Melee$Trig$normalizeFacing(
-		(($author$project$Melee$Trig$normalizeAngle(a) + 2) / 4) | 0);
-};
-var $author$project$Melee$Cyborg$displacement$ = function (turns, vel) {
-	return $author$project$Melee$Velocity$getNext$(
-		$elm$core$Basics$max$(1, turns),
-		vel).a;
-};
-var $author$project$Melee$Cyborg$displacement = F2($author$project$Melee$Cyborg$displacement$);
-var $author$project$Melee$Cyborg$facingAligned$ = function (work, other) {
-	var dy = $author$project$Melee$Trig$wrapDelta$(other.current.location.y - work.ship.current.location.y, work.space.height);
-	var dx = $author$project$Melee$Trig$wrapDelta$(other.current.location.x - work.ship.current.location.x, work.space.width);
-	var wanted = $author$project$Melee$Cyborg$angleToFacing(
-		$author$project$Melee$Trig$arctan$(dx, dy));
-	var delta = $author$project$Melee$Trig$normalizeFacing(wanted - work.facing);
-	return (delta <= 2) || (delta >= 14);
-};
-var $author$project$Melee$Cyborg$facingAligned = F2($author$project$Melee$Cyborg$facingAligned$);
-var $author$project$Melee$Cyborg$radiusWorld = function (el) {
-	var _v0 = el.body;
-	switch (_v0.$) {
-		case 'PlanetBody':
-			return 160;
-		case 'ShipBody':
-			return 40;
-		case 'AsteroidBody':
-			return 24;
-		case 'CrewBody':
-			return 16;
-		default:
-			return 12;
-	}
-};
-var $author$project$Melee$Cyborg$wrapLoc = $author$project$Melee$Trig$wrapPoint;
-var $author$project$Melee$Cyborg$plotFrom$ = function (space, a, b, margin, maxTurns, t) {
-	plotFrom:
-	while (true) {
-		if (_Utils_cmp(t, maxTurns) > 0) {
-			return 0;
-		} else {
-			var r = ($author$project$Melee$Cyborg$radiusWorld(a) + $author$project$Melee$Cyborg$radiusWorld(b)) + margin;
-			var _v0 = $author$project$Melee$Cyborg$displacement$(t, b.velocity);
-			var dbx = _v0.a;
-			var dby = _v0.b;
-			var pb = A2(
-				$author$project$Melee$Cyborg$wrapLoc,
-				space,
-				{x: b.current.location.x + dbx, y: b.current.location.y + dby});
-			var _v1 = $author$project$Melee$Cyborg$displacement$(t, a.velocity);
-			var dax = _v1.a;
-			var day = _v1.b;
-			var pa = A2(
-				$author$project$Melee$Cyborg$wrapLoc,
-				space,
-				{x: a.current.location.x + dax, y: a.current.location.y + day});
-			var dx = $author$project$Melee$Trig$wrapDelta$(pa.x - pb.x, space.width);
-			var dy = $author$project$Melee$Trig$wrapDelta$(pa.y - pb.y, space.height);
-			if (_Utils_cmp((dx * dx) + (dy * dy), r * r) < 1) {
-				return t;
-			} else {
-				var $temp$t = t + 1;
-				t = $temp$t;
-				continue plotFrom;
-			}
-		}
-	}
-};
-var $author$project$Melee$Cyborg$plotFrom = F6($author$project$Melee$Cyborg$plotFrom$);
-var $author$project$Melee$Cyborg$plotIntercept$ = function (space, a, b, maxTurns, margin) {
-	return (maxTurns <= 0) ? 0 : $author$project$Melee$Cyborg$plotFrom$(space, a, b, margin, maxTurns, 1);
-};
-var $author$project$Melee$Cyborg$plotIntercept = F5($author$project$Melee$Cyborg$plotIntercept$);
-var $author$project$Melee$Cyborg$weaponReady = function (work) {
-	return $author$project$Melee$Cyborg$waitN(work.core.weaponWait) <= 0;
-};
-var $author$project$Melee$Cyborg$shipWeapons$ = function (work, other, margin) {
-	if (work.ability.seekingWeapon) {
-		return false;
-	} else {
-		if (!$author$project$Melee$Cyborg$weaponReady(work)) {
-			return false;
-		} else {
-			if (work.ability.immediateWeapon) {
-				var dy = $author$project$Melee$Trig$wrapDelta$(other.current.location.y - work.ship.current.location.y, work.space.height);
-				var dx = $author$project$Melee$Trig$wrapDelta$(other.current.location.x - work.ship.current.location.x, work.space.width);
-				var wanted = $author$project$Melee$Cyborg$angleToFacing(
-					$author$project$Melee$Trig$arctan$(dx, dy));
-				var dist = $author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy));
-				var delta = $author$project$Melee$Trig$normalizeFacing(wanted - work.facing);
-				return (_Utils_cmp(dist, work.range) < 1) && ((delta <= 1) || (delta >= 15));
-			} else {
-				var _v0 = $author$project$Melee$Arsenal$primary(
-					$author$project$Melee$Cyborg$combatant$(work.side, work.arena));
-				if (_v0.$ === 'Missile') {
-					var spec = _v0.a;
-					var _v1 = $author$project$Melee$Cyborg$displacement$(1, work.velocity);
-					var dx = _v1.a;
-					var dy = _v1.b;
-					var origin = {x: work.ship.current.location.x + dx, y: work.ship.current.location.y + dy};
-					var hits = function (mount) {
-						var ship = work.ship;
-						var flags = ship.flags;
-						var facing = $author$project$Melee$Units$Facing(
-							A2($elm$core$Basics$modBy, 16, work.facing + mount.facingOffset));
-						var launch = $author$project$Melee$Arsenal$launchState$(
-							spec,
-							facing,
-							work.velocity,
-							$author$project$Melee$Arsenal$mountPosition$(spec, work.facing, origin, mount));
-						var ghost = _Utils_update(
-							ship,
-							{
-								body: $author$project$Melee$Arsenal$missileBody(spec.kind),
-								current: {frameIndex: work.facing, location: launch.position},
-								flags: _Utils_update(
-									flags,
-									{playerShip: false}),
-								velocity: launch.velocity
-							});
-						return $author$project$Melee$Cyborg$plotIntercept$(work.space, ghost, other, spec.life, margin) > 0;
-					};
-					return $elm$core$List$any$(
-						hits,
-						$author$project$Melee$Arsenal$mounts(spec));
-				} else {
-					var dy = $author$project$Melee$Trig$wrapDelta$(other.current.location.y - work.ship.current.location.y, work.space.height);
-					var dx = $author$project$Melee$Trig$wrapDelta$(other.current.location.x - work.ship.current.location.x, work.space.width);
-					return (_Utils_cmp(
-						$author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy)),
-						work.range) < 1) && $author$project$Melee$Cyborg$facingAligned$(work, other);
-				}
-			}
-		}
-	}
-};
-var $author$project$Melee$Cyborg$shipWeapons = F3($author$project$Melee$Cyborg$shipWeapons$);
-var $author$project$Melee$Ship$none = {crewImmune: false, dontChase: false, firesAft: false, firesFore: false, firesLeft: false, firesRight: false, immediateWeapon: false, pointDefense: false, seekingSpecial: false, seekingWeapon: false, shieldDefense: false};
-var $author$project$Melee$Ship$fore = _Utils_update(
-	$author$project$Melee$Ship$none,
-	{firesFore: true});
-var $author$project$Melee$Ship$stock = function (kind) {
-	switch (kind.$) {
-		case 'Androsynth':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{seekingWeapon: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(8),
-					maxThrust: 24,
-					shipMass: 6,
-					specialEnergyCost: 2,
-					specialWait: $author$project$Melee$Units$Wait(0),
-					thrustIncrement: 3,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(4),
-					weaponEnergyCost: 3,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 15,
-				kind: $author$project$Melee$Ship$Androsynth,
-				maxCrew: 20,
-				maxEnergy: 24,
-				startingCrew: 20,
-				startingEnergy: 24
-			};
-		case 'Arilou':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$none,
-					{immediateWeapon: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(6),
-					maxThrust: 40,
-					shipMass: 1,
-					specialEnergyCost: 3,
-					specialWait: $author$project$Melee$Units$Wait(2),
-					thrustIncrement: 40,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(0),
-					weaponEnergyCost: 2,
-					weaponWait: $author$project$Melee$Units$Wait(1)
-				},
-				cost: 16,
-				kind: $author$project$Melee$Ship$Arilou,
-				maxCrew: 6,
-				maxEnergy: 20,
-				startingCrew: 6,
-				startingEnergy: 20
-			};
-		case 'Chenjesu':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{seekingSpecial: true, seekingWeapon: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(4),
-					maxThrust: 27,
-					shipMass: 10,
-					specialEnergyCost: 30,
-					specialWait: $author$project$Melee$Units$Wait(0),
-					thrustIncrement: 3,
-					thrustWait: $author$project$Melee$Units$Wait(4),
-					turnWait: $author$project$Melee$Units$Wait(6),
-					weaponEnergyCost: 5,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 28,
-				kind: $author$project$Melee$Ship$Chenjesu,
-				maxCrew: 36,
-				maxEnergy: 30,
-				startingCrew: 36,
-				startingEnergy: 30
-			};
-		case 'Chmmr':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{immediateWeapon: true, pointDefense: true, seekingSpecial: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(1),
-					maxThrust: 35,
-					shipMass: 10,
-					specialEnergyCost: 1,
-					specialWait: $author$project$Melee$Units$Wait(0),
-					thrustIncrement: 7,
-					thrustWait: $author$project$Melee$Units$Wait(5),
-					turnWait: $author$project$Melee$Units$Wait(3),
-					weaponEnergyCost: 2,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 30,
-				kind: $author$project$Melee$Ship$Chmmr,
-				maxCrew: 42,
-				maxEnergy: 42,
-				startingCrew: 42,
-				startingEnergy: 42
-			};
-		case 'Druuge':
-			return {
-				ability: $author$project$Melee$Ship$fore,
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(50),
-					maxThrust: 20,
-					shipMass: 5,
-					specialEnergyCost: 16,
-					specialWait: $author$project$Melee$Units$Wait(30),
-					thrustIncrement: 2,
-					thrustWait: $author$project$Melee$Units$Wait(1),
-					turnWait: $author$project$Melee$Units$Wait(4),
-					weaponEnergyCost: 4,
-					weaponWait: $author$project$Melee$Units$Wait(10)
-				},
-				cost: 17,
-				kind: $author$project$Melee$Ship$Druuge,
-				maxCrew: 14,
-				maxEnergy: 32,
-				startingCrew: 14,
-				startingEnergy: 32
-			};
-		case 'Earthling':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{pointDefense: true, seekingWeapon: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(8),
-					maxThrust: 24,
-					shipMass: 6,
-					specialEnergyCost: 4,
-					specialWait: $author$project$Melee$Units$Wait(9),
-					thrustIncrement: 3,
-					thrustWait: $author$project$Melee$Units$Wait(4),
-					turnWait: $author$project$Melee$Units$Wait(1),
-					weaponEnergyCost: 9,
-					weaponWait: $author$project$Melee$Units$Wait(10)
-				},
-				cost: 11,
-				kind: $author$project$Melee$Ship$Earthling,
-				maxCrew: 18,
-				maxEnergy: 18,
-				startingCrew: 18,
-				startingEnergy: 18
-			};
-		case 'Ilwrath':
-			return {
-				ability: $author$project$Melee$Ship$fore,
-				characteristics: {
-					energyRegeneration: 4,
-					energyWait: $author$project$Melee$Units$Wait(4),
-					maxThrust: 25,
-					shipMass: 7,
-					specialEnergyCost: 3,
-					specialWait: $author$project$Melee$Units$Wait(13),
-					thrustIncrement: 5,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(2),
-					weaponEnergyCost: 1,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 10,
-				kind: $author$project$Melee$Ship$Ilwrath,
-				maxCrew: 22,
-				maxEnergy: 16,
-				startingCrew: 22,
-				startingEnergy: 16
-			};
-		case 'KohrAh':
-			return {
-				ability: $author$project$Melee$Ship$fore,
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(4),
-					maxThrust: 30,
-					shipMass: 10,
-					specialEnergyCost: 21,
-					specialWait: $author$project$Melee$Units$Wait(9),
-					thrustIncrement: 6,
-					thrustWait: $author$project$Melee$Units$Wait(6),
-					turnWait: $author$project$Melee$Units$Wait(4),
-					weaponEnergyCost: 6,
-					weaponWait: $author$project$Melee$Units$Wait(6)
-				},
-				cost: 30,
-				kind: $author$project$Melee$Ship$KohrAh,
-				maxCrew: 42,
-				maxEnergy: 42,
-				startingCrew: 42,
-				startingEnergy: 42
-			};
-		case 'Melnorme':
-			return {
-				ability: $author$project$Melee$Ship$fore,
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(4),
-					maxThrust: 36,
-					shipMass: 7,
-					specialEnergyCost: 20,
-					specialWait: $author$project$Melee$Units$Wait(20),
-					thrustIncrement: 6,
-					thrustWait: $author$project$Melee$Units$Wait(4),
-					turnWait: $author$project$Melee$Units$Wait(4),
-					weaponEnergyCost: 5,
-					weaponWait: $author$project$Melee$Units$Wait(1)
-				},
-				cost: 18,
-				kind: $author$project$Melee$Ship$Melnorme,
-				maxCrew: 20,
-				maxEnergy: 42,
-				startingCrew: 20,
-				startingEnergy: 42
-			};
-		case 'Mmrnmhrm':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{immediateWeapon: true}),
-				characteristics: {
-					energyRegeneration: 2,
-					energyWait: $author$project$Melee$Units$Wait(6),
-					maxThrust: 20,
-					shipMass: 3,
-					specialEnergyCost: 10,
-					specialWait: $author$project$Melee$Units$Wait(0),
-					thrustIncrement: 5,
-					thrustWait: $author$project$Melee$Units$Wait(1),
-					turnWait: $author$project$Melee$Units$Wait(2),
-					weaponEnergyCost: 1,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 19,
-				kind: $author$project$Melee$Ship$Mmrnmhrm,
-				maxCrew: 20,
-				maxEnergy: 10,
-				startingCrew: 20,
-				startingEnergy: 10
-			};
-		case 'Mycon':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{seekingWeapon: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(4),
-					maxThrust: 27,
-					shipMass: 7,
-					specialEnergyCost: 40,
-					specialWait: $author$project$Melee$Units$Wait(0),
-					thrustIncrement: 9,
-					thrustWait: $author$project$Melee$Units$Wait(6),
-					turnWait: $author$project$Melee$Units$Wait(6),
-					weaponEnergyCost: 20,
-					weaponWait: $author$project$Melee$Units$Wait(5)
-				},
-				cost: 21,
-				kind: $author$project$Melee$Ship$Mycon,
-				maxCrew: 20,
-				maxEnergy: 40,
-				startingCrew: 20,
-				startingEnergy: 40
-			};
-		case 'Orz':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{seekingSpecial: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(6),
-					maxThrust: 35,
-					shipMass: 4,
-					specialEnergyCost: 0,
-					specialWait: $author$project$Melee$Units$Wait(12),
-					thrustIncrement: 5,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(1),
-					weaponEnergyCost: 6,
-					weaponWait: $author$project$Melee$Units$Wait(4)
-				},
-				cost: 23,
-				kind: $author$project$Melee$Ship$Orz,
-				maxCrew: 16,
-				maxEnergy: 20,
-				startingCrew: 16,
-				startingEnergy: 20
-			};
-		case 'Pkunk':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{firesLeft: true, firesRight: true}),
-				characteristics: {
-					energyRegeneration: 0,
-					energyWait: $author$project$Melee$Units$Wait(0),
-					maxThrust: 64,
-					shipMass: 1,
-					specialEnergyCost: 2,
-					specialWait: $author$project$Melee$Units$Wait(16),
-					thrustIncrement: 16,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(0),
-					weaponEnergyCost: 1,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 20,
-				kind: $author$project$Melee$Ship$Pkunk,
-				maxCrew: 8,
-				maxEnergy: 12,
-				startingCrew: 8,
-				startingEnergy: 12
-			};
-		case 'Shofixti':
-			return {
-				ability: $author$project$Melee$Ship$fore,
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(9),
-					maxThrust: 35,
-					shipMass: 1,
-					specialEnergyCost: 0,
-					specialWait: $author$project$Melee$Units$Wait(0),
-					thrustIncrement: 5,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(1),
-					weaponEnergyCost: 1,
-					weaponWait: $author$project$Melee$Units$Wait(3)
-				},
-				cost: 5,
-				kind: $author$project$Melee$Ship$Shofixti,
-				maxCrew: 6,
-				maxEnergy: 4,
-				startingCrew: 6,
-				startingEnergy: 4
-			};
-		case 'Slylandro':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$none,
-					{crewImmune: true, seekingWeapon: true}),
-				characteristics: {
-					energyRegeneration: 0,
-					energyWait: $author$project$Melee$Units$Wait(10),
-					maxThrust: 60,
-					shipMass: 1,
-					specialEnergyCost: 0,
-					specialWait: $author$project$Melee$Units$Wait(20),
-					thrustIncrement: 60,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(0),
-					weaponEnergyCost: 2,
-					weaponWait: $author$project$Melee$Units$Wait(17)
-				},
-				cost: 17,
-				kind: $author$project$Melee$Ship$Slylandro,
-				maxCrew: 12,
-				maxEnergy: 20,
-				startingCrew: 12,
-				startingEnergy: 20
-			};
-		case 'Spathi':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{dontChase: true, firesAft: true, seekingSpecial: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(10),
-					maxThrust: 48,
-					shipMass: 5,
-					specialEnergyCost: 3,
-					specialWait: $author$project$Melee$Units$Wait(7),
-					thrustIncrement: 12,
-					thrustWait: $author$project$Melee$Units$Wait(1),
-					turnWait: $author$project$Melee$Units$Wait(1),
-					weaponEnergyCost: 2,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 18,
-				kind: $author$project$Melee$Ship$Spathi,
-				maxCrew: 30,
-				maxEnergy: 10,
-				startingCrew: 30,
-				startingEnergy: 10
-			};
-		case 'Supox':
-			return {
-				ability: $author$project$Melee$Ship$fore,
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(4),
-					maxThrust: 40,
-					shipMass: 4,
-					specialEnergyCost: 1,
-					specialWait: $author$project$Melee$Units$Wait(0),
-					thrustIncrement: 8,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(1),
-					weaponEnergyCost: 1,
-					weaponWait: $author$project$Melee$Units$Wait(2)
-				},
-				cost: 16,
-				kind: $author$project$Melee$Ship$Supox,
-				maxCrew: 12,
-				maxEnergy: 16,
-				startingCrew: 12,
-				startingEnergy: 16
-			};
-		case 'Syreen':
-			return {
-				ability: $author$project$Melee$Ship$fore,
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(6),
-					maxThrust: 36,
-					shipMass: 2,
-					specialEnergyCost: 5,
-					specialWait: $author$project$Melee$Units$Wait(20),
-					thrustIncrement: 9,
-					thrustWait: $author$project$Melee$Units$Wait(1),
-					turnWait: $author$project$Melee$Units$Wait(1),
-					weaponEnergyCost: 1,
-					weaponWait: $author$project$Melee$Units$Wait(8)
-				},
-				cost: 13,
-				kind: $author$project$Melee$Ship$Syreen,
-				maxCrew: 42,
-				maxEnergy: 16,
-				startingCrew: 12,
-				startingEnergy: 16
-			};
-		case 'Thraddash':
-			return {
-				ability: $author$project$Melee$Ship$fore,
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(6),
-					maxThrust: 28,
-					shipMass: 7,
-					specialEnergyCost: 1,
-					specialWait: $author$project$Melee$Units$Wait(0),
-					thrustIncrement: 7,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(1),
-					weaponEnergyCost: 2,
-					weaponWait: $author$project$Melee$Units$Wait(12)
-				},
-				cost: 10,
-				kind: $author$project$Melee$Ship$Thraddash,
-				maxCrew: 8,
-				maxEnergy: 24,
-				startingCrew: 8,
-				startingEnergy: 24
-			};
-		case 'Umgah':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{immediateWeapon: true}),
-				characteristics: {
-					energyRegeneration: 30,
-					energyWait: $author$project$Melee$Units$Wait(150),
-					maxThrust: 18,
-					shipMass: 1,
-					specialEnergyCost: 1,
-					specialWait: $author$project$Melee$Units$Wait(2),
-					thrustIncrement: 6,
-					thrustWait: $author$project$Melee$Units$Wait(3),
-					turnWait: $author$project$Melee$Units$Wait(4),
-					weaponEnergyCost: 0,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 7,
-				kind: $author$project$Melee$Ship$Umgah,
-				maxCrew: 10,
-				maxEnergy: 30,
-				startingCrew: 10,
-				startingEnergy: 30
-			};
-		case 'UrQuan':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{seekingSpecial: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(4),
-					maxThrust: 30,
-					shipMass: 10,
-					specialEnergyCost: 8,
-					specialWait: $author$project$Melee$Units$Wait(9),
-					thrustIncrement: 6,
-					thrustWait: $author$project$Melee$Units$Wait(6),
-					turnWait: $author$project$Melee$Units$Wait(4),
-					weaponEnergyCost: 6,
-					weaponWait: $author$project$Melee$Units$Wait(6)
-				},
-				cost: 30,
-				kind: $author$project$Melee$Ship$UrQuan,
-				maxCrew: 42,
-				maxEnergy: 42,
-				startingCrew: 42,
-				startingEnergy: 42
-			};
-		case 'Utwig':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{pointDefense: true, shieldDefense: true}),
-				characteristics: {
-					energyRegeneration: 0,
-					energyWait: $author$project$Melee$Units$Wait(255),
-					maxThrust: 36,
-					shipMass: 8,
-					specialEnergyCost: 1,
-					specialWait: $author$project$Melee$Units$Wait(12),
-					thrustIncrement: 6,
-					thrustWait: $author$project$Melee$Units$Wait(6),
-					turnWait: $author$project$Melee$Units$Wait(1),
-					weaponEnergyCost: 0,
-					weaponWait: $author$project$Melee$Units$Wait(7)
-				},
-				cost: 22,
-				kind: $author$project$Melee$Ship$Utwig,
-				maxCrew: 20,
-				maxEnergy: 20,
-				startingCrew: 20,
-				startingEnergy: 10
-			};
-		case 'Vux':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{immediateWeapon: true, seekingSpecial: true}),
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(8),
-					maxThrust: 21,
-					shipMass: 6,
-					specialEnergyCost: 2,
-					specialWait: $author$project$Melee$Units$Wait(7),
-					thrustIncrement: 7,
-					thrustWait: $author$project$Melee$Units$Wait(4),
-					turnWait: $author$project$Melee$Units$Wait(6),
-					weaponEnergyCost: 1,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 12,
-				kind: $author$project$Melee$Ship$Vux,
-				maxCrew: 20,
-				maxEnergy: 40,
-				startingCrew: 20,
-				startingEnergy: 40
-			};
-		case 'Yehat':
-			return {
-				ability: _Utils_update(
-					$author$project$Melee$Ship$fore,
-					{shieldDefense: true}),
-				characteristics: {
-					energyRegeneration: 2,
-					energyWait: $author$project$Melee$Units$Wait(6),
-					maxThrust: 30,
-					shipMass: 3,
-					specialEnergyCost: 3,
-					specialWait: $author$project$Melee$Units$Wait(2),
-					thrustIncrement: 6,
-					thrustWait: $author$project$Melee$Units$Wait(2),
-					turnWait: $author$project$Melee$Units$Wait(2),
-					weaponEnergyCost: 1,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 23,
-				kind: $author$project$Melee$Ship$Yehat,
-				maxCrew: 20,
-				maxEnergy: 10,
-				startingCrew: 20,
-				startingEnergy: 10
-			};
-		default:
-			return {
-				ability: $author$project$Melee$Ship$fore,
-				characteristics: {
-					energyRegeneration: 1,
-					energyWait: $author$project$Melee$Units$Wait(4),
-					maxThrust: 40,
-					shipMass: 5,
-					specialEnergyCost: 7,
-					specialWait: $author$project$Melee$Units$Wait(6),
-					thrustIncrement: 10,
-					thrustWait: $author$project$Melee$Units$Wait(0),
-					turnWait: $author$project$Melee$Units$Wait(1),
-					weaponEnergyCost: 1,
-					weaponWait: $author$project$Melee$Units$Wait(0)
-				},
-				cost: 6,
-				kind: $author$project$Melee$Ship$ZoqFotPik,
-				maxCrew: 10,
-				maxEnergy: 10,
-				startingCrew: 10,
-				startingEnergy: 10
-			};
 	}
 };
 var $author$project$Melee$Cyborg$considerEnemy$ = function (work, el, dx, dy, concerns) {
@@ -120617,36 +120953,15 @@ var $author$project$Melee$Cyborg$considerEnemy$ = function (work, el, dx, dy, co
 	}
 };
 var $author$project$Melee$Cyborg$considerEnemy = F5($author$project$Melee$Cyborg$considerEnemy$);
-var $author$project$Melee$Cyborg$displayToWorld = function (n) {
-	return n * 4;
-};
-var $author$project$Melee$Cyborg$mediumShip = 45;
 var $author$project$Melee$Cyborg$ultra = function (work) {
-	return _Utils_eq(work.core.characteristics.thrustIncrement, work.core.characteristics.maxThrust) && (_Utils_cmp(work.mi, $author$project$Melee$Cyborg$mediumShip) > -1);
+	return $author$project$Melee$Cyborg$isUltra(work.core.characteristics);
 };
 var $author$project$Melee$Cyborg$considerGravity$ = function (work, el, _v0, _v1, concerns) {
 	if (work.moved) {
 		return concerns;
 	} else {
-		var maneuverTurn = $author$project$Melee$Cyborg$ultra(work) ? 16 : ((_Utils_cmp(work.mi, $author$project$Melee$Cyborg$mediumShip) < 1) ? 48 : 32);
-		var bounds = 80;
-		var hit = $author$project$Melee$Cyborg$plotIntercept$(
-			work.space,
-			el,
-			work.ship,
-			maneuverTurn,
-			$author$project$Melee$Cyborg$displayToWorld(30 + (bounds * 3)));
-		return (hit > 0) ? (((hit > 1) || (($author$project$Melee$Cyborg$plotIntercept$(
-			work.space,
-			el,
-			work.ship,
-			1,
-			$author$project$Melee$Cyborg$displayToWorld(35 + bounds)) > 0) || ($author$project$Melee$Cyborg$plotIntercept$(
-			work.space,
-			el,
-			work.ship,
-			maneuverTurn * 2,
-			$author$project$Melee$Cyborg$displayToWorld(40 + bounds)) > 1))) ? _Utils_update(
+		var hit = $author$project$Melee$Cyborg$gravityIntercept$(work.space, el, work.ship, work.core.characteristics);
+		return (hit > 0) ? _Utils_update(
 			concerns,
 			{
 				gravity: {
@@ -120657,50 +120972,10 @@ var $author$project$Melee$Cyborg$considerGravity$ = function (work, el, _v0, _v1
 					object: $elm$core$Maybe$Just(el),
 					whichTurn: hit
 				}
-			}) : concerns) : concerns;
+			}) : concerns;
 	}
 };
 var $author$project$Melee$Cyborg$considerGravity = F5($author$project$Melee$Cyborg$considerGravity$);
-var $author$project$Melee$Cyborg$isSpecialBody = function (body) {
-	switch (body.$) {
-		case 'ChenjesuDogi':
-			return true;
-		case 'ChmmrSatellite':
-			return true;
-		case 'ChmmrZap':
-			return true;
-		case 'EarthlingPointDefense':
-			return true;
-		case 'KohrAhFried':
-			return true;
-		case 'MelnormeConfusion':
-			return true;
-		case 'OrzMarine':
-			return true;
-		case 'ShofixtiGlory':
-			return true;
-		case 'SpathiButt':
-			return true;
-		case 'ThraddashAfterburn':
-			return true;
-		case 'UrQuanFighter':
-			return true;
-		case 'VuxLimpet':
-			return true;
-		default:
-			return false;
-	}
-};
-var $author$project$Melee$Cyborg$lifeSpan = function (el) {
-	var _v0 = el.life;
-	if (_v0.$ === 'Finite') {
-		var n = _v0.a;
-		return n;
-	} else {
-		var n = _v0.a;
-		return n;
-	}
-};
 var $author$project$Melee$Cyborg$halfCircle = 32;
 var $author$project$Melee$Cyborg$quadrant = 16;
 var $author$project$Melee$Cyborg$seekingWeapon$ = function (work, el, dx, dy) {
@@ -120768,10 +121043,6 @@ var $author$project$Melee$Cyborg$considerWeapon$ = function (work, el, dx, dy, c
 		{weapon: _eval}) : concerns;
 };
 var $author$project$Melee$Cyborg$considerWeapon = F5($author$project$Melee$Cyborg$considerWeapon$);
-var $author$project$Melee$Units$gravityMassThreshold = 100;
-var $author$project$Melee$Cyborg$isGravity = function (el) {
-	return _Utils_cmp(el.mass, $author$project$Melee$Units$gravityMassThreshold) > 0;
-};
 var $author$project$Melee$Cyborg$isShip = function (el) {
 	return el.flags.playerShip;
 };
@@ -120811,11 +121082,6 @@ var $author$project$Melee$Cyborg$marginOfError = function (rating) {
 	}
 };
 var $author$project$Melee$Cyborg$octant = 8;
-var $author$project$Melee$Motion$beyondLimit$ = function (v, state) {
-	return $author$project$Melee$Motion$flags(
-		$author$project$Melee$Motion$current$(v, state)).beyondMaxSpeed;
-};
-var $author$project$Melee$Motion$beyondLimit = F2($author$project$Melee$Motion$beyondLimit$);
 var $author$project$Melee$Cyborg$withFacing$ = function (facing, core) {
 	return _Utils_update(
 		core,
@@ -120938,7 +121204,7 @@ var $author$project$Melee$Cyborg$enticeTarget$ = function (work, _eval, other, t
 		function (frames, range) {
 			return $author$project$Melee$Cyborg$plotIntercept$(work.space, work.ship, other, frames, range);
 		});
-	var inRange = A2(intercept, 10, work.range - ((work.range / 4) | 0));
+	var inRange = $author$project$Melee$Cyborg$rangeProbe$(work.space, work.ship, other, work.range);
 	var enemy = $author$project$Melee$Cyborg$enemyAbility(work);
 	var fireDirections = _List_fromArray(
 		[
@@ -121117,19 +121383,6 @@ var $author$project$Melee$Cyborg$moveAndFire$ = function (concern, work, _eval, 
 	}
 };
 var $author$project$Melee$Cyborg$moveAndFire = F4($author$project$Melee$Cyborg$moveAndFire$);
-var $author$project$Melee$Element$objectCloaked = function (prim) {
-	switch (prim.$) {
-		case 'NoPrim':
-			return true;
-		case 'StampFill':
-			var black = prim.a.black;
-			return black;
-		case 'Stamp':
-			return false;
-		default:
-			return false;
-	}
-};
 var $author$project$Melee$Cyborg$shipIntelligence$ = function (work0, concerns) {
 	var work1 = (!work0.turnWait) ? _Utils_update(
 		work0,
@@ -121803,58 +122056,20 @@ var $author$project$Melee$Cyborg$raceIntelligence$ = function (work, concerns) {
 };
 var $author$project$Melee$Cyborg$raceIntelligence = F2($author$project$Melee$Cyborg$raceIntelligence$);
 var $author$project$Melee$Cyborg$decide$ = function (rating, side, arena, seed) {
-	var _v0 = $elm$core$Dict$get$(
-		$author$project$Melee$Id$toInt(
-			$author$project$Melee$ShipState$core(
-				$author$project$Melee$Cyborg$combatant$(side, arena)).element),
-		arena.elements);
+	var _v0 = $author$project$Melee$Cyborg$workOf$(rating, side, arena, seed);
 	if (_v0.$ === 'Nothing') {
 		return _Utils_Tuple3(
 			$author$project$Melee$Cyborg$idle,
 			seed,
 			$author$project$Melee$Cyborg$combatant$(side, arena));
 	} else {
-		var ship = _v0.a;
-		if (!ship.points) {
+		var work0 = _v0.a;
+		if (!work0.ship.points) {
 			return _Utils_Tuple3(
 				$author$project$Melee$Cyborg$idle,
 				seed,
 				$author$project$Melee$Cyborg$combatant$(side, arena));
 		} else {
-			var kind = $author$project$Melee$ShipState$kind(
-				$author$project$Melee$Cyborg$combatant$(side, arena));
-			var spec = $author$project$Melee$Ship$stock(kind);
-			var core = $author$project$Melee$ShipState$core(
-				$author$project$Melee$Cyborg$combatant$(side, arena));
-			var chars = core.characteristics;
-			var mi = $author$project$Melee$Cyborg$maneuverability(chars);
-			var _v1 = core.facing;
-			var facing = _v1.a;
-			var work0 = {
-				ability: spec.ability,
-				arena: arena,
-				core: core,
-				facing: facing,
-				fired: ($author$project$Melee$Cyborg$waitN(core.weaponWait) > 0) || spec.ability.seekingWeapon,
-				kind: kind,
-				left: false,
-				mi: mi,
-				moved: ($author$project$Melee$Cyborg$waitN(ship.turnWait) > 0) && ($author$project$Melee$Cyborg$waitN(ship.thrustWait) > 0),
-				next: ship.next.location,
-				range: $author$project$Melee$Ship$intelRange(kind),
-				rating: rating,
-				right: false,
-				seed: seed,
-				ship: ship,
-				side: side,
-				space: arena.space,
-				special: false,
-				thrust: false,
-				thrustWait: $author$project$Melee$Cyborg$waitN(ship.thrustWait),
-				turnWait: $author$project$Melee$Cyborg$waitN(ship.turnWait),
-				velocity: ship.velocity,
-				weapon: false
-			};
 			var concerns = $author$project$Melee$Cyborg$fillConcerns(work0);
 			var work1 = $author$project$Melee$Cyborg$raceIntelligence$(work0, concerns);
 			return _Utils_Tuple3(
@@ -121866,17 +122081,17 @@ var $author$project$Melee$Cyborg$decide$ = function (rating, side, arena, seed) 
 				},
 				work1.seed,
 				function () {
-					var _v2 = $author$project$Melee$Cyborg$combatant$(side, arena);
-					if (_v2.$ === 'LiveUmgah') {
-						var originalCore = _v2.a;
-						var extra = _v2.b;
+					var _v1 = $author$project$Melee$Cyborg$combatant$(side, arena);
+					if (_v1.$ === 'LiveUmgah') {
+						var originalCore = _v1.a;
+						var extra = _v1.b;
 						return $author$project$Melee$ShipState$LiveUmgah$(
 							_Utils_update(
 								originalCore,
 								{characteristics: work1.core.characteristics}),
 							extra);
 					} else {
-						var other = _v2;
+						var other = _v1;
 						return other;
 					}
 				}());

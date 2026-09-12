@@ -10,7 +10,7 @@
 //!     "measured, and it was zero".
 
 use crate::broad::{self, Cell, Evaluation, Source};
-use crate::genome::Genome;
+use crate::genome::{Genome, N_MEMORY};
 use crate::trainer::{iso8601, Mode, Trainer};
 use serde_json::{json, Value};
 
@@ -307,56 +307,16 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// Stable names for the 57 input slots, so a topology diagram can say what a
-/// link actually reads. Slots 33..42 are the two five-bit hull identifiers and
-/// slots 43..55 are the explicit feedback the contract fixes.
+/// Stable names for the input slots, so a topology diagram can say what a link
+/// actually reads. The observation names come straight from the encoder rather
+/// than being restated here; this function only adds the explicit feedback the
+/// contract fixes after them.
 pub fn input_labels() -> Vec<String> {
-    const SENSORS: [&str; 33] = [
-        "our energy",
-        "our crew",
-        "our facing cos",
-        "our facing sin",
-        "our speed",
-        "our travel cos",
-        "our travel sin",
-        "weapon ready",
-        "special ready",
-        "turn ready",
-        "thrust ready",
-        "delta x",
-        "delta y",
-        "distance",
-        "closing speed",
-        "their facing cos",
-        "their facing sin",
-        "their energy",
-        "their crew",
-        "their speed",
-        "we are cloaked",
-        "our shot hits soon",
-        "our shot hits in range",
-        "turn toward them",
-        "their shot hits soon",
-        "their shot hits in range",
-        "planet delta x",
-        "planet delta y",
-        "planet impact",
-        "incoming impact",
-        "incoming angle cos",
-        "incoming angle sin",
-        "constant one",
-    ];
-    let mut labels: Vec<String> = SENSORS.iter().map(|s| s.to_string()).collect();
-    for bit in 0..5 {
-        labels.push(format!("our hull bit {bit}"));
-    }
-    for bit in 0..5 {
-        labels.push(format!("their hull bit {bit}"));
-    }
+    let mut labels = melee_neat::encode::slot_names();
     for name in ["left", "right", "thrust", "weapon", "special"] {
         labels.push(format!("previous {name}"));
     }
-    for channel in 0..8 {
+    for channel in 0..N_MEMORY {
         labels.push(format!("previous memory {channel}"));
     }
     labels.push("bias".to_string());
@@ -377,21 +337,20 @@ pub fn output_labels() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::brain::{BIAS_SLOT, CONTROL_BASE, MEMORY_BASE};
+    use crate::genome::{N_INPUT, N_OBS};
 
     #[test]
     fn the_label_lists_match_the_fixed_slot_counts() {
         let inputs = input_labels();
-        assert_eq!(inputs.len(), 57);
-        assert_eq!(inputs[32], "constant one");
-        assert_eq!(inputs[33], "our hull bit 0");
-        assert_eq!(inputs[38], "their hull bit 0");
-        assert_eq!(inputs[43], "previous left");
-        assert_eq!(inputs[48], "previous memory 0");
-        assert_eq!(inputs[56], "bias");
+        assert_eq!(inputs.len(), N_INPUT as usize);
+        assert_eq!(inputs[N_OBS - 1], "their hull bit 4");
+        assert_eq!(inputs[CONTROL_BASE], "previous left");
+        assert_eq!(inputs[MEMORY_BASE], "previous memory 0");
+        assert_eq!(inputs[BIAS_SLOT], "bias");
         let outputs = output_labels();
         assert_eq!(outputs.len(), 13);
         assert_eq!(outputs[4], "special");
         assert_eq!(outputs[5], "memory 0");
     }
-
 }

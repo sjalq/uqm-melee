@@ -382,7 +382,19 @@ fn cyclic_components(outgoing: &[Vec<u32>], component: &[u32], components: usize
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::genome::{Gene, Node};
+    use crate::genome::{Gene, Node, HIDDEN_BASE, OUTPUT_BASE};
+
+    /// Named landmarks rather than literals: these tests are about the graph's
+    /// evaluation rules, not about how wide the observation vector happens to
+    /// be, so widening that vector must not make them lie.
+    const BIAS: u32 = N_INPUT - 1;
+    const OUT0: u32 = OUTPUT_BASE;
+    const OUT1: u32 = OUTPUT_BASE + 1;
+    const OUT_LAST: u32 = HIDDEN_BASE - 1;
+    const H0: u32 = HIDDEN_BASE;
+    const H1: u32 = HIDDEN_BASE + 1;
+    const H2: u32 = HIDDEN_BASE + 2;
+    const H3: u32 = HIDDEN_BASE + 3;
 
     fn genome(hidden: &[u32], genes: &[(u32, u32, u32, f64)]) -> Genome {
         let mut g = Genome::minimal();
@@ -473,13 +485,13 @@ mod tests {
         let outputs = net.activate(&mut state, &[1.0; N_INPUT as usize]);
         assert_eq!(outputs, [0.0; N_OUTPUT as usize]);
         assert_eq!(net.link_count(), 0);
-        assert_eq!(net.node_count(), 70);
+        assert_eq!(net.node_count(), HIDDEN_BASE as usize);
     }
 
     #[test]
     fn feed_forward_chain_resolves_within_one_activation() {
-        // input 0 -> hidden 70 -> output 57, both weights 1.
-        let net = Network::compile(&genome(&[70], &[(1, 0, 70, 1.0), (2, 70, 57, 1.0)]));
+        // input 0 -> hidden H0 -> output OUT0, both weights 1.
+        let net = Network::compile(&genome(&[H0], &[(1, 0, H0, 1.0), (2, H0, OUT0, 1.0)]));
         let mut state = Activations::new(&net);
         let mut inputs = [0.0; N_INPUT as usize];
         inputs[0] = 1.0;
@@ -492,10 +504,10 @@ mod tests {
 
     #[test]
     fn self_loop_reads_the_previous_decision() {
-        // input 0 -> hidden 70, and hidden 70 -> hidden 70 (recurrent).
+        // input 0 -> hidden H0, and hidden H0 -> hidden H0 (recurrent).
         let net = Network::compile(&genome(
-            &[70],
-            &[(1, 0, 70, 1.0), (2, 70, 70, 1.0), (3, 70, 57, 1.0)],
+            &[H0],
+            &[(1, 0, H0, 1.0), (2, H0, H0, 1.0), (3, H0, OUT0, 1.0)],
         ));
         let mut state = Activations::new(&net);
         let mut inputs = [0.0; N_INPUT as usize];
@@ -514,14 +526,14 @@ mod tests {
 
     #[test]
     fn two_cycle_reads_previous_on_both_intra_component_edges() {
-        // 70 <-> 71 form one cyclic component; 0 -> 70 is a normal edge.
+        // H0 <-> H1 form one cyclic component; 0 -> H0 is a normal edge.
         let net = Network::compile(&genome(
-            &[70, 71],
+            &[H0, H1],
             &[
-                (1, 0, 70, 1.0),
-                (2, 70, 71, 1.0),
-                (3, 71, 70, 1.0),
-                (4, 71, 57, 1.0),
+                (1, 0, H0, 1.0),
+                (2, H0, H1, 1.0),
+                (3, H1, H0, 1.0),
+                (4, H1, OUT0, 1.0),
             ],
         ));
         let mut state = Activations::new(&net);
@@ -530,13 +542,13 @@ mod tests {
         let first = net.activate(&mut state, &inputs);
         assert_eq!(first[0], sigmoid(0.0));
         let second = net.activate(&mut state, &inputs);
-        // 70 was sigmoid(1 + 0) on step one, so 71 now sees it.
+        // H0 was sigmoid(1 + 0) on step one, so H1 now sees it.
         assert!((second[0] - sigmoid(sigmoid(sigmoid(1.0)))).abs() < 1e-15);
     }
 
     #[test]
     fn disabled_genes_are_absent_from_the_runtime() {
-        let mut g = genome(&[70], &[(1, 0, 70, 1.0), (2, 70, 57, 1.0)]);
+        let mut g = genome(&[H0], &[(1, 0, H0, 1.0), (2, H0, OUT0, 1.0)]);
         g.genes[0].enabled = false;
         let net = Network::compile(&g);
         assert_eq!(net.link_count(), 1);
@@ -548,9 +560,10 @@ mod tests {
 
     #[test]
     fn long_feed_forward_chain_resolves_in_one_pass() {
-        // 0 -> 70 -> 71 -> ... -> 79 -> 57, declared out of topological order.
-        let hidden: Vec<u32> = (70..80).collect();
-        let mut genes = vec![(1u32, 79u32, 57u32, 1.0f64)];
+        // A ten-node hidden chain into the first output, declared out of
+        // topological order.
+        let hidden: Vec<u32> = (HIDDEN_BASE..HIDDEN_BASE + 10).collect();
+        let mut genes = vec![(1u32, HIDDEN_BASE + 9, OUT0, 1.0f64)];
         for (i, id) in hidden.iter().enumerate() {
             let from = if i == 0 { 0 } else { hidden[i - 1] };
             genes.push((2 + i as u32, from, *id, 1.0));
@@ -583,7 +596,10 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    fn reference(genome: &Genome, steps: &[[f64; N_INPUT as usize]]) -> Vec<[f64; N_OUTPUT as usize]> {
+    fn reference(
+        genome: &Genome,
+        steps: &[[f64; N_INPUT as usize]],
+    ) -> Vec<[f64; N_OUTPUT as usize]> {
         let present = |id: u32| genome.nodes.iter().any(|n| n.id == id);
         // Rule 1: disabled genes, and genes with an undeclared endpoint, are
         // not part of the graph at all.
@@ -784,57 +800,64 @@ mod tests {
             ("no genes at all", Genome::minimal()),
             (
                 "feed-forward chain",
-                genome(&[70], &[(1, 0, 70, 0.7), (2, 70, 57, -1.3)]),
+                genome(&[H0], &[(1, 0, H0, 0.7), (2, H0, OUT0, -1.3)]),
             ),
             (
                 "self-loop",
                 genome(
-                    &[70],
-                    &[(1, 0, 70, 0.9), (2, 70, 70, 0.6), (3, 70, 57, 1.1)],
+                    &[H0],
+                    &[(1, 0, H0, 0.9), (2, H0, H0, 0.6), (3, H0, OUT0, 1.1)],
                 ),
             ),
             (
                 "two-cycle with an entry and an exit",
                 genome(
-                    &[70, 71],
+                    &[H0, H1],
                     &[
-                        (1, 0, 70, 1.2),
-                        (2, 70, 71, -0.4),
-                        (3, 71, 70, 0.8),
-                        (4, 71, 57, 1.0),
+                        (1, 0, H0, 1.2),
+                        (2, H0, H1, -0.4),
+                        (3, H1, H0, 0.8),
+                        (4, H1, OUT0, 1.0),
                     ],
                 ),
             ),
             (
                 "three-cycle behind a feed-forward front",
                 genome(
-                    &[70, 71, 72, 73],
+                    &[H0, H1, H2, H3],
                     &[
-                        (1, 0, 73, 0.5),
-                        (2, 73, 70, 1.4),
-                        (3, 70, 71, 0.3),
-                        (4, 71, 72, -0.9),
-                        (5, 72, 70, 0.7),
-                        (6, 72, 57, 1.0),
-                        (7, 1, 58, -0.6),
+                        (1, 0, H3, 0.5),
+                        (2, H3, H0, 1.4),
+                        (3, H0, H1, 0.3),
+                        (4, H1, H2, -0.9),
+                        (5, H2, H0, 0.7),
+                        (6, H2, OUT0, 1.0),
+                        (7, 1, OUT1, -0.6),
                     ],
                 ),
             ),
             (
                 "an output feeding a hidden node back",
                 genome(
-                    &[70],
+                    &[H0],
                     &[
-                        (1, 0, 57, 0.8),
-                        (2, 57, 70, 1.1),
-                        (3, 70, 57, -0.5),
-                        (4, 56, 70, 0.2),
+                        (1, 0, OUT0, 0.8),
+                        (2, OUT0, H0, 1.1),
+                        (3, H0, OUT0, -0.5),
+                        (4, BIAS, H0, 0.2),
                     ],
                 ),
             ),
             (
                 "output straight to output",
-                genome(&[], &[(1, 2, 57, 1.7), (2, 57, 58, -1.2), (3, 58, 57, 0.4)]),
+                genome(
+                    &[],
+                    &[
+                        (1, 2, OUT0, 1.7),
+                        (2, OUT0, OUT1, -1.2),
+                        (3, OUT1, OUT0, 0.4),
+                    ],
+                ),
             ),
         ];
         for (what, g) in cases {
@@ -844,12 +867,12 @@ mod tests {
         // Rule 1: the disabled variants of the same graphs, including one that
         // disables an edge inside a cycle and so breaks the recurrence.
         let mut disabled = genome(
-            &[70, 71],
+            &[H0, H1],
             &[
-                (1, 0, 70, 1.2),
-                (2, 70, 71, -0.4),
-                (3, 71, 70, 0.8),
-                (4, 71, 57, 1.0),
+                (1, 0, H0, 1.2),
+                (2, H0, H1, -0.4),
+                (3, H1, H0, 0.8),
+                (4, H1, OUT0, 1.0),
             ],
         );
         disabled.genes[2].enabled = false;
@@ -863,9 +886,9 @@ mod tests {
         let mut rng = Lcg(0xfa11);
         let steps = input_steps(&mut rng, 5);
         // A genome that declares only some inputs and some outputs, so the
-        // input vector no longer lands on slots 0..57 and several output slots
+        // input vector no longer lands on every input slot and several outputs
         // are undeclared.
-        let ids: [u32; 6] = [0, 3, 56, 58, 69, 70];
+        let ids: [u32; 6] = [0, 3, BIAS, OUT1, OUT_LAST, H0];
         let nodes: Vec<Node> = ids
             .iter()
             .map(|&id| Node {
@@ -874,12 +897,12 @@ mod tests {
             })
             .collect();
         let genes = [
-            (1u32, 0u32, 70u32, 0.9f64),
-            (2, 70, 70, 0.5),
-            (3, 56, 58, -1.1),
-            (4, 70, 69, 0.3),
-            (5, 69, 70, 0.6),
-            (6, 3, 58, 1.4),
+            (1u32, 0u32, H0, 0.9f64),
+            (2, H0, H0, 0.5),
+            (3, BIAS, OUT1, -1.1),
+            (4, H0, OUT_LAST, 0.3),
+            (5, OUT_LAST, H0, 0.6),
+            (6, 3, OUT1, 1.4),
         ];
         let g = Genome {
             nodes,
@@ -909,7 +932,7 @@ mod tests {
             let mut nodes: Vec<Node> = if full {
                 Genome::minimal().nodes
             } else {
-                [0u32, 1, 2, 56, 57, 58, 69]
+                [0u32, 1, 2, BIAS, OUT0, OUT1, OUT_LAST]
                     .iter()
                     .filter(|_| rng.below(4) != 0)
                     .map(|&id| Node {
@@ -918,7 +941,7 @@ mod tests {
                     })
                     .collect()
             };
-            let hidden: Vec<u32> = (70..70 + rng.below(5) as u32).collect();
+            let hidden: Vec<u32> = (HIDDEN_BASE..HIDDEN_BASE + rng.below(5) as u32).collect();
             for &id in hidden.iter() {
                 nodes.push(Node {
                     id,
@@ -969,22 +992,22 @@ mod tests {
         // The carry-over is the compiled recurrence, not a copy of the whole
         // graph: a feed-forward genome carries nothing, and a cycle carries one
         // slot per distinct recurrent SOURCE however many edges read it.
-        let forward = Network::compile(&genome(&[70], &[(1, 0, 70, 1.0), (2, 70, 57, 1.0)]));
+        let forward = Network::compile(&genome(&[H0], &[(1, 0, H0, 1.0), (2, H0, OUT0, 1.0)]));
         assert_eq!(forward.recurrent_sources.len(), 0);
         assert_eq!(Activations::new(&forward).values.len(), forward.width);
 
         let cyclic = Network::compile(&genome(
-            &[70, 71],
+            &[H0, H1],
             &[
-                (1, 0, 70, 1.0),
-                (2, 70, 71, 1.0),
-                (3, 71, 70, 1.0),
+                (1, 0, H0, 1.0),
+                (2, H0, H1, 1.0),
+                (3, H1, H0, 1.0),
                 // A second reader of the same recurrent source.
-                (4, 71, 71, 1.0),
-                (5, 71, 57, 1.0),
+                (4, H1, H1, 1.0),
+                (5, H1, OUT0, 1.0),
             ],
         ));
-        // 70 and 71 are each read from the previous decision; 71 by two edges.
+        // H0 and H1 are each read from the previous decision; H1 by two edges.
         assert_eq!(cyclic.recurrent_sources.len(), 2);
         assert_eq!(
             Activations::new(&cyclic).values.len(),

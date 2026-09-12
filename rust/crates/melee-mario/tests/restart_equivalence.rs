@@ -206,8 +206,14 @@ fn the_real_loop_reaches_a_held_out_round_and_the_status_document_stays_well_for
     }
 
     let network = trainer.network();
-    assert_eq!(network["input_labels"].as_array().unwrap().len(), 57);
-    assert_eq!(network["output_labels"].as_array().unwrap().len(), 13);
+    assert_eq!(
+        network["input_labels"].as_array().unwrap().len(),
+        melee_mario::genome::N_INPUT as usize
+    );
+    assert_eq!(
+        network["output_labels"].as_array().unwrap().len(),
+        melee_mario::genome::N_OUTPUT as usize
+    );
     assert_eq!(network["genome"]["schema_version"], 1);
 }
 

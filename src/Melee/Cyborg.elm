@@ -1,4 +1,10 @@
-module Melee.Cyborg exposing (maneuverability, pilot, think)
+module Melee.Cyborg exposing
+    ( maneuverability, pilot, think
+    , closeRange, fastShip, longRange, mediumShip
+    , colliding, displayToWorld, isCrew, isGravity, isSpecialBody, isUltra, lifeSpan
+    , plotIntercept, radiusWorld, worldToTurn
+    , firingSolution, gravityIntercept, rangeProbe
+    )
 
 {-| Original Super Melee cyborg (cyborg.c, intel.c, per-ship intelligence\_func).
 
@@ -190,62 +196,69 @@ pilot rating side arena =
     )
 
 
+{-| The seat's opening decision state, before any concern has been consulted.
+Extracted so that a caller who only wants one of the cyborg's predicates asks it
+with the very state the cyborg would have used.
+-}
+workOf : CyborgRating -> Side -> Arena -> Seed -> Maybe Work
+workOf rating side arena seed =
+    case Dict.get (toInt (State.core (combatant side arena)).element) arena.elements of
+        Nothing ->
+            Nothing
+
+        Just ship ->
+            let
+                core =
+                    State.core (combatant side arena)
+
+                kind =
+                    State.kind (combatant side arena)
+
+                spec =
+                    stock kind
+
+                (Facing facing) =
+                    core.facing
+            in
+            Just
+                { ship = ship
+                , core = core
+                , kind = kind
+                , ability = spec.ability
+                , mi = maneuverability core.characteristics
+                , range = intelRange kind
+                , facing = facing
+                , velocity = ship.velocity
+                , next = ship.next.location
+                , turnWait = waitN ship.turnWait
+                , thrustWait = waitN ship.thrustWait
+                , left = False
+                , right = False
+                , thrust = False
+                , weapon = False
+                , special = False
+                , seed = seed
+                , space = arena.space
+                , rating = rating
+                , moved = waitN ship.turnWait > 0 && waitN ship.thrustWait > 0
+                , fired = waitN core.weaponWait > 0 || spec.ability.seekingWeapon
+                , arena = arena
+                , side = side
+                }
+
+
 decide : CyborgRating -> Side -> Arena -> Seed -> ( BattleInput, Seed, Combatant )
 decide rating side arena seed =
-    case Dict.get (toInt (State.core (combatant side arena)).element) arena.elements of
+    case workOf rating side arena seed of
         Nothing ->
             ( idle, seed, combatant side arena )
 
-        Just ship ->
-            if ship.points == 0 then
+        Just work0 ->
+            if work0.ship.points == 0 then
                 ( idle, seed, combatant side arena )
 
             else
                 let
-                    core =
-                        State.core (combatant side arena)
-
-                    kind =
-                        State.kind (combatant side arena)
-
-                    spec =
-                        stock kind
-
-                    chars =
-                        core.characteristics
-
-                    mi =
-                        maneuverability chars
-
-                    (Facing facing) =
-                        core.facing
-
-                    work0 =
-                        { ship = ship
-                        , core = core
-                        , kind = kind
-                        , ability = spec.ability
-                        , mi = mi
-                        , range = intelRange kind
-                        , facing = facing
-                        , velocity = ship.velocity
-                        , next = ship.next.location
-                        , turnWait = waitN ship.turnWait
-                        , thrustWait = waitN ship.thrustWait
-                        , left = False
-                        , right = False
-                        , thrust = False
-                        , weapon = False
-                        , special = False
-                        , seed = seed
-                        , space = arena.space
-                        , rating = rating
-                        , moved = waitN ship.turnWait > 0 && waitN ship.thrustWait > 0
-                        , fired = waitN core.weaponWait > 0 || spec.ability.seekingWeapon
-                        , arena = arena
-                        , side = side
-                        }
-
                     concerns =
                         fillConcerns work0
 
@@ -321,9 +334,19 @@ specialReady work =
     waitN work.core.specialWait <= 0 && work.rating /= StandardCyborg
 
 
+{-| `ultra` for a hull that is not mid-decision. `Work.mi` is exactly
+`maneuverability work.core.characteristics` and nothing the per-ship arms write
+back changes it, so this is the same predicate the cyborg applies to itself,
+reachable without a `Work`.
+-}
+isUltra : Characteristics -> Bool
+isUltra chars =
+    chars.thrustIncrement == chars.maxThrust && maneuverability chars >= mediumShip
+
+
 ultra : Work -> Bool
 ultra work =
-    work.core.characteristics.thrustIncrement == work.core.characteristics.maxThrust && work.mi >= mediumShip
+    isUltra work.core.characteristics
 
 
 isGravity : Element -> Bool
@@ -523,6 +546,61 @@ lifeSpan el =
             n
 
 
+{-| The gravity battery of `considerGravity`: the maneuver-horizon probe, kept
+only when the conjunction that promotes a planet to a concern holds. Returns that
+probe's turn, or 0 when the planet is not a concern. The `moved` latch the
+concern also depends on is deliberately not applied here; it is
+`turnWait > 0 && thrustWait > 0`, which an encoder already carries.
+-}
+gravityIntercept : WorldExtent -> Element -> Element -> Characteristics -> Int
+gravityIntercept space planet ship chars =
+    let
+        maneuverTurn =
+            if isUltra chars then
+                16
+
+            else if maneuverability chars <= mediumShip then
+                48
+
+            else
+                32
+
+        bounds =
+            80
+
+        hit =
+            plotIntercept space planet ship maneuverTurn (displayToWorld (30 + bounds * 3))
+    in
+    if hit > 0 && (hit > 1 || plotIntercept space planet ship 1 (displayToWorld (35 + bounds)) > 0 || plotIntercept space planet ship (maneuverTurn * 2) (displayToWorld (40 + bounds)) > 1) then
+        hit
+
+    else
+        0
+
+
+{-| `enticeTarget`'s range probe: the turn within the next ten at which the
+seat's own weapon range, less a quarter, would close on `other`, or 0.
+-}
+rangeProbe : WorldExtent -> Element -> Element -> Int -> Int
+rangeProbe space ship other range =
+    plotIntercept space ship other 10 (range - range // 4)
+
+
+{-| The cyborg's firing predicate for one seat against one element, asked from
+the seat's CURRENT facing rather than the post-turn facing `moveAndFire` would
+use. Exposed so an observation encoder asks the cyborg's own question instead of
+restating it and drifting.
+-}
+firingSolution : Arena -> Side -> Element -> Int -> Bool
+firingSolution arena side other margin =
+    case workOf AwesomeCyborg side arena arena.seed of
+        Nothing ->
+            False
+
+        Just work ->
+            shipWeapons work other margin
+
+
 considerGravity : Work -> Element -> Int -> Int -> Concerns -> Concerns
 considerGravity work el _ _ concerns =
     if work.moved then
@@ -530,40 +608,23 @@ considerGravity work el _ _ concerns =
 
     else
         let
-            maneuverTurn =
-                if ultra work then
-                    16
-
-                else if work.mi <= mediumShip then
-                    48
-
-                else
-                    32
-
-            bounds =
-                80
-
             hit =
-                plotIntercept work.space el work.ship maneuverTurn (displayToWorld (30 + bounds * 3))
+                gravityIntercept work.space el work.ship work.core.characteristics
         in
         if hit > 0 then
-            if hit > 1 || plotIntercept work.space el work.ship 1 (displayToWorld (35 + bounds)) > 0 || plotIntercept work.space el work.ship (maneuverTurn * 2) (displayToWorld (40 + bounds)) > 1 then
-                { concerns
-                    | gravity =
-                        { object = Just el
-                        , move =
-                            if ultra work then
-                                Avoid
+            { concerns
+                | gravity =
+                    { object = Just el
+                    , move =
+                        if ultra work then
+                            Avoid
 
-                            else
-                                Entice
-                        , facing = Trig.arctan -(Trig.wrapDelta (el.next.location.x - work.ship.next.location.x) work.space.width) -(Trig.wrapDelta (el.next.location.y - work.ship.next.location.y) work.space.height)
-                        , whichTurn = hit
-                        }
-                }
-
-            else
-                concerns
+                        else
+                            Entice
+                    , facing = Trig.arctan -(Trig.wrapDelta (el.next.location.x - work.ship.next.location.x) work.space.width) -(Trig.wrapDelta (el.next.location.y - work.ship.next.location.y) work.space.height)
+                    , whichTurn = hit
+                    }
+            }
 
         else
             concerns
@@ -1246,7 +1307,7 @@ enticeTarget work eval other toward away canTurn canThrust =
                 turned
 
         inRange =
-            intercept 10 (work.range - work.range // 4)
+            rangeProbe work.space work.ship other work.range
 
         usesInertia =
             work.core.characteristics.thrustIncrement /= work.core.characteristics.maxThrust

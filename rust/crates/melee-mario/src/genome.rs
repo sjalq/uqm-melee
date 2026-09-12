@@ -6,13 +6,13 @@
 //! ```json
 //! {"schema_version":1,
 //!  "nodes":[{"id":0,"kind":"input"}],
-//!  "genes":[{"innovation":1,"from":0,"to":57,"weight":0.5,"enabled":true}]}
+//!  "genes":[{"innovation":1,"from":0,"to":117,"weight":0.5,"enabled":true}]}
 //! ```
 //!
 //! Node identifier ranges are fixed, never negotiated:
-//!   * `0..=56`  inputs   (43 observations, 5 prior controls, 8 prior memory, bias)
-//!   * `57..=69` outputs  (5 controls, 8 memory channels)
-//!   * `>=70`    hidden
+//!   * `0..=116`   inputs  (103 observations, 5 prior controls, 8 prior memory, bias)
+//!   * `117..=129` outputs (5 controls, 8 memory channels)
+//!   * `>=130`     hidden
 //!
 //! A node identifier's range and its declared `kind` must agree, which makes a
 //! mislabelled node unrepresentable after `Genome::validate`.
@@ -21,17 +21,21 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 use std::fmt;
 
-/// 43 observations + 5 prior controls + 8 prior memory + 1 bias.
-pub const N_INPUT: u32 = 57;
-/// 5 control bits + 8 memory channels.
-pub const N_OUTPUT: u32 = 13;
-pub const N_OBS: usize = 43;
+/// Observation slots. Taken straight from the encoder rather than restated, so
+/// the two cannot drift; the layout those slots carry is documented on
+/// `melee_neat::encode::vector`, and changing it changes this number and every
+/// stored genome with it.
+pub const N_OBS: usize = melee_neat::policy::N_OBS;
 pub const N_CONTROL: usize = 5;
 pub const N_MEMORY: usize = 8;
+/// 103 observations + 5 prior controls + 8 prior memory + 1 bias.
+pub const N_INPUT: u32 = (N_OBS + N_CONTROL + N_MEMORY + 1) as u32;
+/// 5 control bits + 8 memory channels.
+pub const N_OUTPUT: u32 = (N_CONTROL + N_MEMORY) as u32;
 
 /// First identifier of each range. Inputs start at zero.
-pub const OUTPUT_BASE: u32 = N_INPUT; // 57
-pub const HIDDEN_BASE: u32 = N_INPUT + N_OUTPUT; // 70
+pub const OUTPUT_BASE: u32 = N_INPUT; // 117
+pub const HIDDEN_BASE: u32 = N_INPUT + N_OUTPUT; // 130
 pub const SCHEMA_VERSION: i64 = 1;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -349,18 +353,21 @@ mod tests {
     #[test]
     fn minimal_seed_is_valid_and_covers_every_fixed_slot() {
         let genome = Genome::minimal().validate().expect("minimal is valid");
-        assert_eq!(genome.nodes.len(), 70);
+        assert_eq!(genome.nodes.len(), HIDDEN_BASE as usize);
         assert_eq!(genome.nodes[0].kind, NodeKind::Input);
-        assert_eq!(genome.nodes[56].kind, NodeKind::Input);
-        assert_eq!(genome.nodes[57].kind, NodeKind::Output);
-        assert_eq!(genome.nodes[69].kind, NodeKind::Output);
+        assert_eq!(genome.nodes[(N_INPUT - 1) as usize].kind, NodeKind::Input);
+        assert_eq!(genome.nodes[OUTPUT_BASE as usize].kind, NodeKind::Output);
+        assert_eq!(
+            genome.nodes[(HIDDEN_BASE - 1) as usize].kind,
+            NodeKind::Output
+        );
         assert!(genome.genes.is_empty());
     }
 
     fn seeded(genes: Vec<Gene>) -> Genome {
         let mut genome = Genome::minimal();
         genome.nodes.push(Node {
-            id: 70,
+            id: HIDDEN_BASE,
             kind: NodeKind::Hidden,
         });
         genome.genes = genes;
@@ -372,15 +379,15 @@ mod tests {
         let genome = seeded(vec![
             Gene {
                 innovation: 7,
-                from: 56,
-                to: 70,
+                from: N_INPUT - 1,
+                to: HIDDEN_BASE,
                 weight: -0.25,
                 enabled: true,
             },
             Gene {
                 innovation: 3,
                 from: 0,
-                to: 57,
+                to: OUTPUT_BASE,
                 weight: 1.5,
                 enabled: false,
             },
@@ -427,7 +434,7 @@ mod tests {
 
         let to_input = seeded(vec![Gene {
             innovation: 1,
-            from: 70,
+            from: HIDDEN_BASE,
             to: 3,
             weight: 0.0,
             enabled: true,
@@ -440,7 +447,7 @@ mod tests {
         let unknown = seeded(vec![Gene {
             innovation: 1,
             from: 999,
-            to: 57,
+            to: OUTPUT_BASE,
             weight: 0.0,
             enabled: true,
         }]);
@@ -452,7 +459,7 @@ mod tests {
         let nan = seeded(vec![Gene {
             innovation: 1,
             from: 0,
-            to: 57,
+            to: OUTPUT_BASE,
             weight: f64::NAN,
             enabled: true,
         }]);
@@ -462,35 +469,38 @@ mod tests {
             Gene {
                 innovation: 1,
                 from: 0,
-                to: 57,
+                to: OUTPUT_BASE,
                 weight: 0.0,
                 enabled: true,
             },
             Gene {
                 innovation: 2,
                 from: 0,
-                to: 57,
+                to: OUTPUT_BASE,
                 weight: 1.0,
                 enabled: false,
             },
         ]);
         assert_eq!(
             twice.validate(),
-            Err(GenomeError::DuplicateEdge { from: 0, to: 57 })
+            Err(GenomeError::DuplicateEdge {
+                from: 0,
+                to: OUTPUT_BASE
+            })
         );
 
         let same_innovation = seeded(vec![
             Gene {
                 innovation: 1,
                 from: 0,
-                to: 57,
+                to: OUTPUT_BASE,
                 weight: 0.0,
                 enabled: true,
             },
             Gene {
                 innovation: 1,
                 from: 1,
-                to: 57,
+                to: OUTPUT_BASE,
                 weight: 0.0,
                 enabled: true,
             },
@@ -521,15 +531,17 @@ mod tests {
         let mut rng = Stream::seeded(0xfeed);
         let mut genome = Genome::minimal();
         genome.nodes.push(Node {
-            id: 70,
+            id: HIDDEN_BASE,
             kind: NodeKind::Hidden,
         });
         for innovation in 1..500u32 {
-            let from = innovation % 57;
+            // Distinct (from, to) for every innovation: the input walks fastest
+            // so that no two genes claim the same edge.
+            let from = innovation % N_INPUT;
             genome.genes.push(Gene {
                 innovation,
                 from,
-                to: 57 + (innovation % 13),
+                to: OUTPUT_BASE + (innovation / N_INPUT) % N_OUTPUT,
                 weight: rng.signed() * 2.0,
                 enabled: innovation % 7 != 0,
             });
@@ -568,14 +580,14 @@ mod tests {
             Gene {
                 innovation: 1,
                 from: 0,
-                to: 57,
+                to: OUTPUT_BASE,
                 weight: 0.5,
                 enabled: true,
             },
             Gene {
                 innovation: 2,
                 from: 1,
-                to: 57,
+                to: OUTPUT_BASE,
                 weight: 0.5,
                 enabled: true,
             },

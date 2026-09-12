@@ -312,7 +312,7 @@ nodesChart : Tip
 nodesChart =
     t "chart-nodes"
         "Champion node count"
-        "Nodes in the champion genome per generation. The first 70 are the fixed 57 inputs and 13 outputs and are present from the very first seeded genome; everything above that line is hidden structure this run actually discovered."
+        "Nodes in the champion genome per generation. The first 130 are the fixed 117 inputs and 13 outputs and are present from the very first seeded genome; everything above that line is hidden structure this run actually discovered."
         [ ( "Denominator", "None; a count per generation." )
         , ( "Window", "Per generation, whole run." )
         , ( "Source", "Champion genome census. Structure, not performance." )
@@ -692,7 +692,7 @@ meanNodes : Tip
 meanNodes =
     t "mean-nodes"
         "Mean nodes"
-        "Average node count across the population, including the fixed 57 inputs and 13 outputs. Growth above the fixed 70 is the topology the run has actually discovered."
+        "Average node count across the population, including the fixed 117 inputs and 13 outputs. Growth above the fixed 130 is the topology the run has actually discovered."
         [ ( "Denominator", "Population size." )
         , ( "Window", "Current generation." )
         , ( "Source", "Genome census." )
@@ -839,7 +839,7 @@ topology : Tip
 topology =
     t "topology"
         "Champion network"
-        "The champion's evolved graph. The 57 inputs are grouped and individually labelled: 33 combat sensors, our ship's 5 identity bits, the opponent's 5 identity bits, the 5 control bits actually applied last step, the 8 memory channels fed back from last step, and the extra bias. The 13 outputs are the 5 controls and the 8 memory channels. Hidden nodes and every connection between them were produced by structural mutation, not by a fixed layer."
+        "The champion's evolved graph. The 117 inputs are grouped and individually labelled: 93 combat sensors, our ship's 5 identity bits, the opponent's 5 identity bits, the 5 control bits actually applied last step, the 8 memory channels fed back from last step, and the extra bias. The 13 outputs are the 5 controls and the 8 memory channels. Hidden nodes and every connection between them were produced by structural mutation, not by a fixed layer."
         [ ( "Denominator", "None; a graph." )
         , ( "Window", "Current champion genome, as served by the network endpoint." )
         , ( "Source", "Genome. Connection weights are shown as stored; no activations are replayed here." )

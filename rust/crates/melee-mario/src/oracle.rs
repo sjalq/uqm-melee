@@ -4,7 +4,7 @@
 //!
 //! ```json
 //! {"genome": <genome schema 1>,
-//!  "steps": [{"observations":[43 numbers],"previous":[5],"memory":[8]}]}
+//!  "steps": [{"observations":[103 numbers],"previous":[5],"memory":[8]}]}
 //! ```
 //!
 //! Writes NDJSON on stdout, ONE LINE PER STEP, in order:
@@ -99,7 +99,7 @@ pub fn run(input: impl BufRead, out: &mut impl Write) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::genome::{Gene, Node, NodeKind};
+    use crate::genome::{Gene, Node, NodeKind, HIDDEN_BASE, N_INPUT, OUTPUT_BASE};
 
     fn drive(input: &str) -> String {
         let mut out: Vec<u8> = Vec::new();
@@ -111,28 +111,28 @@ mod tests {
     fn emits_one_line_per_step_and_keeps_graph_state() {
         let mut g = Genome::minimal();
         g.nodes.push(Node {
-            id: 70,
+            id: HIDDEN_BASE,
             kind: NodeKind::Hidden,
         });
         g.genes = vec![
             Gene {
                 innovation: 1,
-                from: 56,
-                to: 70,
+                from: N_INPUT - 1,
+                to: HIDDEN_BASE,
                 weight: 1.0,
                 enabled: true,
             },
             Gene {
                 innovation: 2,
-                from: 70,
-                to: 70,
+                from: HIDDEN_BASE,
+                to: HIDDEN_BASE,
                 weight: 1.0,
                 enabled: true,
             },
             Gene {
                 innovation: 3,
-                from: 70,
-                to: 57,
+                from: HIDDEN_BASE,
+                to: OUTPUT_BASE,
                 weight: 1.0,
                 enabled: true,
             },
@@ -165,7 +165,7 @@ mod tests {
         let output = drive(&format!("{bad}\n{good}\nnot json\n"));
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("observations must hold 43 numbers"));
+        assert!(lines[0].contains(&format!("observations must hold {N_OBS} numbers")));
         assert!(lines[1].contains("error"));
     }
 }

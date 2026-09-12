@@ -1,14 +1,21 @@
-//! Binding between the 57 network inputs, the 13 network outputs and the
+//! Binding between the 117 network inputs, the 13 network outputs and the
 //! simulation's controls. This layout is part of the cross-language contract.
 //!
 //! INPUTS, in order:
-//!   `0..=42`  the 43 observations from `melee_neat::encode::vector`, which
-//!             are 33 sensors (the last of which is the constant 1.0), then
-//!             our hull as 5 bits low bit first, then theirs as 5 bits.
-//!   `43..=47` the five ACTUAL controls the seat used on the previous tick:
-//!             turn-left, turn-right, thrust, weapon, special.
-//!   `48..=55` the eight memory channels this policy emitted last tick.
-//!   `56`      bias, always 1.0.
+//!   `0..=102`   the 103 observations from `melee_neat::encode::vector`. Every
+//!               one of them is something the original cyborg also reads, bar
+//!               five slots marked SUPERSET and justified in that module's
+//!               layout comment, which is the normative description of what
+//!               each of the 103 carries. The last ten are the two hulls' 5-bit
+//!               roster indices and the very last is the encoder's constant 1.0.
+//!   `103..=107` the five ACTUAL controls the seat used on the previous tick:
+//!               turn-left, turn-right, thrust, weapon, special.
+//!   `108..=115` the eight memory channels this policy emitted last tick.
+//!   `116`       bias, always 1.0.
+//!
+//! The previous controls and the memory channels are the two extras this policy
+//! is deliberately granted over the cyborg, which has neither. Everything else
+//! reaching the network is the cyborg's own information set.
 //!
 //! OUTPUTS, in order:
 //!   `0..=4`   controls; a value strictly greater than zero asserts the
@@ -78,7 +85,7 @@ pub fn assemble(
 
 /// A compiled policy plus the state of one seat. Recurrent graph activations
 /// and the eight explicit memory channels are distinct: the first belongs to
-/// the graph, the second is fed back through inputs `48..=55`.
+/// the graph, the second is fed back through inputs `108..=115`.
 ///
 /// The compiled [`Network`] is immutable and shared: a genome is compiled once
 /// per generation and every episode on the panel borrows that same graph while
@@ -201,33 +208,33 @@ mod tests {
         assert_eq!(&inputs[CONTROL_BASE..MEMORY_BASE], &bits);
         assert_eq!(inputs[MEMORY_BASE], -0.5);
         assert_eq!(inputs[BIAS_SLOT], 1.0);
-        assert_eq!(BIAS_SLOT, 56);
+        assert_eq!(BIAS_SLOT, (crate::genome::N_INPUT - 1) as usize);
     }
 
     #[test]
     fn memory_feeds_back_into_the_next_step() {
-        use crate::genome::{Gene, Node, NodeKind};
-        // memory channel 0 (output 62) is driven by the bias, and output 57
-        // reads memory input slot 48 back.
+        use crate::genome::{Gene, Node, NodeKind, HIDDEN_BASE, OUTPUT_BASE};
+        // The first memory output is driven by the bias, and the first control
+        // output reads the first memory feedback slot back.
         let mut g = Genome::minimal();
         g.genes = vec![
             Gene {
                 innovation: 1,
-                from: 56,
-                to: 62,
+                from: BIAS_SLOT as u32,
+                to: OUTPUT_BASE + N_CONTROL as u32,
                 weight: 1.0,
                 enabled: true,
             },
             Gene {
                 innovation: 2,
-                from: 48,
-                to: 57,
+                from: MEMORY_BASE as u32,
+                to: OUTPUT_BASE,
                 weight: 1.0,
                 enabled: true,
             },
         ];
         let _ = Node {
-            id: 70,
+            id: HIDDEN_BASE,
             kind: NodeKind::Hidden,
         };
         let genome = g.validate().unwrap();
