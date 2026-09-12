@@ -116,6 +116,18 @@ fn hit_hints(
             let spec = kind.spec();
             let mut best = 0;
             for mount in spec.mounts() {
+                // The fold keeps the soonest hit across the mounts, and
+                // `plot_intercept` already returns the soonest qualifying turn
+                // inside the range it is given. So once a mount has hit on turn
+                // `best`, the turns from `best` onwards can only rediscover a
+                // hit this fold would throw away: searching them is wasted. Cap
+                // each later mount at `best - 1`, which leaves nothing to search
+                // once `best` is 1 and makes every surviving `t` an improvement
+                // by construction.
+                if best == 1 {
+                    break;
+                }
+                let horizon = if best == 0 { spec.life } else { best - 1 };
                 let f = (facing + mount.facing_offset).rem_euclid(16);
                 let launch = arsenal::launch_state(
                     spec,
@@ -128,8 +140,8 @@ fn hit_hints(
                 ghost.current.frame_index = facing;
                 ghost.velocity = launch.velocity;
                 ghost.flags.player_ship = false;
-                let t = plot_intercept(arena.space, &ghost, target, spec.life, 0);
-                if t > 0 && (best == 0 || t < best) {
+                let t = plot_intercept(arena.space, &ghost, target, horizon, 0);
+                if t > 0 {
                     best = t;
                 }
             }
@@ -238,5 +250,168 @@ fn incoming(arena: &Arena, side: Side, own: &Element) -> (f64, f64, f64) {
                 unit_s(a),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use melee_core::rng::Seed;
+    use melee_core::units::Sided;
+    use melee_sim::catalog::{ShipKind, ALL_SHIPS};
+    use melee_sim::cyborg;
+    use melee_sim::init;
+    use melee_sim::input::{BattleInput, CyborgRating};
+    use melee_sim::step;
+
+    /// `hit_hints`'s mount fold exactly as it stood before the horizon cap:
+    /// every mount searches the missile's whole lifetime and the fold keeps the
+    /// soonest hit. Kept here so the capped version is checked against what it
+    /// replaced, rather than against a restatement of its own reasoning.
+    fn uncapped_hit_hints(
+        arena: &Arena,
+        ship: &Combatant,
+        origin: &Element,
+        facing: i64,
+        target: &Element,
+    ) -> (f64, f64) {
+        let Weapon::Missile(kind) = arsenal::primary(ship) else {
+            unreachable!("the reference fold is only for the missile arm")
+        };
+        let spec = kind.spec();
+        let mut best = 0;
+        for mount in spec.mounts() {
+            let f = (facing + mount.facing_offset).rem_euclid(16);
+            let launch = arsenal::launch_state(
+                spec,
+                f,
+                &origin.velocity,
+                arsenal::mount_position(spec, facing, origin.current.location, mount),
+            );
+            let mut ghost = *origin;
+            ghost.current.location = launch.position;
+            ghost.current.frame_index = facing;
+            ghost.velocity = launch.velocity;
+            ghost.flags.player_ship = false;
+            let t = plot_intercept(arena.space, &ghost, target, spec.life, 0);
+            if t > 0 && (best == 0 || t < best) {
+                best = t;
+            }
+        }
+        if best <= 0 {
+            (0.0, 0.0)
+        } else {
+            (1.0 / (1.0 + best as f64), flag(best <= spec.life))
+        }
+    }
+
+    /// Whether the cap actually shortens anything here: does some mount after
+    /// the first run while a hit is already on the books? If this never fires,
+    /// agreement between capped and uncapped is trivially true and proves
+    /// nothing, so the test asserts it does.
+    fn cap_bites(
+        arena: &Arena,
+        ship: &Combatant,
+        origin: &Element,
+        facing: i64,
+        target: &Element,
+    ) -> bool {
+        let Weapon::Missile(kind) = arsenal::primary(ship) else {
+            return false;
+        };
+        let spec = kind.spec();
+        let mut best = 0;
+        for (index, mount) in spec.mounts().iter().enumerate() {
+            if index > 0 && best > 0 {
+                return true;
+            }
+            let f = (facing + mount.facing_offset).rem_euclid(16);
+            let launch = arsenal::launch_state(
+                spec,
+                f,
+                &origin.velocity,
+                arsenal::mount_position(spec, facing, origin.current.location, mount),
+            );
+            let mut ghost = *origin;
+            ghost.current.location = launch.position;
+            ghost.current.frame_index = facing;
+            ghost.velocity = launch.velocity;
+            ghost.flags.player_ship = false;
+            let t = plot_intercept(arena.space, &ghost, target, spec.life, 0);
+            if t > 0 && (best == 0 || t < best) {
+                best = t;
+            }
+        }
+        false
+    }
+
+    /// Both seats of one arena, capped compared against uncapped every frame.
+    /// Returns (seat-frames compared, seat-frames where the cap shortened a search).
+    fn agrees_for(bottom: ShipKind, top: ShipKind, seed: i64, frames: i64) -> (usize, usize) {
+        let mut arena = init::arena(bottom, top, Seed(seed));
+        let mut compared = 0;
+        let mut bit = 0;
+        for _ in 0..frames {
+            for side in [Side::Bottom, Side::Top] {
+                let our = arena.combatants.get(side);
+                let their = arena.combatants.get(side.other());
+                let oc = our.core();
+                let fc = their.core();
+                let (Some(own), Some(foe)) = (
+                    arena.elements.get(&oc.element.0),
+                    arena.elements.get(&fc.element.0),
+                ) else {
+                    continue;
+                };
+                if !matches!(arsenal::primary(our), Weapon::Missile(_)) {
+                    continue;
+                }
+                assert_eq!(
+                    hit_hints(&arena, our, own, oc.facing, foe),
+                    uncapped_hit_hints(&arena, our, own, oc.facing, foe),
+                    "{bottom:?} vs {top:?} seed {seed} frame {}",
+                    arena.frame
+                );
+                compared += 1;
+                if cap_bites(&arena, our, own, oc.facing, foe) {
+                    bit += 1;
+                }
+            }
+            // Idle ships never close, never aim and so never predict a hit,
+            // which would leave the cap with nothing to shorten. Let the
+            // cyborgs actually fight so the geometry is one the encoder meets.
+            let mut inputs = Sided::both(BattleInput::default());
+            for side in [Side::Bottom, Side::Top] {
+                inputs.set(
+                    side,
+                    cyborg::pilot(CyborgRating::AwesomeCyborg, side, &mut arena),
+                );
+            }
+            step::tick_authoritative(inputs, &mut arena);
+        }
+        (compared, bit)
+    }
+
+    #[test]
+    fn capping_later_mounts_at_best_minus_one_keeps_every_hint() {
+        // Every ship against a fixed sparring partner and against itself, so the
+        // multi-mount specs and the long single-mount lifetimes both run.
+        let mut compared = 0;
+        let mut bit = 0;
+        for kind in ALL_SHIPS {
+            for (c, b) in [
+                agrees_for(kind, ShipKind::Earthling, 7, 400),
+                agrees_for(kind, kind, 12345, 400),
+            ] {
+                compared += c;
+                bit += b;
+            }
+        }
+        eprintln!("compared {compared} seat-frames, cap shortened a search in {bit}");
+        assert!(compared > 0, "no missile-armed seat was ever compared");
+        assert!(
+            bit > 0,
+            "the cap never shortened a search, so agreement proves nothing"
+        );
     }
 }
