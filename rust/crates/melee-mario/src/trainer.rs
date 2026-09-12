@@ -395,6 +395,17 @@ pub struct Trainer {
     pub history: VecDeque<HistoryRow>,
     pub events: VecDeque<Event>,
     pub saved_at: Option<String>,
+    /// The generation that is actually ON DISK, or `None` while nothing has
+    /// been saved yet.
+    ///
+    /// Derived at runtime and never persisted: a checkpoint that stored this
+    /// field would be storing a claim about itself, and a saved copy of a
+    /// stale value would outlive the fact it described. A decoded run takes it
+    /// from the population it actually restored, and a live run only advances
+    /// it once a save has returned successfully, so the dashboard's
+    /// "checkpoint generation" is the generation a resume would really start
+    /// from rather than the one the trainer has reached in memory.
+    pub saved_generation: Option<u32>,
     /// Compiled graphs are cached here for the length of a panel so the
     /// strongly-connected-component pass is paid once per genome, not once per
     /// fight.
@@ -480,6 +491,7 @@ impl Trainer {
             history: VecDeque::new(),
             events: VecDeque::new(),
             saved_at: None,
+            saved_generation: None,
             cache: None,
             opponent_cache: None,
         };

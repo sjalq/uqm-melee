@@ -477,6 +477,19 @@ const REST_SLICE: Duration = Duration::from_millis(200);
 /// Ceiling on how often the status document is re-rendered when nothing the
 /// dashboard must not miss has changed.
 const PUBLISH_EVERY: Duration = Duration::from_secs(1);
+/// Generations between checkpoints.
+///
+/// A checkpoint is the whole run: population, disabled genes, both random
+/// streams, species, innovation book, sampler and gate evidence, tens of
+/// megabytes of it. Writing that at every generation boundary spends most of a
+/// generation's wall clock in the writer while the evaluation pool sits idle,
+/// and buys back only the few generations a crash would cost. Every fifth
+/// boundary, with [`SAVE_AT_LEAST_EVERY`] underneath it and an unconditional
+/// save on the way out, bounds that loss without paying for it continuously.
+const SAVE_EVERY_GENERATIONS: u32 = 5;
+/// The safeguard under the generation cadence, unchanged: a slow generation
+/// must not stretch the gap between checkpoints indefinitely.
+const SAVE_AT_LEAST_EVERY: Duration = Duration::from_secs(60);
 
 /// Options that belong to a RUN rather than to one session of it. Changing any
 /// of them would change the trajectory, so a resume keeps the stored value and
@@ -737,12 +750,8 @@ fn broaden(options: &Options) -> Result<(), String> {
     // configuration is missing.
     store::write_atomic(&target_dir.join(store::CONFIG), &trainer.config.to_json())
         .map_err(|e| e.to_string())?;
-    trainer.saved_at = Some(trainer::iso8601(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-    ));
+    trainer.saved_at = Some(now_iso8601());
+    trainer.saved_generation = Some(trainer.population.generation);
     let document = trainer.to_json();
     // The written document has to decode back into a resumable run, or the fork
     // has produced something the operator cannot actually use.
@@ -978,6 +987,13 @@ fn supervise(options: Options) -> Result<(), String> {
 
     publish(&trainer, Phase::Initializing, "starting up", false);
 
+    // A fresh run has nothing on disk yet, and the first cadence save is five
+    // generations away, so it goes down once here: a crash in the first few
+    // minutes of a run must still leave a run to resume.
+    if trainer.saved_generation.is_none() {
+        save(&mut trainer, &dir)?;
+    }
+
     let started = Instant::now();
     let started_episodes = trainer.episodes;
     let started_generation = trainer.population.generation;
@@ -1060,7 +1076,12 @@ fn supervise(options: Options) -> Result<(), String> {
             last_publish = Instant::now();
         }
 
-        if unit.boundary || last_save.elapsed() >= Duration::from_secs(60) {
+        if save_due(
+            unit.boundary,
+            trainer.population.generation,
+            trainer.saved_generation,
+            last_save.elapsed(),
+        ) {
             save(&mut trainer, &dir)?;
             last_save = Instant::now();
         }
@@ -1101,15 +1122,42 @@ fn supervise(options: Options) -> Result<(), String> {
     Ok(())
 }
 
-fn save(trainer: &mut Trainer, dir: &Path) -> Result<(), String> {
-    trainer.saved_at = Some(trainer::iso8601(
+/// Whether this iteration has to write a checkpoint.
+///
+/// Only at a generation boundary, and only once the run has moved
+/// [`SAVE_EVERY_GENERATIONS`] past the generation actually on disk, so the
+/// cadence is measured against the last SUCCESSFUL save rather than against a
+/// counter that a failed write would have advanced anyway. The elapsed
+/// safeguard fires on its own terms, whatever the boundary is doing.
+fn save_due(boundary: bool, generation: u32, saved: Option<u32>, since: Duration) -> bool {
+    let behind = generation.saturating_sub(saved.unwrap_or(0));
+    (boundary && behind >= SAVE_EVERY_GENERATIONS) || since >= SAVE_AT_LEAST_EVERY
+}
+
+fn now_iso8601() -> String {
+    trainer::iso8601(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0),
-    ));
+    )
+}
+
+fn save(trainer: &mut Trainer, dir: &Path) -> Result<(), String> {
+    // The stamp is STAGED into the document and only committed to the trainer
+    // once the write has actually landed. A failed save that had already moved
+    // `saved_at` and `saved_generation` forward would leave the dashboard
+    // claiming a checkpoint that is not on disk.
+    let staged_at = now_iso8601();
+    let staged_generation = trainer.population.generation;
+    let previous = (trainer.saved_at.clone(), trainer.saved_generation);
+    trainer.saved_at = Some(staged_at);
     let document: Value = trainer.to_json();
-    store::write_atomic(&dir.join(store::CHECKPOINT), &document).map_err(|e| e.to_string())?;
+    if let Err(error) = store::write_atomic(&dir.join(store::CHECKPOINT), &document) {
+        (trainer.saved_at, trainer.saved_generation) = previous;
+        return Err(error.to_string());
+    }
+    trainer.saved_generation = Some(staged_generation);
     if let Some(event) = trainer.events.back() {
         let _ = store::append_line(
             &dir.join(store::EVENTS),
@@ -1157,6 +1205,25 @@ mod tests {
         assert!(parse(&args(&["start", "--population", "0"])).is_err());
         assert!(parse(&args(&["start", "--rating", "godlike"])).is_err());
         assert!(parse(&args(&["start", "--nonsense"])).is_err());
+    }
+
+    #[test]
+    fn a_checkpoint_is_due_every_fifth_generation_or_every_minute() {
+        let quick = Duration::from_secs(1);
+        // Mid-generation work never saves, however far ahead the run is.
+        assert!(!save_due(false, 40, Some(0), quick));
+        // Nor does a boundary that is only a generation or four past disk.
+        for generation in 1..SAVE_EVERY_GENERATIONS {
+            assert!(!save_due(true, generation, Some(0), quick), "{generation}");
+        }
+        assert!(save_due(true, SAVE_EVERY_GENERATIONS, Some(0), quick));
+        assert!(save_due(true, 327, Some(322), quick));
+        assert!(!save_due(true, 326, Some(322), quick));
+        // A run that has never saved counts from zero, so a fresh start's
+        // first five generations still go down.
+        assert!(save_due(true, 5, None, quick));
+        // And the safeguard stands on its own, boundary or not.
+        assert!(save_due(false, 1, Some(0), SAVE_AT_LEAST_EVERY));
     }
 
     #[test]

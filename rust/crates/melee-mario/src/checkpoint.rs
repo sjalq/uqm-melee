@@ -183,6 +183,8 @@ fn decode(value: &Value) -> Option<Trainer> {
     let config = Config::from_json(value.get("config")?)?;
     let rng = value.get("rng")?;
     let population = Population::from_json(value.get("population")?)?;
+    // Read before the population is moved into the trainer below.
+    let restored_generation = population.generation;
     // A population evolved under different settings is a different experiment.
     if population.config != config.neat {
         return None;
@@ -481,6 +483,10 @@ fn decode(value: &Value) -> Option<Trainer> {
             .get("saved_at")
             .and_then(Value::as_str)
             .map(str::to_string),
+        // Taken from the population this document actually carried, not from
+        // any field in it: what is on disk is, by definition, the generation
+        // just decoded from disk.
+        saved_generation: Some(restored_generation),
         cache: None,
         opponent_cache: None,
         config,

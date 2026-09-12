@@ -776,3 +776,59 @@ fn a_malformed_combat_counter_is_refused_rather_than_read_as_a_known_zero() {
     assert_eq!(back.combat_counted_since, 0);
 }
 
+
+/// The dashboard's checkpoint generation must be the generation a resume would
+/// actually start from, not the one the trainer happens to have reached.
+#[test]
+fn the_reported_checkpoint_generation_is_the_one_on_disk() {
+    let mut trainer = Trainer::fresh(config("saved-generation"));
+    let status = |t: &Trainer| {
+        t.status(
+            melee_mario::status::Phase::Training,
+            "test",
+            "checkpoint.json",
+            false,
+        )
+    };
+
+    // Nothing saved yet, so there is no checkpoint generation to report and
+    // the run is not resumable.
+    assert_eq!(trainer.saved_generation, None);
+    assert_eq!(status(&trainer)["checkpoint"]["generation"], Value::Null);
+    assert_eq!(
+        status(&trainer)["checkpoint"]["resumable"],
+        Value::Bool(false)
+    );
+
+    // A save that happened at generation zero, then several generations of
+    // work on top of it: the document still describes the saved one.
+    trainer.saved_at = Some("1970-01-01T00:00:00Z".to_string());
+    trainer.saved_generation = Some(trainer.population.generation);
+    let saved = trainer.population.generation;
+    while trainer.population.generation < saved + 2 {
+        trainer.step();
+    }
+    assert!(trainer.population.generation > saved);
+    assert_eq!(
+        status(&trainer)["checkpoint"]["generation"],
+        Value::from(saved)
+    );
+    assert_eq!(
+        status(&trainer)["checkpoint"]["resumable"],
+        Value::Bool(true)
+    );
+
+    // And a decoded checkpoint takes it from the population it restored,
+    // never from a field of its own, so a copied document cannot carry a
+    // stale claim about what is on disk.
+    let document = trainer.to_json();
+    assert!(
+        document.get("saved_generation").is_none(),
+        "the saved generation is derived, not persisted"
+    );
+    let restored = Trainer::from_json(&document).expect("the checkpoint must decode");
+    assert_eq!(
+        restored.saved_generation,
+        Some(restored.population.generation)
+    );
+}

@@ -296,7 +296,10 @@ impl Trainer {
             },
             "checkpoint": {
                 "saved_at": self.saved_at,
-                "generation": self.population.generation,
+                // The generation a resume would start from. With a save cadence
+                // this trails the generation in memory, and reporting the
+                // in-memory one would tell the operator a crash costs nothing.
+                "generation": self.saved_generation,
                 "resumable": self.saved_at.is_some(),
                 "path": checkpoint
             },
