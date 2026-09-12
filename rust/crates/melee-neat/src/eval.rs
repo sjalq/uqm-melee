@@ -6,9 +6,11 @@ use crate::{
     policy::{Net, N_OBS},
 };
 use melee_core::{
+    counters,
     rng::Seed,
     units::{Side, Sided},
 };
+use std::time::Instant;
 use melee_sim::{
     battle::Arena,
     catalog::ShipKind,
@@ -166,8 +168,18 @@ impl<C: Controller> State<C> {
             let combatant = self.arena.combatants.get(side);
             let name = combatant.kind().name();
             let previous = combatant.core().old_input;
+            // The only two clocks read inside a fight, and three reads rather
+            // than four: the middle one ends the observation build and begins
+            // the decision. Everything else a fight spends is derived from the
+            // fight's own wall time by subtraction, so no clock is read inside
+            // the physics loop at all.
+            let opened = Instant::now();
             let observation = encode::vector(side, &self.arena);
+            let encoded = Instant::now();
             let next = self.pilot.decide(side, name, &observation, previous);
+            let decided = Instant::now();
+            counters::encode_nanos(encoded.duration_since(opened).as_nanos() as u64);
+            counters::think_nanos(decided.duration_since(encoded).as_nanos() as u64);
             desired.set(side, next);
         }
         desired

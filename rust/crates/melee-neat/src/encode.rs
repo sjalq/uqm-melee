@@ -395,6 +395,7 @@ fn concerns(out: &mut [f64; N_OBS], arena: &Arena, oc: &CombatantCore, own: &Ele
     let mut empty: Option<(i64, &Element)> = None;
     let mut crew: Option<(i64, &Element)> = None;
     let mut threats: Vec<(i64, i64, Threat)> = Vec::new();
+    melee_core::counters::element_scan(arena.elements.len());
     for el in arena.elements.values() {
         if el.id == own.id || !cyborg::colliding(*el) {
             continue;

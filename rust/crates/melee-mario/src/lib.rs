@@ -7,6 +7,7 @@
 
 pub mod brain;
 pub mod audit;
+pub mod benchmark;
 pub mod broad;
 pub mod checkpoint;
 pub mod cli;
@@ -15,6 +16,7 @@ pub mod genome;
 pub mod graph;
 pub mod neat;
 pub mod oracle;
+pub mod phases;
 pub mod pool;
 pub mod rng;
 pub mod sampler;

@@ -14,6 +14,7 @@
 //! time on one. The worker count and the duty cap are independent knobs and
 //! the status document reports both without multiplying them together.
 
+use crate::benchmark;
 use crate::broad::BroadConfig;
 use crate::episode::{GateCriterion, Scoring, ScoringConfig, DEFAULT_TICKS};
 use crate::neat::NeatConfig;
@@ -44,7 +45,12 @@ COMMANDS
   stop           Ask a running trainer to checkpoint and exit at a safe point.
   serve          Serve an existing run's last checkpoint without training.
   oracle         Genome oracle: NDJSON in, one {\"outputs\":[13]} line per step.
-  bench          Time a few fights and report episodes per second.
+  bench          Fixed-work benchmark. Plays a checked-in genome over a fixed
+                 roster-spanning task list, single threaded, with no duty cap
+                 and no nice, and reports work counters and time per unit of
+                 work rather than fights per second. Prints the definition
+                 fingerprint first: two outputs whose fingerprints differ
+                 measured different things and may not be compared.
   help           This text, which --help and -h also print.
 
 SESSION OPTIONS
@@ -79,6 +85,21 @@ RESOURCE OPTIONS (this invocation only; never part of the trajectory)
                            same order and reaches the same state.
   --nice <n>               Scheduling penalty applied to this process, which
                            the pool inherits. Default 10; 0 leaves it alone.
+                           Never applied by bench, which must not be paced.
+
+BENCHMARK OPTIONS (bench only)
+  --repetitions <n>        Replays of the fixed task list. The headline wall
+                           figure is the BEST of them, which is the statistic
+                           least corrupted by unrelated load on a machine
+                           nobody controls; the median, mean and worst are
+                           printed beside it so a noisy session is visible.
+                           Default 5. It is part of the definition fingerprint,
+                           because a best-of-3 and a best-of-20 are different
+                           statistics over the same workload.
+  --run <id>               Also decides where the result is appended: that
+                           run's bench.ndjson when the directory exists,
+                           otherwise artifacts/bench.ndjson. History is only
+                           ever appended to.
 
 TRAINING OPTIONS
   Stored in the run, because every one of them changes what its stored numbers
@@ -181,6 +202,10 @@ pub struct Options {
     pub episodes: Option<u64>,
     pub minutes: Option<f64>,
     pub allow_rebuild: bool,
+    /// Replays of the fixed task list the benchmark takes the best of. A
+    /// property of the invocation, and part of the benchmark's definition
+    /// fingerprint because it decides which statistic is reported.
+    pub repetitions: usize,
     /// Flags the operator actually typed. On a resume the run's own stored
     /// configuration is authoritative, so anything typed here that the run
     /// already decided has to be reported rather than silently ignored.
@@ -212,6 +237,7 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
         episodes: None,
         minutes: None,
         allow_rebuild: false,
+        repetitions: benchmark::REPETITIONS,
         given: Vec::new(),
         config: Config {
             run_id: String::new(),
@@ -257,6 +283,7 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
                 consumed = 1;
             }
             "--nice" => options.nice = parse_value(next, "--nice")?,
+            "--repetitions" => options.repetitions = parse_value(next, "--repetitions")?,
             "--generations" => options.generations = Some(parse_value(next, "--generations")?),
             "--episodes" => options.episodes = Some(parse_value(next, "--episodes")?),
             "--minutes" => options.minutes = Some(parse_value(next, "--minutes")?),
@@ -306,6 +333,10 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
     }
     if options.workers == 0 {
         return Err("--workers must be at least 1".into());
+    }
+    // A best of nothing is not a statistic.
+    if options.repetitions == 0 {
+        return Err("--repetitions must be at least 1".into());
     }
     // Refused rather than reduced: an operator who asked for every core has to
     // be told the limit, not quietly given one fewer worker than they typed.
@@ -387,6 +418,11 @@ const SAVE_EVERY_GENERATIONS: u32 = 5;
 /// The safeguard under the generation cadence, unchanged: a slow generation
 /// must not stretch the gap between checkpoints indefinitely.
 const SAVE_AT_LEAST_EVERY: Duration = Duration::from_secs(60);
+
+/// The benchmark's append-only history file. Named the same wherever it lands,
+/// so a result written beside a run and a result written under artifacts are
+/// the same rows in the same format.
+const BENCH_HISTORY: &str = "bench.ndjson";
 
 /// Options that belong to a RUN rather than to one session of it. Changing any
 /// of them would change the trajectory, so a resume keeps the stored value and
@@ -565,48 +601,68 @@ fn load(dir: &Path) -> Result<Trainer, String> {
     Trainer::from_json(&raw)
 }
 
+/// The fixed-work benchmark.
+///
+/// Everything that decides what work happens is pinned by
+/// [`crate::benchmark`]: a checked-in genome, a fixed task list spanning the
+/// roster in both seats, fixed seeds and a fixed tick ceiling. This function
+/// only supplies the three things that are properties of the INVOCATION.
+///
+///   * Single threaded. It never touches the pool, because a benchmark whose
+///     number moved with the worker count would be measuring the scheduler.
+///   * No duty governor. The supervisor's rest loop does not exist here, so
+///     the wall clock is work and nothing else.
+///   * No `nice`. `apply_nice` is only called by `supervise`, so a benchmark
+///     is never deprioritised behind whatever else the machine is doing.
+///
+/// Its result is appended to a history file and never overwrites one, so drift
+/// across builds stays visible.
 fn bench(options: &Options) -> i32 {
-    use crate::broad::{Cell, Opponent};
-    use crate::episode::{self, Rival, Task};
-    use crate::graph::Network;
-    use crate::neat::{Individual, Innovations, MutationRates};
-    use crate::rng::Stream;
-    use std::sync::Arc;
-
-    let mut rng = Stream::seeded(options.seed.unwrap_or(1));
-    let mut book = Innovations::new();
-    let mut individual = Individual::seed(&mut rng, MutationRates::default(), &mut book, 0.9);
-    for _ in 0..40 {
-        individual.mutate(&mut rng, &mut book, 0.9);
-    }
-    let network = Arc::new(Network::compile(&individual.genome));
-    let cell = Cell {
-        foe: Opponent::Cyborg,
-        us: 0,
-        them: 0,
+    let definition = match benchmark::Definition::build(
+        options.config.ticks,
+        options.config.rating,
+        options.repetitions,
+    ) {
+        Ok(definition) => definition,
+        Err(error) => {
+            eprintln!("melee-mario bench: {error}");
+            return 1;
+        }
     };
-    let started = Instant::now();
-    let games = 40;
-    let mut ticks = 0i64;
-    for index in 0..games {
-        let task = Task {
-            cell,
-            swap: index % 2 == 1,
-            seed: 1 + index as i64 * 7919,
-            ticks: options.config.ticks,
-        };
-        ticks += episode::run(&task, &network, Rival::Cyborg(options.config.rating)).ticks;
+    let report = benchmark::measure(&definition);
+    print!("{}", report.to_text());
+    let path = bench_history(options);
+    let row = report.to_json(&now_iso8601());
+    match store::append_line(&path, &row) {
+        Ok(()) => println!("history     appended to {}", path.display()),
+        // The measurement itself is still on stdout and still valid, so a
+        // history that could not be written is reported and not fatal.
+        Err(error) => eprintln!(
+            "melee-mario bench: could not append to {}: {error}",
+            path.display()
+        ),
     }
-    let elapsed = started.elapsed().as_secs_f64();
-    println!(
-        "{games} fights in {elapsed:.2}s = {:.1} fights/s ({:.0} display ticks each, \
-         {} nodes / {} links)",
-        games as f64 / elapsed,
-        ticks as f64 / games as f64,
-        individual.genome.nodes.len(),
-        individual.genome.enabled_count()
-    );
-    0
+    // A benchmark whose repetitions did different work measured nothing, so it
+    // fails rather than printing numbers an operator might compare.
+    match report.divergent().is_empty() {
+        true => 0,
+        false => 1,
+    }
+}
+
+/// Where a benchmark result is appended.
+///
+/// A named run's own directory when there is one, so a result sits beside the
+/// trajectory it describes; otherwise one shared file under artifacts. Never a
+/// path that is overwritten: history is the point.
+fn bench_history(options: &Options) -> PathBuf {
+    if let Some(run) = options.run.as_ref() {
+        let dir = store::run_dir(&options.root, run);
+        if dir.is_dir() {
+            return dir.join(BENCH_HISTORY);
+        }
+    }
+    options.root.join("artifacts").join(BENCH_HISTORY)
 }
 
 /// Owns the run directory, the trainer thread's work loop and the server.
@@ -730,18 +786,26 @@ fn supervise(options: Options) -> Result<(), String> {
     let _ = listener;
 
     let path = checkpoint.display().to_string();
-    let publish = |trainer: &Trainer, phase: Phase, message: &str, stale: bool| {
+    // Both return what they cost, so the caller can charge it to the `serve`
+    // bucket. Rendering the status document is not free at 625 matchups and
+    // the duty cap already pays for it, so it has to be visible next to the
+    // simulation rather than hiding inside the unaccounted remainder.
+    let publish = |trainer: &Trainer, phase: Phase, message: &str, stale: bool| -> Duration {
+        let began = Instant::now();
         shared.publish(
             &trainer.status(phase, message, &path, stale),
             &trainer.network(),
         );
+        began.elapsed()
     };
-    let publish_status = |trainer: &Trainer, phase: Phase, message: &str| {
+    let publish_status = |trainer: &Trainer, phase: Phase, message: &str| -> Duration {
+        let began = Instant::now();
         shared.publish_status(&trainer.status(phase, message, &path, false));
+        began.elapsed()
     };
 
     if serve_only {
-        publish(
+        let _ = publish(
             &trainer,
             Phase::Stopped,
             "serving the last checkpoint; no trainer is running",
@@ -754,7 +818,7 @@ fn supervise(options: Options) -> Result<(), String> {
         return Ok(());
     }
 
-    publish(&trainer, Phase::Initializing, "starting up", false);
+    let _ = publish(&trainer, Phase::Initializing, "starting up", false);
 
     // A fresh run has nothing on disk yet, and the first cadence save is five
     // generations away, so it goes down once here: a crash in the first few
@@ -787,7 +851,8 @@ fn supervise(options: Options) -> Result<(), String> {
             }
             Control::Pause => {
                 if shown_phase != Phase::Paused || last_publish.elapsed() >= PUBLISH_EVERY {
-                    publish(&trainer, Phase::Paused, "paused by request", false);
+                    let spent = publish(&trainer, Phase::Paused, "paused by request", false);
+                    trainer.phases.serve += spent.as_secs_f64();
                     shown_phase = Phase::Paused;
                     last_publish = Instant::now();
                 }
@@ -823,6 +888,13 @@ fn supervise(options: Options) -> Result<(), String> {
         // straight through the cap.
         let began = Instant::now();
         let unit = trainer.step();
+        // The unit's own seconds are banked BEFORE anything is published, so a
+        // status document rendered below divides this unit's phase buckets by
+        // a compute total that already contains them. Accumulating the whole
+        // iteration at the bottom instead would publish buckets whose sum
+        // briefly exceeded the compute they are a share of.
+        let simulated = began.elapsed();
+        trainer.session_compute += simulated.as_secs_f64();
 
         let phase = match trainer.phase() {
             "auditing" => Phase::Auditing,
@@ -835,12 +907,14 @@ fn supervise(options: Options) -> Result<(), String> {
             .unwrap_or_default();
         if champion != shown_champion {
             // The genome changed, so the network document has to change too.
-            publish(&trainer, phase, "training", false);
+            let spent = publish(&trainer, phase, "training", false);
+            trainer.phases.serve += spent.as_secs_f64();
             shown_champion = champion;
             shown_phase = phase;
             last_publish = Instant::now();
         } else if phase != shown_phase || last_publish.elapsed() >= PUBLISH_EVERY {
-            publish_status(&trainer, phase, "training");
+            let spent = publish_status(&trainer, phase, "training");
+            trainer.phases.serve += spent.as_secs_f64();
             shown_phase = phase;
             last_publish = Instant::now();
         }
@@ -857,6 +931,15 @@ fn supervise(options: Options) -> Result<(), String> {
 
         let worked = began.elapsed();
         trainer.compute += worked.as_secs_f64();
+        // Only what publishing and checkpointing added, because the unit's own
+        // seconds were banked above. The session total is the same either way;
+        // splitting it is what keeps every published document consistent.
+        //
+        // It is tracked separately from `compute` because `compute` spans
+        // every resume this run has ever had, and dividing this process's work
+        // counters by it would understate the rate by however long the run has
+        // been alive.
+        trainer.session_compute += worked.saturating_sub(simulated).as_secs_f64();
 
         // The governor. Resting for `worked * (1 - duty) / duty` holds the
         // long-run scheduler-active wall fraction at `duty`, whatever the pool
@@ -880,7 +963,7 @@ fn supervise(options: Options) -> Result<(), String> {
     }
 
     save(&mut trainer, &dir)?;
-    publish(&trainer, Phase::Stopped, &reason, false);
+    let _ = publish(&trainer, Phase::Stopped, &reason, false);
     println!(
         "melee-mario: {reason}. generation {}, {} episodes, checkpoint {}",
         trainer.population.generation,
@@ -912,7 +995,20 @@ fn now_iso8601() -> String {
     )
 }
 
+/// Writes a checkpoint and charges its seconds to the `checkpoint` bucket.
+///
+/// Timed OUTSIDE the write, including the serialisation and the event-log
+/// append, because all three are work the duty cap already pays for and the
+/// question the bucket answers is how much of a unit of work the run spends
+/// not evaluating.
 fn save(trainer: &mut Trainer, dir: &Path) -> Result<(), String> {
+    let began = Instant::now();
+    let out = write_checkpoint(trainer, dir);
+    trainer.phases.checkpoint += began.elapsed().as_secs_f64();
+    out
+}
+
+fn write_checkpoint(trainer: &mut Trainer, dir: &Path) -> Result<(), String> {
     // The stamp is STAGED into the document and only committed to the trainer
     // once the write has actually landed. A failed save that had already moved
     // `saved_at` and `saved_generation` forward would leave the dashboard
@@ -954,7 +1050,7 @@ mod tests {
     /// as a knob an operator can turn and silently is not one; a flag the
     /// parser accepts but the help never mentions can only be found by reading
     /// the source.
-    const EVERY_FLAG: [(&str, Option<&str>); 26] = [
+    const EVERY_FLAG: [(&str, Option<&str>); 27] = [
         ("--root", Some(".")),
         ("--run", Some("a-run")),
         ("--seed", Some("1")),
@@ -981,6 +1077,7 @@ mod tests {
         ("--readiness-games", Some("4")),
         ("--readiness-threshold", Some("0.5")),
         ("--readiness-period", Some("2")),
+        ("--repetitions", Some("3")),
     ];
 
     /// Every `--flag` token the help mentions, with the punctuation that

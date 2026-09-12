@@ -379,6 +379,14 @@ fn decode(value: &Value) -> Option<Trainer> {
             .get("compute_seconds")?
             .as_f64()
             .filter(|n| n.is_finite() && *n >= 0.0)?,
+        // Phase timers and work counters describe THIS process, so a decoded
+        // run starts them at zero exactly as it does `nice` and the pool.
+        // Restoring them would average a week of one machine's load into this
+        // afternoon's nanoseconds-per-tick and present the result as a
+        // property of the build.
+        phases: crate::phases::Phases::default(),
+        work: crate::phases::Work::default(),
+        session_compute: 0.0,
         audit_attempt: value.get("audit_attempt")?.as_u64()?,
         last_validation: match value.get("last_validation") {
             None | Some(Value::Null) => None,

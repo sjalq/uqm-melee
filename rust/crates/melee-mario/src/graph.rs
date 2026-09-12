@@ -152,6 +152,7 @@ impl Network {
     }
 
     pub fn compile(genome: &Genome) -> Network {
+        melee_core::counters::network_compiled();
         let width = genome.nodes.len();
         let index_of = |id: u32| -> Option<u32> {
             genome
@@ -263,6 +264,12 @@ impl Network {
     /// One decision. `inputs` is the assembled 57-slot input vector; the
     /// returned 13 values are the raw output activations.
     pub fn activate(&self, state: &mut Activations, inputs: &[f64; N_INPUT as usize]) -> [f64; N_OUTPUT as usize] {
+        // Counted here rather than inside the two loops below, and counted as
+        // the SIZES the loops are about to walk rather than per iteration. The
+        // walks are exactly `steps.len()` nodes and `edge_slot.len()` edges,
+        // both fixed at compile time, so this is an exact count of the work
+        // and the inner loops keep the codegen they have in production.
+        melee_core::counters::decision(self.steps.len(), self.edge_slot.len());
         let values = &mut state.values;
         // Rule 3. This has to happen before anything overwrites the current
         // half: it freezes the PREVIOUS decision's value of every node a

@@ -800,6 +800,7 @@ fn start_explosion(arena: &mut Arena, mut ship: Element) {
 }
 
 fn explosions(arena: &mut Arena) {
+    melee_core::counters::element_scan(arena.elements.len());
     let wrecks: Vec<_> = arena
         .elements
         .values()
@@ -997,12 +998,18 @@ fn fire_weapon(
     c.weapon_wait = dec_wait(c.weapon_wait);
     c.special_wait = dec_wait(c.special_wait);
     let ship_kind = kind(&combatant);
+    // Two walks over the whole map, counted as two. `any` can stop early, so
+    // the elements figure is the map size rather than the number actually
+    // touched: counting inside the closure would change its codegen, and the
+    // size is what the cost of the walk scales with anyway.
+    melee_core::counters::element_scan(arena.elements.len());
     let charging = arena.elements.values().any(|e| {
         e.owner == el.owner && matches!(e.projectile, Some(ProjectileState::Charging { .. }))
     });
     let wants_fire = c.input.weapon
         && !(ship_kind == ShipKind::Orz && c.input.special)
         && (ship_kind != ShipKind::Melnorme || !charging);
+    melee_core::counters::element_scan(arena.elements.len());
     let chenjesu_photon = arena
         .elements
         .values()
@@ -2540,6 +2547,7 @@ fn prepare_abilities(arena: &mut Arena) {
 }
 
 fn environment(arena: &mut Arena) {
+    melee_core::counters::element_scan(arena.elements.len());
     let rocks = arena
         .elements
         .values()

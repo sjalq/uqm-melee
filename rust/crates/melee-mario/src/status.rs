@@ -218,6 +218,29 @@ impl Trainer {
                 "episode_ticks": self.config.ticks,
                 "nice": self.nice
             },
+            // Machine independent work THIS process has done, and where its
+            // compute seconds went. Both are session figures and both say so:
+            // they are never checkpointed, because averaging a week of one
+            // machine's load into this afternoon's nanoseconds-per-tick would
+            // be a lie rather than a summary.
+            //
+            // `episodes_per_second` above is unchanged and still wall-clock,
+            // so nothing that reads this document breaks; it is simply not the
+            // number to optimise against on a machine whose load nobody
+            // controls. These are.
+            //
+            // Both are null, not zero, when this process has not computed:
+            // reading a checkpoint from disk is such a process, and a document
+            // full of zeroes would claim a measurement of no work rather than
+            // no measurement.
+            "work": match self.session_compute > 0.0 {
+                true => self.work.to_json(self.session_compute),
+                false => Value::Null,
+            },
+            "phases": match self.session_compute > 0.0 {
+                true => self.phases.to_json(self.session_compute),
+                false => Value::Null,
+            },
             // The round in flight is `overall.round`, and how far it has got is
             // `overall.wins` over `overall.games`. There is no second place
             // that says it.

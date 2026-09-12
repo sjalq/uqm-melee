@@ -445,6 +445,7 @@ fn fill_concerns(work: &Work<'_>) -> Concerns {
     // Same order, same tests. `Concerns` carries five `Option<Element>` payloads,
     // so threading it by value copied roughly a kilobyte in and out of every
     // arm for every element in the arena, on every side, every frame.
+    melee_core::counters::element_scan(work.arena.elements.len());
     for el in work.arena.elements.values() {
         consider(work, el, &mut concerns);
     }

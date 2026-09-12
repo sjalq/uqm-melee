@@ -21,3 +21,49 @@ debug = "line-tables-only"
 
 [profile.dev]
 debug = "line-tables-only"
+
+# Attribution, not magnitude. `[profile.release]` above is deliberately hostile
+# to a profiler: fat LTO with one codegen unit inlines `tick_authoritative`,
+# `preprocess_one`, `collide_all`, `sprites_hit`, `cyborg::decide` and
+# `Network::activate` into each other until a flamegraph is two frames tall and
+# says nothing about where the time went.
+#
+# So this profile trades a few percent of throughput for symbols that survive:
+#
+#   * `debug = "full"` is the load-bearing change. Line tables alone do not
+#     carry the inlined-subroutine records samply needs to un-flatten a stack,
+#     so without this the profile has line numbers and no call tree. It costs
+#     binary size and no runtime at all.
+#   * thin LTO and sixteen codegen units keep cross-crate optimisation while
+#     leaving function boundaries for the profiler to attribute to. They also
+#     move the number, which is why a figure measured here is NEVER quoted as
+#     the release figure: use this profile to find out WHERE the time goes and
+#     `melee-mario bench` on the release build to find out HOW MUCH.
+#   * `panic = "abort"` is inherited and restated because flipping it would
+#     change codegen (landing pads) and would also arm the pool's catch_unwind
+#     recovery, which production deliberately does not have. The thing profiled
+#     has to be the thing that runs.
+#   * assertions and overflow checks restated false: `inherits` already gives
+#     this, and stating it stops a future edit from silently arming bounds
+#     checks in the hot element loops.
+#
+# A profiling build is a different executable, so `build_fingerprint` differs
+# and a real run refuses to resume under it without `--allow-rebuild`. Profile
+# the fixed-work benchmark, or a throwaway run directory, never a trajectory
+# that matters.
+[profile.profiling]
+inherits = "release"
+opt-level = 3
+debug = "full"
+strip = "none"
+lto = "thin"
+codegen-units = 16
+panic = "abort"
+debug-assertions = false
+overflow-checks = false
+# Frame pointers are the one setting that cannot live here: cargo has no stable
+# per-profile rustflags, so `scripts/mario/profile.sh` passes
+# `-C force-frame-pointers=yes` instead. Forcing them removes the aarch64 ABI's
+# leaf-function exception and makes samply's stacks trustworthy inside the
+# tight loops in step.rs. Build by hand and you get the ABI default, which is
+# usually but not always enough.

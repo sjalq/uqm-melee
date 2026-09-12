@@ -19,13 +19,16 @@ use crate::episode::{self, Rival, ScoringConfig, Task};
 use crate::genome::Genome;
 use crate::graph::Network;
 use crate::neat::{MutationRates, NeatConfig, Population};
+use crate::phases::{Phases, Work};
 use crate::pool::Pool;
 use crate::rng::Stream;
 use crate::sampler::{Panel, SamplerStats};
+use melee_core::counters;
 use melee_sim::input::CyborgRating;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Instant;
 
 pub const ENGINE_VERSION: &str = "melee-mario/1";
 const MAX_HISTORY: usize = 4000;
@@ -244,6 +247,18 @@ pub struct Trainer {
     /// Of those, the seconds actually spent simulating. The ratio is the
     /// MEASURED duty cycle, which is what the dashboard shows next to the cap.
     pub compute: f64,
+    /// Of THIS process's compute seconds, how they split across named phases.
+    /// A session figure, never checkpointed: see [`crate::phases`] for why
+    /// averaging two machines into one nanoseconds-per-tick number would be a
+    /// lie rather than a summary.
+    pub phases: Phases,
+    /// Machine independent work THIS process has done. The denominators that
+    /// make `phases` comparable across machines and across load, and the only
+    /// numbers here that do not move when the laptop gets busy.
+    pub work: Work,
+    /// The compute seconds `phases` and `work` are measured against. Separate
+    /// from `compute`, which is the run's all-time total across every resume.
+    pub session_compute: f64,
     pub audit_attempt: u64,
     pub last_validation: Option<f64>,
     /// The champion's SUCCESS rate on the panel currently being evaluated,
@@ -298,6 +313,19 @@ impl Fight {
     }
 }
 
+/// One fight, with its own wall time left on this thread's clocks.
+///
+/// The fight's total less the observation-build and decision clocks it took
+/// along the way IS the simulation bucket, which is why the step loop needs no
+/// clock of its own. Two `Instant` reads per fight against a fight that runs
+/// for milliseconds is not a measurable perturbation of the thing measured.
+fn timed(fight: &Fight) -> episode::Outcome {
+    let began = Instant::now();
+    let outcome = fight.run();
+    counters::fight_nanos(began.elapsed().as_nanos() as u64);
+    outcome
+}
+
 /// What one unit of work accomplished, so the caller can pace itself.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Unit {
@@ -335,6 +363,9 @@ impl Trainer {
             combat_wins: 0,
             elapsed: 0.0,
             compute: 0.0,
+            phases: Phases::default(),
+            work: Work::default(),
+            session_compute: 0.0,
             audit_attempt: 0,
             last_validation: None,
             last_training_wins: None,
@@ -374,7 +405,7 @@ impl Trainer {
                 return network.clone();
             }
         }
-        let network = Arc::new(Network::compile(genome));
+        let network = self.compile(genome);
         self.cache = Some((fingerprint, network.clone()));
         network
     }
@@ -416,12 +447,44 @@ impl Trainer {
         self.episodes += 1;
         self.unresolved += !outcome.resolved as u64;
         self.combat_wins += outcome.won as u64;
+        // Display ticks ride out of every fight already and were thrown away
+        // by everything but the promptness term. Counted here, in the same
+        // choke point and the same order as the episode itself, they cost one
+        // add and they are what makes two builds comparable when one of them
+        // wins faster and therefore simulates less.
+        self.work.episode(outcome.ticks);
         outcome
     }
 
+    /// Runs one fight on the caller's thread, timing it and folding what it
+    /// counted. The serial twin of [`Trainer::pooled`]: a batch of one goes
+    /// through `Pool::map_counted`'s inline path and lands in the same
+    /// buckets, so a held-out round and a training panel are measured alike.
     fn play(&mut self, task: &Task, network: &Arc<Network>) -> episode::Outcome {
         let fight = self.fight(*task, network);
-        self.absorb(fight.run())
+        let (outcome, sample) = counters::measure(|| timed(&fight));
+        self.phases.absorb(sample);
+        self.work.absorb(sample);
+        self.absorb(outcome)
+    }
+
+    /// Plays a batch through the pool and folds its counters on this thread,
+    /// in submission order, alongside the outcomes.
+    fn pooled(&mut self, queued: Vec<Fight>) -> Vec<episode::Outcome> {
+        let (outcomes, sample) = self.pool.map_counted(queued, |fight| timed(&fight));
+        self.phases.absorb(sample);
+        self.work.absorb(sample);
+        outcomes
+    }
+
+    /// Compiles a genome, charging the graph compiler's seconds to `compile`
+    /// rather than letting them land in the undifferentiated remainder.
+    fn compile(&mut self, genome: &Genome) -> Arc<Network> {
+        let began = Instant::now();
+        let (network, sample) = counters::measure(|| Arc::new(Network::compile(genome)));
+        self.phases.compile += began.elapsed().as_secs_f64();
+        self.work.absorb(sample);
+        network
     }
 
     /// How many fights a unit of work should queue to keep the pool fed, and
@@ -509,8 +572,8 @@ impl Trainer {
         // than once per fight, exactly as the single-candidate path did.
         let networks: Vec<Arc<Network>> = batch
             .iter()
-            .map(|genome| Arc::new(Network::compile(genome)))
-            .collect();
+            .map(|genome| self.compile(genome))
+            .collect::<Vec<_>>();
         let rating = self.config.rating;
         let queued: Vec<Fight> = networks
             .iter()
@@ -518,7 +581,7 @@ impl Trainer {
             .map(|(task, ours)| Fight { task, ours, rating })
             .collect();
         let played = queued.len();
-        let outcomes = self.pool.map(queued, |fight| fight.run());
+        let outcomes = self.pooled(queued);
         for (at, genome) in batch.iter().enumerate() {
             // Sampler evidence follows the champion, because the sampler's job
             // is to find where the policy we actually gate on is still weak.
@@ -562,7 +625,19 @@ impl Trainer {
         }
     }
 
+    /// Opens a panel, charging its seconds to `evolve`.
+    ///
+    /// Drawing a panel is part of the same bookkeeping that re-enters the
+    /// elite and rotates coverage, so it belongs in the same bucket as
+    /// selection and speciation rather than in a bucket of its own that would
+    /// almost always read as zero.
     fn open_panel(&mut self) {
+        let began = Instant::now();
+        self.draw_panel();
+        self.phases.evolve += began.elapsed().as_secs_f64();
+    }
+
+    fn draw_panel(&mut self) {
         if let Some(champion) = self.champion.clone() {
             self.population.ensure_elite(&champion, self.champion_rates);
         }
@@ -582,7 +657,16 @@ impl Trainer {
         self.last_training_wins = None;
     }
 
+    /// Closes a generation, charging its seconds to `evolve`. Champion
+    /// replacement, speciation and the next population all happen inside.
     fn close_panel(&mut self) -> Unit {
+        let began = Instant::now();
+        let unit = self.finish_panel();
+        self.phases.evolve += began.elapsed().as_secs_f64();
+        unit
+    }
+
+    fn finish_panel(&mut self) -> Unit {
         let generation = self.population.generation;
         let challenger = self
             .population
@@ -774,7 +858,7 @@ impl Trainer {
             .iter()
             .map(|task| self.fight(*task, &network))
             .collect();
-        let outcomes = self.pool.map(queued, |fight| fight.run());
+        let outcomes = self.pooled(queued);
         for (task, outcome) in tasks[cursor..batch].iter().zip(outcomes) {
             let outcome = self.absorb(outcome);
             // The readiness probe decides whether to spend an audit, so it has

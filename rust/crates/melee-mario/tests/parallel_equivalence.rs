@@ -373,3 +373,75 @@ fn a_readiness_probe_and_an_audit_survive_the_pool() {
         );
     }
 }
+
+/// The work counters are a property of the FIGHTS, so a worker count must not
+/// move one of them by a single event.
+///
+/// This is the claim that makes the whole instrumentation usable on a shared
+/// machine: seconds move with load and with the pool, counts do not, so
+/// seconds divided by counts is a property of the build. A count that differed
+/// between one worker and three would mean fights were being counted twice, or
+/// dropped, or run in a different order, and every derived rate would be
+/// measuring the scheduler instead.
+///
+/// The phase SECONDS are deliberately not compared. They are wall time on
+/// several threads at once and they are supposed to differ.
+#[test]
+fn the_work_counters_are_identical_at_every_worker_count() {
+    // Driven to a GENERATION, not to an episode count: a pooled unit scores
+    // several candidates and a gate round plays eight fights at a time, so an
+    // exact episode target is not a place both runs can stop. A generation
+    // boundary is, and it is where a checkpoint is written anyway.
+    const GENERATIONS: u32 = 4;
+    let mut serial = trainer("counters", lead_gated(), 1);
+    run_to_generation(&mut serial, GENERATIONS);
+    for workers in COUNTS {
+        let mut pooled = trainer("counters", lead_gated(), workers);
+        run_to_generation(&mut pooled, GENERATIONS);
+        assert_same(&format!("{workers} workers"), &serial, &pooled);
+        assert_eq!(
+            serial.work, pooled.work,
+            "the work counters differ between one worker and {workers}"
+        );
+        // And they are not trivially equal because nothing was counted.
+        assert_eq!(pooled.work.episodes, pooled.episodes);
+        assert!(pooled.work.display_ticks > 0);
+        assert!(pooled.work.counts.decisions > 0);
+        assert!(pooled.work.counts.link_activations > 0);
+        assert!(pooled.work.counts.element_scans > 0);
+        assert!(pooled.work.counts.networks_compiled > 0);
+    }
+}
+
+/// Every fight's display ticks reach the counters, so `display_ticks` really
+/// is the simulated work and not a count of something else.
+///
+/// The trainer folds them in `absorb`, the one choke point every episode
+/// passes through, which is why the total is exactly the sum of the outcomes
+/// and why a speculatively computed and discarded fight cannot appear in it.
+#[test]
+fn display_ticks_are_the_sum_of_the_fights_and_bounded_by_the_tick_ceiling() {
+    let mut solo = trainer("ticks-are-work", combat(), 1);
+    run_to_generation(&mut solo, 2);
+    assert_eq!(solo.work.episodes, solo.episodes);
+    let ceiling = solo.config.ticks as u64 * solo.work.episodes;
+    assert!(solo.work.display_ticks > 0);
+    assert!(
+        solo.work.display_ticks <= ceiling,
+        "{} display ticks over {} fights of at most {} ticks each",
+        solo.work.display_ticks,
+        solo.work.episodes,
+        solo.config.ticks
+    );
+    // Decisions cannot outnumber the physics frames those ticks could carry:
+    // one seat decides at the 24 Hz physics rate inside a 60 Hz display tick.
+    assert!(solo.work.counts.decisions <= solo.work.display_ticks);
+    // Each decision walks its own graph, and a population carries many
+    // graphs of different sizes, so the ratio here is a MEAN links-per-
+    // decision rather than one genome's link count. What must hold is that
+    // every decision walked a real graph: at least one node and at least one
+    // edge, since the seed genome already declares thirteen outputs and
+    // connects them.
+    assert!(solo.work.counts.node_activations >= solo.work.counts.decisions);
+    assert!(solo.work.counts.link_activations >= solo.work.counts.decisions);
+}

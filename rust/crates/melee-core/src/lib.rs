@@ -8,6 +8,7 @@
 //! `rem_euclid`, `modBy`. Do not "simplify" the arithmetic; the accumulators
 //! and rounding rules below are the simulation, not an approximation of it.
 
+pub mod counters;
 pub mod rng;
 pub mod trig;
 pub mod units;

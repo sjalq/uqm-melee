@@ -18,6 +18,7 @@
 //! every few tens of milliseconds and paying a spawn per batch, let alone per
 //! fight, would show up against that.
 
+use melee_core::counters::{self, Sample};
 use std::panic::AssertUnwindSafe;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -33,6 +34,10 @@ enum Slot<R> {
     Done(R),
     Panicked,
 }
+
+/// Where a batch's results land. Each slot holds the job's result AND what
+/// that job counted, because the two are folded together on the coordinator.
+type Slots<R> = Arc<Mutex<Vec<Slot<(R, Sample)>>>>;
 
 /// How many workers this machine may be asked for: `max(1, cores - 1)`.
 ///
@@ -139,15 +144,49 @@ impl Pool {
         R: Send + 'static,
         F: Fn(J) -> R + Send + Sync + 'static,
     {
+        self.map_counted(jobs, work).0
+    }
+
+    /// [`Pool::map`], also returning the work counters and in-fight clocks the
+    /// jobs accumulated.
+    ///
+    /// This is the ONLY place a worker's counters cross a thread boundary, and
+    /// it preserves every property the pool is documented to guarantee. Each
+    /// job runs inside [`counters::measure`], so its sample is its own: no
+    /// atomic is touched at frame rate, nothing is visible to another thread
+    /// while a fight is running, and a job that panics cannot leak counts into
+    /// the next fight on that worker. The samples are summed HERE, on the
+    /// coordinator, in submission order, exactly where fight outcomes are
+    /// already folded, so the totals are identical at one worker and at nine.
+    pub fn map_counted<J, R, F>(&self, jobs: Vec<J>, work: F) -> (Vec<R>, Sample)
+    where
+        J: Send + 'static,
+        R: Send + 'static,
+        F: Fn(J) -> R + Send + Sync + 'static,
+    {
+        // The inline paths run on the caller's own thread, which may already
+        // have counts of its own in flight. `measure` parks them, so a
+        // single-worker pool reports the same sample a nine-worker pool does.
+        let inline = |jobs: Vec<J>, work: &F| {
+            let mut total = Sample::default();
+            let results = jobs
+                .into_iter()
+                .map(|job| {
+                    let (result, sample) = counters::measure(|| work(job));
+                    total.add(sample);
+                    result
+                })
+                .collect();
+            (results, total)
+        };
         let Some(sender) = self.sender.as_ref() else {
-            return jobs.into_iter().map(work).collect();
+            return inline(jobs, &work);
         };
         if jobs.len() < 2 {
-            return jobs.into_iter().map(work).collect();
+            return inline(jobs, &work);
         }
         let count = jobs.len();
-        let slots: Arc<Mutex<Vec<Slot<R>>>> =
-            Arc::new(Mutex::new((0..count).map(|_| Slot::Missing).collect()));
+        let slots: Slots<R> = Arc::new(Mutex::new((0..count).map(|_| Slot::Missing).collect()));
         let finished = Arc::new((Mutex::new(0usize), Condvar::new()));
         let work = Arc::new(work);
         for (at, job) in jobs.into_iter().enumerate() {
@@ -159,7 +198,8 @@ impl Pool {
                 // path out of this closure leaves the coordinator waiting on a
                 // completion that never arrives.
                 let _ticket = Ticket(finished);
-                let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| work(job)));
+                let outcome =
+                    std::panic::catch_unwind(AssertUnwindSafe(|| counters::measure(|| work(job))));
                 if let Ok(mut held) = slots.lock() {
                     held[at] = match outcome {
                         Ok(result) => Slot::Done(result),
@@ -186,9 +226,13 @@ impl Pool {
         drop(done);
         let mut held = slots.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut results = Vec::with_capacity(count);
+        let mut total = Sample::default();
         for slot in std::mem::take(&mut *held) {
             match slot {
-                Slot::Done(result) => results.push(result),
+                Slot::Done((result, sample)) => {
+                    total.add(sample);
+                    results.push(result);
+                }
                 // Reported from the coordinator, in submission order, so which
                 // failure surfaces does not depend on which worker lost the
                 // race. Every job has already finished by now, so nothing is
@@ -197,7 +241,7 @@ impl Pool {
                 Slot::Missing => panic!("a pooled job finished without a result"),
             }
         }
-        results
+        (results, total)
     }
 }
 
