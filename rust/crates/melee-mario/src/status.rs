@@ -301,7 +301,13 @@ impl Trainer {
                 "path": checkpoint
             },
             "resources": {
-                "workers": 1,
+                // The ACTUAL size of the evaluation pool, not a request: one
+                // means no worker threads exist at all. `measured_duty` stays
+                // the scheduler's active WALL fraction, so it describes when
+                // the evaluator was computing and never how many cores were
+                // busy while it did; `workers` times `duty_cycle` is a
+                // capacity ceiling, not an observation.
+                "workers": self.pool.workers(),
                 "duty_cycle": self.config.duty,
                 // Extensions: what the cap covers, and what it actually came to.
                 "covers": ["training", "readiness", "audit", "self_play"],
