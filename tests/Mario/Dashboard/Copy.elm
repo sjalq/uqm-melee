@@ -773,9 +773,9 @@ resourcesDuty : Tip
 resourcesDuty =
     t "res-duty"
         "Duty cycle"
-        "The fraction of wall time the scheduler spends working rather than resting, enforced by real sleeps between batches rather than a busy wait. It is a scheduling figure, not a CPU measurement: an unbalanced batch can be wall-active the whole time with only one thread of the pool busy, so a full duty cycle never by itself means the threads beside it are full. The cores line states the configured budget, threads multiplied by the cap, which is the capacity the run may use and not the load it is measured to draw."
-        [ ( "Denominator", "Wall time working over working plus resting, per batch." )
-        , ( "Window", "Recent batches." )
+        "The fraction of wall time the scheduler spends working rather than resting, enforced by real sleeps between batches rather than a busy wait. It is a scheduling figure, not a CPU measurement: an unbalanced batch can be wall-active the whole time with only one thread of the pool busy, so a full duty cycle never by itself means the threads beside it are full. The measurement accumulates over the whole run rather than over recent batches, so a run resumed under a raised cap reads below that cap until the new history outweighs the hours recorded under the old one. The cores line states the configured budget, threads multiplied by the cap, which is the capacity the run may use and not the load it is measured to draw."
+        [ ( "Denominator", "Wall time working over working plus resting, accumulated since the run began." )
+        , ( "Window", "Accumulated run history, including earlier sessions and earlier resource settings." )
         , ( "Source", "Evaluator scheduling, measured rather than assumed. Actual CPU load is measured outside the trainer." )
         ]
 

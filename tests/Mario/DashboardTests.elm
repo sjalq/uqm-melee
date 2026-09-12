@@ -1053,6 +1053,19 @@ resourceSuite =
                     Copy.resourcesDuty.body
                         |> String.contains "only one thread of the pool busy"
                         |> Expect.equal True
+            , test "the duty tip states the run-long window rather than claiming recent batches" <|
+                \() ->
+                    -- The engine accumulates working and elapsed time across
+                    -- resumes, so the figure carries hours recorded under an
+                    -- earlier cap. Calling the window "recent batches" would
+                    -- make a run raised from half duty to full look as though
+                    -- it were failing to use the cap it was just given.
+                    Expect.equal
+                        ( List.filter (\( key, _ ) -> key == "Window") Copy.resourcesDuty.meta
+                            |> List.map Tuple.second
+                        , String.contains "accumulates over the whole run" Copy.resourcesDuty.body
+                        )
+                        ( [ "Accumulated run history, including earlier sessions and earlier resource settings." ], True )
             , test "the budget tip calls itself a ceiling rather than a measurement" <|
                 \() ->
                     Expect.equal
