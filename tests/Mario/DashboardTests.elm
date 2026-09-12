@@ -1829,6 +1829,7 @@ scoringSuite =
         , crewLeadSuite
         , penaltySuite
         , combatVictorySuite
+        , historyLegendSuite
         ]
 
 
@@ -1845,6 +1846,10 @@ crewLeadPayload =
   "episodes_combat_wins": 37,
   "episodes_combat_counted_since": 0,
   "episodes_combat_wins_all_time": 37,
+  "history": [
+    {"generation": 0, "stage": 0, "training_win_rate": 0.4, "validation_win_rate": 0.55, "species": 3, "nodes": 70, "episodes": 1200},
+    {"generation": 1, "stage": 0, "training_win_rate": 0.6, "validation_win_rate": 0.72, "species": 4, "nodes": 71, "episodes": 2400}
+  ],
   "resources": {"workers": 8, "duty_cycle": 0.5, "episode_ticks": 1200},
   "curriculum": {"stage": 0, "target": 0.8, "our_roster": ["Pkunk"], "opponent_roster": ["Umgah"]},
   "champion": {"id": "g-1", "win_rate": 0.9, "lower_bound": 0.82, "validated_wins": 36, "validated_games": 40},
@@ -2103,6 +2108,65 @@ combatVictorySuite =
         ]
 
 
+{-| The history chart's two series, named for what the trainer actually
+puts in them.
+
+`validation_win_rate` is assigned in exactly one place in the trainer,
+`step_probe`, which is the recurring readiness screen. Calling that
+series "audit" promoted a screening probe to gate evidence on the one
+panel a reader goes to for progress, and it said so beside a real audit
+panel that means something else.
+
+`training_win_rate` is recorded only for the champion's own member, so
+"whole population" overstated it in the other direction.
+
+-}
+historyLegendSuite : Test
+historyLegendSuite =
+    describe "the history chart names its own evidence"
+        [ test "the probe series is never called audit evidence" <|
+            \() ->
+                expectRendered crewLeadPayload
+                    (Expect.all
+                        [ Query.has
+                            [ Selector.text "Champion readiness crew-lead rate (screening probe, not audit evidence)" ]
+                        , Query.hasNot [ Selector.text "Champion audit crew-lead rate" ]
+                        , Query.hasNot [ Selector.text "predeclared gate panel)" ]
+                        ]
+                    )
+        , test "the training series is not claimed to cover the whole population" <|
+            \() ->
+                expectRendered crewLeadPayload
+                    (Expect.all
+                        [ Query.has
+                            [ Selector.text "Training crew-lead rate (champion's own sampled panel this generation)" ]
+                        , Query.hasNot [ Selector.text "whole population" ]
+                        ]
+                    )
+        , test "an archived combat run gets the same correction in its own words" <|
+            \() ->
+                expectRendered combatHistoryPayload
+                    (Expect.all
+                        [ Query.has
+                            [ Selector.text "Champion readiness win rate (screening probe, not audit evidence)" ]
+                        , Query.hasNot [ Selector.text "Champion audit win rate" ]
+                        ]
+                    )
+        , test "the chart's tooltip says neither series is gate evidence" <|
+            \() ->
+                let
+                    tip =
+                        Copy.winRateChart Nothing
+                in
+                Expect.equal
+                    ( String.contains "neither of them is gate evidence" tip.body
+                    , String.contains "a marker is never a passed gate" tip.body
+                    , String.contains "readiness probe" (sourceOf (Copy.winRateChart Nothing))
+                    )
+                    ( True, True, True )
+        ]
+
+
 crewRatioPayload : String
 crewRatioPayload =
     """
@@ -2113,6 +2177,20 @@ crewRatioPayload =
     "fitness": "crew-ratio", "zero_opponent": 1000, "mutual_zero": 1,
     "speed_bonus": false, "gate": "combat-wins"
   }
+}
+"""
+
+
+combatHistoryPayload : String
+combatHistoryPayload =
+    """
+{
+  "run_id": "mario-main-20260911",
+  "history": [
+    {"generation": 0, "stage": 0, "training_win_rate": 0.4, "validation_win_rate": 0.55, "species": 3, "nodes": 70, "episodes": 1200}
+  ],
+  "resources": {"workers": 1, "duty_cycle": 0.5, "episode_ticks": 1200},
+  "scoring": {"fitness": "combat", "gate": "combat-wins"}
 }
 """
 
