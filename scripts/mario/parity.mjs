@@ -160,10 +160,20 @@ function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
-/** Strips exactly the machine-and-binary fields, and nothing else. */
+/**
+ * Strips exactly the machine-and-binary fields, and nothing else.
+ *
+ * Returns how many ignored notices were removed as well, because the event log
+ * is a bounded ring: a notice this comparison ignores still consumed a slot
+ * and pushed the oldest real event out, so the arm that wrote one shows fewer
+ * comparable events once the ring is full. See `eventsAgree`.
+ */
 function normalize(document) {
   const out = { ...document };
   for (const key of STRIPPED_TOP) delete out[key];
+  const removed = Array.isArray(document.events)
+    ? document.events.filter((event) => String(event?.message ?? "").startsWith(REBUILD_NOTICE)).length
+    : 0;
   if (Array.isArray(out.events)) {
     out.events = out.events
       .filter((event) => !String(event?.message ?? "").startsWith(REBUILD_NOTICE))
@@ -179,7 +189,47 @@ function normalize(document) {
         return kept;
       });
   }
+  return { stripped: out, removed };
+}
+
+/** The document minus its event log, which is compared under its own rule. */
+function core(stripped) {
+  const out = { ...stripped };
+  delete out.events;
   return out;
+}
+
+/**
+ * Whether two arms' event logs agree, allowing for the ring window.
+ *
+ * The log keeps only the most recent entries. An ignored rebuild notice still
+ * took one of those slots, so once the ring is full the arm that wrote one
+ * carries that many fewer real events, and the oldest is simply gone. That is
+ * an artefact of ignoring the notice, not a difference in what happened, so
+ * the rule is: the shorter log must be an exact suffix of the longer, and the
+ * shortfall must be no more than the notices removed. A log that gained an
+ * event, lost one it should have kept, or changed one, still fails.
+ */
+function eventsAgree(left, right, leftRemoved, rightRemoved) {
+  const a = left.events ?? [];
+  const b = right.events ?? [];
+  const keep = Math.min(a.length, b.length);
+  const suffixes = canonical(a.slice(a.length - keep)) === canonical(b.slice(b.length - keep));
+  const drift = Math.abs(a.length - b.length);
+  const allowed = Math.abs(leftRemoved - rightRemoved);
+  if (!suffixes) return { ok: false, why: `the most recent ${keep} events differ` };
+  if (drift > allowed) {
+    return {
+      ok: false,
+      why: `${drift} event(s) of difference, more than the ${allowed} ignored notice(s) explain`,
+    };
+  }
+  return {
+    ok: true,
+    why: drift === 0
+      ? `${keep} events identical`
+      : `${keep} most recent events identical; ${drift} older one(s) pushed out of the ${a.length + drift > b.length ? a.length : b.length}-entry ring by an ignored notice`,
+  };
 }
 
 /** Stable stringify, so key order in the engine's JSON cannot fake a difference. */
@@ -370,17 +420,15 @@ async function main() {
     }
     const finalPath = path.join(dir, "checkpoint.json");
     const document = JSON.parse(await readFile(finalPath, "utf8"));
-    const stripped = normalize(document);
-    results.push({
-      arm,
-      seconds: outcome.seconds,
-      document,
-      stripped,
-      hash: sha256(canonical(stripped)),
-    });
+    const { stripped, removed } = normalize(document);
+    // The identity of an arm is everything but its event log, which cannot be
+    // hashed across arms because the ring window shifts. The log is compared
+    // separately, under a rule that still fails on a real difference.
+    const hash = sha256(canonical(core(stripped)));
+    results.push({ arm, seconds: outcome.seconds, document, stripped, removed, hash });
     console.log(
       ` ${outcome.seconds.toFixed(1)}s, generation ${document.generation ?? document.population?.generation ?? "?"}` +
-        `, ${document.episodes ?? "?"} episodes, ${sha256(canonical(stripped)).slice(0, 16)}`,
+        `, ${document.episodes ?? "?"} episodes, ${hash.slice(0, 16)}`,
     );
   }
   if (options.dryRun) {
@@ -393,17 +441,23 @@ async function main() {
   console.log("");
   console.log(`parity: baseline ${baseline.arm.name} ${baseline.hash.slice(0, 16)}`);
   for (const result of results.slice(1)) {
-    if (result.hash === baseline.hash) {
-      console.log(`parity: ${result.arm.name} IDENTICAL to ${baseline.arm.name}`);
+    const log = eventsAgree(baseline.stripped, result.stripped, baseline.removed, result.removed);
+    if (result.hash === baseline.hash && log.ok) {
+      console.log(`parity: ${result.arm.name} IDENTICAL to ${baseline.arm.name} (${log.why})`);
       continue;
     }
     failed = true;
-    const found = differences(baseline.stripped, result.stripped);
-    console.log(`parity: ${result.arm.name} DIFFERS from ${baseline.arm.name} at ${found.length} path(s)`);
-    for (const one of found.slice(0, 20)) {
-      console.log(`  ${one.at}`);
-      console.log(`    ${baseline.arm.name}: ${brief(one.left)}`);
-      console.log(`    ${result.arm.name}: ${brief(one.right)}`);
+    if (result.hash !== baseline.hash) {
+      const found = differences(core(baseline.stripped), core(result.stripped));
+      console.log(`parity: ${result.arm.name} DIFFERS from ${baseline.arm.name} at ${found.length} path(s)`);
+      for (const one of found.slice(0, 20)) {
+        console.log(`  ${one.at}`);
+        console.log(`    ${baseline.arm.name}: ${brief(one.left)}`);
+        console.log(`    ${result.arm.name}: ${brief(one.right)}`);
+      }
+    }
+    if (!log.ok) {
+      console.log(`parity: ${result.arm.name} event log DIFFERS from ${baseline.arm.name}: ${log.why}`);
     }
   }
   // Stated whether it passed or failed: a reader must be able to see what the
@@ -411,7 +465,9 @@ async function main() {
   console.log("");
   console.log(
     `parity: ignored ${STRIPPED_TOP.join(", ")}, events[].at, and the rebuild notice. ` +
-      "Everything else was compared exactly.",
+      "Everything else was compared exactly. The event log is a bounded ring, so an " +
+      "ignored notice evicts the oldest entry; the logs are compared on their common " +
+      "suffix and any shortfall beyond the ignored notices fails.",
   );
   for (const result of results) {
     const speed = baseline.seconds / result.seconds;
