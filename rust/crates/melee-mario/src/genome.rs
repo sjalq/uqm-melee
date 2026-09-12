@@ -6,13 +6,13 @@
 //! ```json
 //! {"schema_version":1,
 //!  "nodes":[{"id":0,"kind":"input"}],
-//!  "genes":[{"innovation":1,"from":0,"to":117,"weight":0.5,"enabled":true}]}
+//!  "genes":[{"innovation":1,"from":0,"to":141,"weight":0.5,"enabled":true}]}
 //! ```
 //!
 //! Node identifier ranges are fixed, never negotiated:
-//!   * `0..=116`   inputs  (103 observations, 5 prior controls, 8 prior memory, bias)
-//!   * `117..=129` outputs (5 controls, 8 memory channels)
-//!   * `>=130`     hidden
+//!   * `0..=140`   inputs  (127 observations, 5 prior controls, 8 prior memory, bias)
+//!   * `141..=153` outputs (5 controls, 8 memory channels)
+//!   * `>=154`     hidden
 //!
 //! A node identifier's range and its declared `kind` must agree, which makes a
 //! mislabelled node unrepresentable after `Genome::validate`.
@@ -28,14 +28,14 @@ use std::fmt;
 pub const N_OBS: usize = melee_neat::policy::N_OBS;
 pub const N_CONTROL: usize = 5;
 pub const N_MEMORY: usize = 8;
-/// 103 observations + 5 prior controls + 8 prior memory + 1 bias.
+/// 127 observations + 5 prior controls + 8 prior memory + 1 bias.
 pub const N_INPUT: u32 = (N_OBS + N_CONTROL + N_MEMORY + 1) as u32;
 /// 5 control bits + 8 memory channels.
 pub const N_OUTPUT: u32 = (N_CONTROL + N_MEMORY) as u32;
 
 /// First identifier of each range. Inputs start at zero.
-pub const OUTPUT_BASE: u32 = N_INPUT; // 117
-pub const HIDDEN_BASE: u32 = N_INPUT + N_OUTPUT; // 130
+pub const OUTPUT_BASE: u32 = N_INPUT; // 141
+pub const HIDDEN_BASE: u32 = N_INPUT + N_OUTPUT; // 154
 pub const SCHEMA_VERSION: i64 = 1;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]

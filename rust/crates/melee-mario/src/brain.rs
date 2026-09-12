@@ -1,17 +1,21 @@
-//! Binding between the 117 network inputs, the 13 network outputs and the
+//! Binding between the 141 network inputs, the 13 network outputs and the
 //! simulation's controls. This layout is part of the cross-language contract.
 //!
 //! INPUTS, in order:
-//!   `0..=102`   the 103 observations from `melee_neat::encode::vector`. Every
+//!   `0..=126`   the 127 observations from `melee_neat::encode::vector`. Every
 //!               one of them is something the original cyborg also reads, bar
 //!               five slots marked SUPERSET and justified in that module's
 //!               layout comment, which is the normative description of what
-//!               each of the 103 carries. The last ten are the two hulls' 5-bit
-//!               roster indices and the very last is the encoder's constant 1.0.
-//!   `103..=107` the five ACTUAL controls the seat used on the previous tick:
-//!               turn-left, turn-right, thrust, weapon, special.
-//!   `108..=115` the eight memory channels this policy emitted last tick.
-//!   `116`       bias, always 1.0.
+//!               each of the 127 carries. Slot 116 is the encoder's constant
+//!               1.0 and the last ten, 117 to 126, are the two hulls' 5-bit
+//!               roster indices.
+//!   `127..=131` the five ACTUAL controls the seat applied on the previous
+//!               tick: turn-left, turn-right, thrust, weapon, special. These
+//!               come from `core.input`, the field the rotation in
+//!               `step::apply_inputs` leaves holding the last applied decision
+//!               at the moment `eval::think` runs.
+//!   `132..=139` the eight memory channels this policy emitted last tick.
+//!   `140`       bias, always 1.0.
 //!
 //! The previous controls and the memory channels are the two extras this policy
 //! is deliberately granted over the cyborg, which has neither. Everything else

@@ -2,8 +2,8 @@ module Melee.Cyborg exposing
     ( maneuverability, pilot, think
     , closeRange, fastShip, longRange, mediumShip
     , colliding, displayToWorld, isCrew, isGravity, isSpecialBody, isUltra, lifeSpan
-    , plotIntercept, radiusWorld, worldToTurn
-    , firingSolution, gravityIntercept, rangeProbe
+    , plotIntercept, radiusWorld, turnWorld, worldToTurn
+    , firingSolution, gravityIntercept, rangeProbe, seekingWeaponTurn
     )
 
 {-| Original Super Melee cyborg (cyborg.c, intel.c, per-ship intelligence\_func).
@@ -85,9 +85,18 @@ displayToWorld n =
     n * 4
 
 
+{-| The world distance the cyborg calls one turn. Named because anything that
+wants to express a speed on the same scale the cyborg counts turns in needs this
+exact divisor, not a second copy of the literal.
+-}
+turnWorld : Int
+turnWorld =
+    64
+
+
 worldToTurn : Int -> Int
 worldToTurn d =
-    d // 64
+    d // turnWorld
 
 
 type MoveState
@@ -776,40 +785,53 @@ considerWeapon work el dx dy concerns =
         concerns
 
 
-seekingWeapon : Work -> Element -> Int -> Int -> Eval
-seekingWeapon work el dx dy =
+{-| seekingWeapon's whichTurn without a Work. Every term it branches on is
+either the projectile's own state or a function of the reading hull's
+characteristics: Work.mi is exactly `maneuverability characteristics`, `ultra` is
+exactly `isUltra characteristics`, and nothing the per-ship arms write back
+changes either. Exposed so that anything ranking hostile projectiles ranks them
+by the cyborg's own key rather than by a second approximation of it.
+-}
+seekingWeaponTurn : Characteristics -> Element -> Int -> Int -> Int
+seekingWeaponTurn chars el dx dy =
     let
         closing =
             Trig.normalizeAngle (travelAngle el.velocity - Trig.arctan -dx -dy + quadrant) > halfCircle
 
         turns0 =
             worldToTurn (Trig.squareRoot (dx * dx + dy * dy))
+    in
+    if not el.flags.finiteLife && not el.flags.crewObject && chars.maxThrust > displayToWorld 8 then
+        0
 
+    else if closing then
+        0
+
+    else if isUltra chars then
+        if turns0 == 0 then
+            1
+
+        else if turns0 > 16 then
+            0
+
+        else
+            turns0
+
+    else if turns0 == 0 then
+        1
+
+    else if turns0 > 16 || (maneuverability chars > mediumShip && turns0 > 8) then
+        0
+
+    else
+        turns0
+
+
+seekingWeapon : Work -> Element -> Int -> Int -> Eval
+seekingWeapon work el dx dy =
+    let
         turns =
-            if not el.flags.finiteLife && not el.flags.crewObject && work.core.characteristics.maxThrust > displayToWorld 8 then
-                0
-
-            else if closing then
-                0
-
-            else if ultra work then
-                if turns0 == 0 then
-                    1
-
-                else if turns0 > 16 then
-                    0
-
-                else
-                    turns0
-
-            else if turns0 == 0 then
-                1
-
-            else if turns0 > 16 || (work.mi > mediumShip && turns0 > 8) then
-                0
-
-            else
-                turns0
+            seekingWeaponTurn work.core.characteristics el dx dy
     in
     if turns > 0 then
         { object = Just el, move = Entice, facing = travelAngle el.velocity, whichTurn = turns }

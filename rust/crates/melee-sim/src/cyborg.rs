@@ -3,7 +3,7 @@
 use crate::arsenal;
 use crate::battle::Arena;
 use crate::catalog::{Ability, Characteristics, ShipKind, Weapon};
-use crate::element::{Body, Element, Image};
+use crate::element::{Body, Element, ElementId, Image};
 use crate::input::{BattleInput, CyborgRating, Turn};
 use crate::motion;
 use crate::ship_state::{AndrosynthExtra, Combatant, CombatantCore};
@@ -165,6 +165,22 @@ pub fn firing_solution(arena: &Arena, side: Side, target: &Element, margin: i64)
         None => false,
         Some(work) => ship_weapons(&work, *target, margin),
     }
+}
+
+/// The weapon concern the cyborg itself settles on this tick: the hostile
+/// projectile it would act against and the `which_turn` it scored it at, or
+/// `None` when no projectile became a concern. Exposed so that anything ranking
+/// hostile projectiles can be measured against the cyborg's own choice rather
+/// than against a second statement of the ranking rule.
+pub fn weapon_concern(rating: CyborgRating, side: Side, arena: &Arena) -> Option<(ElementId, i64)> {
+    // `fill_concerns` never draws from the seed, so handing it the arena's own
+    // is inert; it cannot advance the battle RNG from here.
+    let work = work_of(rating, side, arena, arena.seed)?;
+    let concerns = fill_concerns(&work);
+    concerns
+        .weapon
+        .object
+        .map(|el| (el.id, concerns.weapon.which_turn))
 }
 
 /// `entice_target`'s range probe: the turn within the next ten at which the
@@ -367,9 +383,14 @@ pub fn display_to_world(n: i64) -> i64 {
     n * 4
 }
 
+/// The world distance the cyborg calls one turn. Named because anything that
+/// wants to express a speed on the same scale the cyborg counts turns in needs
+/// this exact divisor, not a second copy of the literal.
+pub const TURN_WORLD: i64 = 64;
+
 #[inline]
 pub fn world_to_turn(d: i64) -> i64 {
-    idiv(d, 64)
+    idiv(d, TURN_WORLD)
 }
 
 fn margin_of_error(rating: CyborgRating) -> i64 {
@@ -607,19 +628,27 @@ fn consider_weapon(work: &Work<'_>, el: &Element, dx: i64, dy: i64, concerns: &m
     }
 }
 
-fn seeking_weapon(work: &Work<'_>, el: &Element, dx: i64, dy: i64) -> Eval {
+/// `seeking_weapon`'s `which_turn` without a `Work`. Every term it branches on
+/// is either the projectile's own state or a function of the reading hull's
+/// characteristics: `Work::mi` is exactly `maneuverability(characteristics)`,
+/// `ultra` is exactly `is_ultra(characteristics)`, and nothing the per-ship arms
+/// write back changes either. Exposed so that anything ranking hostile
+/// projectiles ranks them by the cyborg's own key rather than by a second
+/// approximation of it.
+// The ladder below is `Melee.Cyborg.seekingWeapon`'s, arm for arm. Several arms
+// yield zero for different reasons, and collapsing them would lose the
+// correspondence with the Elm and with the C the Elm was ported from.
+#[allow(clippy::if_same_then_else)]
+pub fn seeking_weapon_turn(chars: &Characteristics, el: &Element, dx: i64, dy: i64) -> i64 {
     let closing =
         trig::normalize_angle(travel_angle(el.velocity) - trig::arctan(-dx, -dy) + QUADRANT)
             > HALF_CIRCLE;
     let turns0 = world_to_turn(trig::square_root(dx * dx + dy * dy));
-    let turns = if !el.flags.finite_life
-        && !el.flags.crew_object
-        && work.core.characteristics.max_thrust > display_to_world(8)
-    {
+    if !el.flags.finite_life && !el.flags.crew_object && chars.max_thrust > display_to_world(8) {
         0
     } else if closing {
         0
-    } else if ultra(work) {
+    } else if is_ultra(chars) {
         if turns0 == 0 {
             1
         } else if turns0 > 16 {
@@ -629,11 +658,15 @@ fn seeking_weapon(work: &Work<'_>, el: &Element, dx: i64, dy: i64) -> Eval {
         }
     } else if turns0 == 0 {
         1
-    } else if turns0 > 16 || (work.mi > MEDIUM_SHIP && turns0 > 8) {
+    } else if turns0 > 16 || (maneuverability(chars) > MEDIUM_SHIP && turns0 > 8) {
         0
     } else {
         turns0
-    };
+    }
+}
+
+fn seeking_weapon(work: &Work<'_>, el: &Element, dx: i64, dy: i64) -> Eval {
+    let turns = seeking_weapon_turn(&work.core.characteristics, el, dx, dy);
     if turns > 0 {
         Eval {
             object: Some(*el),
@@ -1558,7 +1591,7 @@ fn umgah(work: Work<'_>, mut concerns: Concerns) -> Work<'_> {
         && (previous.special
             || behind
             || (this_turn > 6 && enemy_mi(&work) <= SLOW_SHIP)
-            || (this_turn >= 16 && this_turn <= 24));
+            || (16..=24).contains(&this_turn));
     let lined_up = work.turn_wait == 0 && previous.turn == Turn::NoTurn;
     let mut work = work;
     work.range = if long_approach {

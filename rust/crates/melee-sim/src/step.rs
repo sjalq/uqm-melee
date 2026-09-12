@@ -434,9 +434,16 @@ fn collide_all(arena: &mut Arena) {
     }
 }
 
+/// `Melee.Cyborg.colliding`'s test, per element, so the pair test below reads
+/// as the two separate element tests the C makes rather than as one flattened
+/// disjunction over four flags.
+fn solid(el: &Element) -> bool {
+    !(el.flags.nonsolid || el.flags.disappearing)
+}
+
 fn collision_possible(a: &Element, b: &Element) -> bool {
-    !(a.flags.nonsolid || a.flags.disappearing)
-        && !(b.flags.nonsolid || b.flags.disappearing)
+    solid(a)
+        && solid(b)
         && !(a.flags.collision && b.flags.collision)
         && (!(a.flags.ignore_similar && b.flags.ignore_similar) || a.parent != b.parent)
         && (a.mass != 0 || b.mass != 0)
@@ -708,37 +715,34 @@ fn impact(arena: &mut Arena, weapon: Element, target: Element) {
             y: weapon.next.location.y + trig::sine(angle, offset),
         },
     );
-    match weapon.projectile {
-        Some(ProjectileState::Flying { kind: missile, .. }) => {
-            let burst = match missile {
-                MissileKind::Nuke => Some((16, 9)),
-                MissileKind::Cannon | MissileKind::Fusion => Some((16, 8)),
-                MissileKind::Crystal | MissileKind::Shard => Some((2, 9)),
-                MissileKind::Charge => Some((20, 6)),
-                MissileKind::Plasma => Some((11, ((weapon.mass * 8 + 9) / 10).max(1) * 2 - 1)),
-                _ => None,
-            };
-            if let Some((first, count)) = burst {
-                let id = ElementId(arena.next_element_id);
-                effect(
-                    arena,
-                    Body::WeaponImpact(missile),
-                    target.next.location,
-                    count,
-                );
-                if let Some(mut e) = get_el(arena, id) {
-                    e.current = Image {
-                        location: target.next.location,
-                        frame_index: first,
-                    };
-                    e.next = e.current;
-                    e.thrust_wait = first;
-                    put_el(arena, e);
-                }
-                return;
+    if let Some(ProjectileState::Flying { kind: missile, .. }) = weapon.projectile {
+        let burst = match missile {
+            MissileKind::Nuke => Some((16, 9)),
+            MissileKind::Cannon | MissileKind::Fusion => Some((16, 8)),
+            MissileKind::Crystal | MissileKind::Shard => Some((2, 9)),
+            MissileKind::Charge => Some((20, 6)),
+            MissileKind::Plasma => Some((11, ((weapon.mass * 8 + 9) / 10).max(1) * 2 - 1)),
+            _ => None,
+        };
+        if let Some((first, count)) = burst {
+            let id = ElementId(arena.next_element_id);
+            effect(
+                arena,
+                Body::WeaponImpact(missile),
+                target.next.location,
+                count,
+            );
+            if let Some(mut e) = get_el(arena, id) {
+                e.current = Image {
+                    location: target.next.location,
+                    frame_index: first,
+                };
+                e.next = e.current;
+                e.thrust_wait = first;
+                put_el(arena, e);
             }
+            return;
         }
-        _ => {}
     }
     let id = ElementId(arena.next_element_id);
     effect(arena, Body::Blast, at, 2);
@@ -2254,6 +2258,11 @@ fn steer(arena: &Arena, el: Element) -> Element {
 }
 
 #[cfg_attr(target_arch = "nvptx64", inline(never))]
+// The tail of this function is a per-missile ladder ported one arm at a time
+// from `Melee.Step.flyMissile`. Two arms happen to set the same field to the
+// same value today; folding them together would put two unrelated missile rules
+// behind one condition and hide the next divergence between them.
+#[allow(clippy::if_same_then_else)]
 fn fly_missile(
     arena: &Arena,
     missile: MissileKind,

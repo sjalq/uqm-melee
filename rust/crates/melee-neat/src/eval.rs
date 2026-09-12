@@ -52,7 +52,11 @@ pub trait Controller {
     }
 
     /// `ship` is the live hull in that seat; a controller resets any per-ship
-    /// state when it changes. `previous` is the seat's actual last input.
+    /// state when it changes. `previous` is the input the seat most recently
+    /// applied, which is `core.input`: `apply_inputs` rotates at the top of a
+    /// physics tick and `think` runs before any of this display tick's frames,
+    /// so `core.input` is the previous tick's decision and `core.old_input` is
+    /// the one before that. The cyborg's own Umgah arm reads the same field.
     fn decide(
         &mut self,
         side: Side,
@@ -158,7 +162,8 @@ impl<C: Controller> State<C> {
     fn think(&mut self, job: &Job) -> Sided<BattleInput> {
         let mut desired = Sided::both(idle());
         // Both policies are evaluated before either pilot runs, including the
-        // unused opposing policy. Feedback contains actual previous controls.
+        // unused opposing policy. Feedback contains the controls the seat
+        // actually applied on the previous tick.
         let ours = if job.swap { Side::Top } else { Side::Bottom };
         let all = self.pilot.evaluates_idle_seat();
         for side in [Side::Bottom, Side::Top] {
@@ -167,7 +172,7 @@ impl<C: Controller> State<C> {
             }
             let combatant = self.arena.combatants.get(side);
             let name = combatant.kind().name();
-            let previous = combatant.core().old_input;
+            let previous = combatant.core().input;
             // The only two clocks read inside a fight, and three reads rather
             // than four: the middle one ends the observation build and begins
             // the decision. Everything else a fight spends is derived from the

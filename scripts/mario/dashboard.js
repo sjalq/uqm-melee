@@ -11985,7 +11985,7 @@ var $author$project$Mario$Dashboard$countTicks = function (top) {
 var $author$project$Mario$Dashboard$Slots$controlCount = 5;
 var $author$project$Mario$Dashboard$Slots$memoryChannels = 8;
 var $author$project$Mario$Dashboard$Slots$outputCount = $author$project$Mario$Dashboard$Slots$controlCount + $author$project$Mario$Dashboard$Slots$memoryChannels;
-var $author$project$Mario$Dashboard$Slots$sensorCount = 93;
+var $author$project$Mario$Dashboard$Slots$sensorCount = 117;
 var $author$project$Mario$Dashboard$Slots$shipBits = 5;
 var $author$project$Mario$Dashboard$Slots$observationCount = $author$project$Mario$Dashboard$Slots$sensorCount + ($author$project$Mario$Dashboard$Slots$shipBits * 2);
 var $author$project$Mario$Dashboard$Slots$biasIndex = ($author$project$Mario$Dashboard$Slots$observationCount + $author$project$Mario$Dashboard$Slots$controlCount) + $author$project$Mario$Dashboard$Slots$memoryChannels;
@@ -12024,7 +12024,7 @@ var $author$project$Mario$Dashboard$Copy$nodesChart = A4(
 	$author$project$Mario$Dashboard$Copy$t,
 	'chart-nodes',
 	'Champion node count',
-	'Nodes in the champion genome per generation. The first 130 are the fixed 117 inputs and 13 outputs and are present from the very first seeded genome; everything above that line is hidden structure this run actually discovered.',
+	'Nodes in the champion genome per generation. The first 154 are the fixed 141 inputs and 13 outputs and are present from the very first seeded genome; everything above that line is hidden structure this run actually discovered.',
 	_List_fromArray(
 		[
 			_Utils_Tuple2('Denominator', 'None; a count per generation.'),
@@ -13500,7 +13500,7 @@ var $author$project$Mario$Dashboard$Copy$meanNodes = A4(
 	$author$project$Mario$Dashboard$Copy$t,
 	'mean-nodes',
 	'Mean nodes',
-	'Average node count across the population, including the fixed 117 inputs and 13 outputs. Growth above the fixed 130 is the topology the run has actually discovered.',
+	'Average node count across the population, including the fixed 141 inputs and 13 outputs. Growth above the fixed 154 is the topology the run has actually discovered.',
 	_List_fromArray(
 		[
 			_Utils_Tuple2('Denominator', 'Population size.'),
@@ -14359,7 +14359,7 @@ var $author$project$Mario$Dashboard$Copy$topology = A4(
 	$author$project$Mario$Dashboard$Copy$t,
 	'topology',
 	'Champion network',
-	'The champion\'s evolved graph. The 117 inputs are grouped and individually labelled: 93 combat sensors, our ship\'s 5 identity bits, the opponent\'s 5 identity bits, the 5 control bits actually applied last step, the 8 memory channels fed back from last step, and the extra bias. The 13 outputs are the 5 controls and the 8 memory channels. Hidden nodes and every connection between them were produced by structural mutation, not by a fixed layer.',
+	'The champion\'s evolved graph. The 141 inputs are grouped and individually labelled: 117 combat sensors, our ship\'s 5 identity bits, the opponent\'s 5 identity bits, the 5 control bits actually applied last step, the 8 memory channels fed back from last step, and the extra bias. The 13 outputs are the 5 controls and the 8 memory channels. Hidden nodes and every connection between them were produced by structural mutation, not by a fixed layer.',
 	_List_fromArray(
 		[
 			_Utils_Tuple2('Denominator', 'None; a graph.'),
@@ -15188,7 +15188,7 @@ var $author$project$Mario$Dashboard$Slots$nth$ = function (index, list, fallback
 			$elm$core$List$drop$(index, list)));
 };
 var $author$project$Mario$Dashboard$Slots$nth = F3($author$project$Mario$Dashboard$Slots$nth$);
-var $author$project$Mario$Dashboard$Slots$abilityBase = 44;
+var $author$project$Mario$Dashboard$Slots$abilityBase = 47;
 var $author$project$Mario$Dashboard$Slots$abilityBits = 7;
 var $author$project$Mario$Dashboard$Slots$abilityInfo = function (offset) {
 	var side = (_Utils_cmp(offset, $author$project$Mario$Dashboard$Slots$abilityBits) < 0) ? 'our ship' : 'the opponent';
@@ -15259,101 +15259,129 @@ var $author$project$Mario$Dashboard$Slots$plainSensor = function (id) {
 		case 18:
 			return _Utils_Tuple2('approach fuel', 'How many turns of special the energy we hold would pay for, over 64. This is the budget Umgah plans its approach with.');
 		case 19:
-			return _Utils_Tuple2('special timer', 'The special cooldown itself over 64, not just whether it expired. Chenjesu fires on exactly one tick remaining.');
+			return _Utils_Tuple2('special timer', 'The live special cooldown itself over 64, not just whether it expired. Chenjesu fires on exactly one tick remaining.');
 		case 20:
-			return _Utils_Tuple2('our hull mass', 'Our hull\'s inertial mass over twice the ordinary maximum, so a transformed hull reads above one half.');
+			return _Utils_Tuple2('special reload', 'The hull\'s special reload constant over 64. Umgah overwrites this very field with the approach distance it stashes and then compares the turns to the enemy against it, so it is live state and not a catalogue number.');
 		case 21:
-			return _Utils_Tuple2('foe dx', 'Horizontal offset to the opponent across the wrapped arena, scaled by half the arena width.');
+			return _Utils_Tuple2('our hull mass', 'Our hull\'s inertial mass over twice the ordinary maximum, so a transformed hull reads above one half.');
 		case 22:
-			return _Utils_Tuple2('foe dy', 'Vertical offset to the opponent across the wrapped arena, scaled by half the arena height.');
+			return _Utils_Tuple2('foe dx', 'Horizontal offset to the opponent across the wrapped arena, scaled by half the arena width.');
 		case 23:
-			return _Utils_Tuple2('foe range', 'Straight-line distance to the opponent, scaled by 4000 world units and clamped.');
+			return _Utils_Tuple2('foe dy', 'Vertical offset to the opponent across the wrapped arena, scaled by half the arena height.');
 		case 24:
-			return _Utils_Tuple2('closing rate', 'How fast the gap to the opponent is shrinking, scaled by 200 and clamped.');
+			return _Utils_Tuple2('foe range', 'Straight-line distance to the opponent, scaled by 4000 world units and clamped.');
 		case 25:
-			return _Utils_Tuple2('foe facing cos', 'Cosine of the opponent\'s facing relative to ours.');
+			return _Utils_Tuple2('closing rate', 'How fast the gap to the opponent is shrinking, scaled by 200 and clamped.');
 		case 26:
-			return _Utils_Tuple2('foe facing sin', 'Sine of the opponent\'s facing relative to ours.');
+			return _Utils_Tuple2('foe facing cos', 'Cosine of the opponent\'s facing relative to ours.');
 		case 27:
-			return _Utils_Tuple2('foe speed', 'Opponent speed divided by their maximum thrust speed.');
+			return _Utils_Tuple2('foe facing sin', 'Sine of the opponent\'s facing relative to ours.');
 		case 28:
-			return _Utils_Tuple2('aim error', 'Signed turn error between our facing and the bearing to the opponent, in facing steps over 8.');
+			return _Utils_Tuple2('foe speed', 'Opponent speed divided by their maximum thrust speed.');
 		case 29:
-			return _Utils_Tuple2('foe hull mass', 'The opponent hull\'s inertial mass over twice the ordinary maximum, so a transformed hull reads above one half.');
+			return _Utils_Tuple2('foe travel cos', 'Cosine of the direction the opponent is actually travelling, relative to where we point.');
 		case 30:
-			return _Utils_Tuple2('foe cloak', '1 while the opponent\'s hull is drawn cloaked, which is what widens the cyborg\'s aiming margin.');
+			return _Utils_Tuple2('foe travel sin', 'Sine of that same direction. With the cosine beside it this says which way the opponent is circling, which the closing rate alone cannot tell apart, and it is what every lead the cyborg takes is built from.');
 		case 31:
-			return _Utils_Tuple2('we cloak', '1 while our ship is cloaked.');
+			return _Utils_Tuple2('aim error', 'Signed turn error between our facing and the bearing to the opponent, in facing steps over 8.');
 		case 32:
-			return _Utils_Tuple2('foe energy', 'Opponent battery charge divided by their maximum. Deliberately more than the cyborg reads.');
+			return _Utils_Tuple2('foe hull mass', 'The opponent hull\'s inertial mass over twice the ordinary maximum, so a transformed hull reads above one half.');
 		case 33:
-			return _Utils_Tuple2('foe crew', 'Opponent crew divided by their maximum crew. Deliberately more than the cyborg reads.');
+			return _Utils_Tuple2('foe cloak', '1 while the opponent\'s hull is drawn cloaked, which is what widens the cyborg\'s aiming margin.');
 		case 34:
-			return _Utils_Tuple2('we can fire', '1 when a shot fired right now would connect, by the cyborg\'s own firing test.');
+			return _Utils_Tuple2('we cloak', '1 while our ship is cloaked.');
 		case 35:
-			return _Utils_Tuple2('we close in', 'Urgency of closing to within three quarters of our own weapon range.');
+			return _Utils_Tuple2('foe energy', 'Opponent battery charge divided by their maximum. Deliberately more than the cyborg reads.');
 		case 36:
-			return _Utils_Tuple2('they can fire', '1 when a shot the opponent fires now would connect with us. Against a missile hull this is more than the cyborg is told.');
+			return _Utils_Tuple2('foe crew', 'Opponent crew divided by their maximum crew. Deliberately more than the cyborg reads.');
 		case 37:
-			return _Utils_Tuple2('they close in', 'Urgency of the opponent closing to within three quarters of their weapon range.');
+			return _Utils_Tuple2('we can fire', '1 when a shot fired right now would connect, by the cyborg\'s own firing test.');
 		case 38:
-			return _Utils_Tuple2('they hit instantly', '1 when the opponent\'s weapon hits the instant it is fired. This says whether the two slots before it are what the cyborg also sees.');
+			return _Utils_Tuple2('we close in', 'Urgency of closing to within three quarters of our own weapon range.');
 		case 39:
-			return _Utils_Tuple2('our range', 'Our weapon\'s engagement range over 4000 world units.');
+			return _Utils_Tuple2('they can fire', '1 when a shot the opponent fires now would connect with us. Against a missile hull this is more than the cyborg is told.');
 		case 40:
-			return _Utils_Tuple2('their range', 'The opponent\'s engagement range over 4000 world units.');
+			return _Utils_Tuple2('they close in', 'Urgency of the opponent closing to within three quarters of their weapon range.');
 		case 41:
-			return _Utils_Tuple2('our agility', 'Our maneuverability rating over 150, the fast-ship mark.');
+			return _Utils_Tuple2('they hit instantly', '1 when the opponent\'s weapon hits the instant it is fired. This says whether the two slots before it are what the cyborg also sees.');
 		case 42:
-			return _Utils_Tuple2('their agility', 'The opponent\'s maneuverability rating over 150.');
+			return _Utils_Tuple2('our range', 'Our weapon\'s engagement range over 4000 world units.');
 		case 43:
+			return _Utils_Tuple2('their range', 'The opponent\'s engagement range over 4000 world units.');
+		case 44:
+			return _Utils_Tuple2('our agility', 'Our maneuverability rating over 150, the fast-ship mark.');
+		case 45:
+			return _Utils_Tuple2('their agility', 'The opponent\'s maneuverability rating over 150.');
+		case 46:
 			return _Utils_Tuple2('thrust edge', 'Our maximum thrust minus theirs, over 64. The raw comparison the cyborg makes, which the two speed ratios destroy.');
-		case 58:
+		case 61:
 			return _Utils_Tuple2('planet dx', 'Horizontal offset to the planet, scaled by 4000 world units and clamped.');
-		case 59:
+		case 62:
 			return _Utils_Tuple2('planet dy', 'Vertical offset to the planet, scaled by 4000 world units and clamped.');
-		case 60:
+		case 63:
 			return _Utils_Tuple2('planet impact', 'Urgency of a predicted collision with the planet, from the cyborg\'s own three-margin gravity test. 0 when no impact is predicted.');
-		case 85:
+		case 103:
 			return _Utils_Tuple2('crew dx', 'Horizontal offset to the nearest floating crew pod, scaled by half the arena width.');
-		case 86:
+		case 104:
 			return _Utils_Tuple2('crew dy', 'Vertical offset to the nearest floating crew pod, scaled by half the arena height.');
-		case 87:
+		case 105:
 			return _Utils_Tuple2('crew urgency', 'Urgency of reaching the nearest floating crew pod. 0 when there is none.');
-		case 88:
+		case 106:
+			return _Utils_Tuple2('crew travel cos', 'Cosine of the direction that crew pod is drifting, relative to where we point.');
+		case 107:
+			return _Utils_Tuple2('crew travel sin', 'Sine of that same direction. The cyborg chases a pod by extrapolating its whole velocity, which needs the direction and not only the speed.');
+		case 108:
+			return _Utils_Tuple2('crew speed', 'How fast that crew pod is drifting, as a fraction of the 64 world units the cyborg counts as one turn\'s distance.');
+		case 109:
 			return _Utils_Tuple2('crew targeted', '1 when our ship is already chasing that crew pod.');
-		case 89:
+		case 110:
 			return _Utils_Tuple2('rock dx', 'Horizontal offset to the nearest neutral body, an asteroid or debris, scaled by 4000 world units.');
-		case 90:
+		case 111:
 			return _Utils_Tuple2('rock dy', 'Vertical offset to the nearest neutral body, scaled by 4000 world units.');
-		case 91:
+		case 112:
 			return _Utils_Tuple2('rock urgency', 'Urgency of reaching the nearest neutral body. 0 when there is none.');
-		case 92:
-			return _Utils_Tuple2('constant 1', 'The constant sensor the encoder already emits. Always 1. Distinct from the extra bias input at node 116.');
+		case 113:
+			return _Utils_Tuple2('rock travel cos', 'Cosine of the direction that body is drifting, relative to where we point.');
+		case 114:
+			return _Utils_Tuple2('rock travel sin', 'Sine of that same direction, so the whole drift velocity is recoverable rather than just its speed.');
+		case 115:
+			return _Utils_Tuple2('rock speed', 'How fast that body is drifting, as a fraction of the 64 world units the cyborg counts as one turn\'s distance.');
+		case 116:
+			return _Utils_Tuple2('constant 1', 'The constant sensor the encoder already emits. Always 1. Distinct from the extra bias input at node 140.');
 		default:
 			return _Utils_Tuple2(
 				'sensor ' + $elm$core$String$fromInt(id),
 				'Combat sensor ' + ($elm$core$String$fromInt(id) + '.'));
 	}
 };
-var $author$project$Mario$Dashboard$Slots$threatBase = 61;
+var $author$project$Mario$Dashboard$Slots$threatBase = 64;
 var $author$project$Mario$Dashboard$Slots$threatInfo$ = function (rank, field) {
 	var rankName = 'threat ' + $elm$core$String$fromInt(rank);
 	var _v0 = function () {
 		switch (field) {
 			case 0:
-				return _Utils_Tuple2('urgency', 'Urgency of the predicted impact. 0 when this projectile is not predicted to reach us, or when there is no such projectile.');
+				return _Utils_Tuple2('urgency', 'Urgency of the concern the cyborg itself scores this projectile at: its predicted impact when it flies straight, its closing range when it homes. 0 when the cyborg would not act on it, or when there is no such projectile.');
 			case 1:
 				return _Utils_Tuple2('travel cos', 'Cosine of the direction it is travelling, relative to where we point.');
 			case 2:
 				return _Utils_Tuple2('travel sin', 'Sine of the direction it is travelling, relative to where we point.');
 			case 3:
-				return _Utils_Tuple2('closing', 'Cosine of the angle between its travel direction and its bearing to us. Near 1 means it is coming straight at us.');
+				return _Utils_Tuple2('speed', 'How fast it is travelling, as a fraction of the 64 world units the cyborg counts as one turn\'s distance.');
 			case 4:
-				return _Utils_Tuple2('seeking', '1 when it homes, worked out from the ability of the ship that launched it.');
+				return _Utils_Tuple2('bearing cos', 'Cosine of the direction it lies in, relative to where we point. With the sine beside it this says which side of us the shot is on.');
 			case 5:
-				return _Utils_Tuple2('finite life', '1 when it expires on a timer rather than persisting.');
+				return _Utils_Tuple2('bearing sin', 'Sine of the direction it lies in, relative to where we point.');
 			case 6:
+				return _Utils_Tuple2('range', 'Urgency of its straight-line distance in turns, which is the measure the cyborg\'s homing branch ranks on.');
+			case 7:
+				return _Utils_Tuple2('closing cos', 'Cosine of the angle between its travel direction and its bearing to us. Near 1 means it is coming straight at us.');
+			case 8:
+				return _Utils_Tuple2('closing sin', 'Sine of that same angle. Its sign is the side the cyborg dodges to, which the cosine alone cannot tell apart.');
+			case 9:
+				return _Utils_Tuple2('seeking', '1 when it homes, worked out from the ability of the ship that launched it.');
+			case 10:
+				return _Utils_Tuple2('finite life', '1 when it expires on a timer rather than persisting.');
+			case 11:
 				return _Utils_Tuple2('damage', 'Its mass, which is the crew it would cost us, over our maximum crew.');
 			default:
 				return _Utils_Tuple2('life left', 'How much of its flight time remains, over 64.');
@@ -15363,11 +15391,11 @@ var $author$project$Mario$Dashboard$Slots$threatInfo$ = function (rank, field) {
 	var detail = _v0.b;
 	return _Utils_Tuple2(
 		rankName + (' ' + _short),
-		'Ranked hostile projectile ' + ($elm$core$String$fromInt(rank) + (', soonest predicted impact first. ' + detail)));
+		'Ranked hostile projectile ' + ($elm$core$String$fromInt(rank) + (', soonest cyborg concern first. ' + detail)));
 };
 var $author$project$Mario$Dashboard$Slots$threatInfo = F2($author$project$Mario$Dashboard$Slots$threatInfo$);
 var $author$project$Mario$Dashboard$Slots$threatSlots = 3;
-var $author$project$Mario$Dashboard$Slots$threatWidth = 8;
+var $author$project$Mario$Dashboard$Slots$threatWidth = 13;
 var $author$project$Mario$Dashboard$Slots$sensorInfo = function (id) {
 	return ((_Utils_cmp(id, $author$project$Mario$Dashboard$Slots$abilityBase) > -1) && (_Utils_cmp(id, $author$project$Mario$Dashboard$Slots$abilityBase + (2 * $author$project$Mario$Dashboard$Slots$abilityBits)) < 0)) ? $author$project$Mario$Dashboard$Slots$abilityInfo(id - $author$project$Mario$Dashboard$Slots$abilityBase) : (((_Utils_cmp(id, $author$project$Mario$Dashboard$Slots$threatBase) > -1) && (_Utils_cmp(id, $author$project$Mario$Dashboard$Slots$threatBase + ($author$project$Mario$Dashboard$Slots$threatSlots * $author$project$Mario$Dashboard$Slots$threatWidth)) < 0)) ? $author$project$Mario$Dashboard$Slots$threatInfo$(
 		((id - $author$project$Mario$Dashboard$Slots$threatBase) / $author$project$Mario$Dashboard$Slots$threatWidth) | 0,

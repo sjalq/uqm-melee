@@ -1,6 +1,6 @@
 use melee_sim::input::{BattleInput, Turn};
 
-pub const N_OBS: usize = 103;
+pub const N_OBS: usize = 127;
 pub const N_FEEDBACK: usize = 13;
 pub const N_IN: usize = N_OBS + N_FEEDBACK + 1;
 pub const N_HIDDEN: usize = 16;
@@ -35,19 +35,16 @@ impl Net {
         inputs[N_IN - 1] = 1.0;
         let mut hidden = [0.0; N_HIDDEN + 1];
         for (h, value) in hidden[..N_HIDDEN].iter_mut().enumerate() {
-            let mut sum = 0.0;
-            for i in 0..N_IN {
-                sum += self.weights[h * N_IN + i] * inputs[i];
-            }
+            let row = &self.weights[h * N_IN..(h + 1) * N_IN];
+            let sum: f64 = row.iter().zip(&inputs).map(|(w, x)| w * x).sum();
             *value = tanh(sum);
         }
         hidden[N_HIDDEN] = 1.0;
         let mut outs = [0.0; N_OUT];
         for (o, value) in outs.iter_mut().enumerate() {
             let start = N_HIDDEN * N_IN + o * (N_HIDDEN + 1);
-            for i in 0..=N_HIDDEN {
-                *value += self.weights[start + i] * hidden[i];
-            }
+            let row = &self.weights[start..start + N_HIDDEN + 1];
+            *value = row.iter().zip(&hidden).map(|(w, x)| w * x).sum();
         }
         let input = BattleInput {
             turn: if outs[0] > 0.0 {

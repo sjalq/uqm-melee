@@ -267,7 +267,7 @@ think net side arena extra round prevName prevRound =
                 extra
 
         stepped =
-            Policy.step net (Encode.vector side arena) (Policy.actionsFrom (State.core ship).oldInput ++ extra1)
+            Policy.step net (Encode.vector side arena) (Policy.actionsFrom (State.core ship).input ++ extra1)
     in
     ( stepped.input, stepped.extra, name )
 

@@ -722,7 +722,7 @@ impl Population {
             let keep = if to_one {
                 1
             } else {
-                (species.members.len() + 1) / 2
+                species.members.len().div_ceil(2)
             };
             species.members.truncate(keep.max(1));
         }

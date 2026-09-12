@@ -230,93 +230,95 @@ alwaysApply: true
 74 quadrant
 79 octant
 84 displayToWorld n
-89 worldToTurn d
-145 blank
-150 maneuverability chars
-166 think rating side arena seed
-178 pilot rating side arena
-204 workOf rating side arena seed
-251 decide rating side arena seed
-298 idle
-303 combatant side arena
-313 otherSide side
-328 weaponReady work
-333 specialReady work
-343 isUltra chars
-348 ultra work
-353 isGravity el
-358 isCrew el
-363 isCrewBody body
-373 isShip el
-378 samePlayer a b
-383 colliding el
-388 radiusWorld el
-407 travelAngle vel
-414 isVelocityZero vel
-419 displacement turns vel
-424 wrapLoc
-429 angleToFacing a
-434 facingToAngle f
-439 marginOfError rating
-455 plotIntercept space a b maxTurns margin
-464 plotFrom space a b margin maxTurns t
-499 fillConcerns work
-508 consider work el concerns
-540 lifeSpan el
-556 gravityIntercept space planet ship chars
-585 rangeProbe space ship other range
-595 firingSolution arena side other margin
-605 considerGravity work el _ _ concerns
-634 considerEnemy work el dx dy concerns
-718 considerEmpty work el dx dy concerns
-742 considerWeapon work el dx dy concerns
-780 seekingWeapon work el dx dy
-822 isSpecialBody body
-865 considerCrew work el dx dy concerns
-886 shipIntelligence work0 concerns
-941 moveAndFire concern work eval margin
-973 shipMovement work eval
-997 shipWeapons work other margin
-1066 facingAligned work other
-1084 pursue work eval
-1133 entice work eval
-1181 enticeAvoid work eval toward canTurn canThrust
-1211 enticePlanet work toward away canTurn canThrust
-1250 enticeTarget work eval other toward away canTurn canThrust
-1364 turnShip work angle
-1398 thrustShip work angle
-1424 inertial work
-1429 withFacing facing core
-1434 enemyMi work
-1439 enemyRange work
-1444 enemyAbility work
-1449 coin work sides
-1458 raceIntelligence work concerns
-1537 shofixti work0 concerns
-1566 yehat work0 concerns0
-1617 earthling work0 concerns
-1639 arilou work0 concerns
-1668 pkunk work0 concerns
-1688 mycon work0 concerns0
-1732 spathi work0 concerns
-1764 androsynth work0 concerns
-1834 chenjesu work0 concerns
-1858 ilwrath work0 concerns
-1881 thraddash work0 concerns
-1896 druuge work0 concerns
-1914 slylandro work0 concerns
-1923 melnorme work0 concerns
-1935 utwig work0 concerns
-1947 orz work0 concerns
-1963 chmmr work0 concerns
-1975 urquan work0 concerns
-1987 kohrah work0 concerns
-1999 vux work0 concerns
-2011 umgah work0 concerns0
-2135 supox work0 concerns
-2147 syreen work0 concerns
-2159 mmrnmhrm work0 concerns
-2171 zoqfot work0 concerns
+93 turnWorld
+98 worldToTurn d
+154 blank
+159 maneuverability chars
+175 think rating side arena seed
+187 pilot rating side arena
+213 workOf rating side arena seed
+260 decide rating side arena seed
+307 idle
+312 combatant side arena
+322 otherSide side
+337 weaponReady work
+342 specialReady work
+352 isUltra chars
+357 ultra work
+362 isGravity el
+367 isCrew el
+372 isCrewBody body
+382 isShip el
+387 samePlayer a b
+392 colliding el
+397 radiusWorld el
+416 travelAngle vel
+423 isVelocityZero vel
+428 displacement turns vel
+433 wrapLoc
+438 angleToFacing a
+443 facingToAngle f
+448 marginOfError rating
+464 plotIntercept space a b maxTurns margin
+473 plotFrom space a b margin maxTurns t
+508 fillConcerns work
+517 consider work el concerns
+549 lifeSpan el
+565 gravityIntercept space planet ship chars
+594 rangeProbe space ship other range
+604 firingSolution arena side other margin
+614 considerGravity work el _ _ concerns
+643 considerEnemy work el dx dy concerns
+727 considerEmpty work el dx dy concerns
+751 considerWeapon work el dx dy concerns
+796 seekingWeaponTurn chars el dx dy
+831 seekingWeapon work el dx dy
+844 isSpecialBody body
+887 considerCrew work el dx dy concerns
+908 shipIntelligence work0 concerns
+963 moveAndFire concern work eval margin
+995 shipMovement work eval
+1019 shipWeapons work other margin
+1088 facingAligned work other
+1106 pursue work eval
+1155 entice work eval
+1203 enticeAvoid work eval toward canTurn canThrust
+1233 enticePlanet work toward away canTurn canThrust
+1272 enticeTarget work eval other toward away canTurn canThrust
+1386 turnShip work angle
+1420 thrustShip work angle
+1446 inertial work
+1451 withFacing facing core
+1456 enemyMi work
+1461 enemyRange work
+1466 enemyAbility work
+1471 coin work sides
+1480 raceIntelligence work concerns
+1559 shofixti work0 concerns
+1588 yehat work0 concerns0
+1639 earthling work0 concerns
+1661 arilou work0 concerns
+1690 pkunk work0 concerns
+1710 mycon work0 concerns0
+1754 spathi work0 concerns
+1786 androsynth work0 concerns
+1856 chenjesu work0 concerns
+1880 ilwrath work0 concerns
+1903 thraddash work0 concerns
+1918 druuge work0 concerns
+1936 slylandro work0 concerns
+1945 melnorme work0 concerns
+1957 utwig work0 concerns
+1969 orz work0 concerns
+1985 chmmr work0 concerns
+1997 urquan work0 concerns
+2009 kohrah work0 concerns
+2021 vux work0 concerns
+2033 umgah work0 concerns0
+2157 supox work0 concerns
+2169 syreen work0 concerns
+2181 mmrnmhrm work0 concerns
+2193 zoqfot work0 concerns
 
 ## src/Melee/Element.elm
 ### Melee.Element

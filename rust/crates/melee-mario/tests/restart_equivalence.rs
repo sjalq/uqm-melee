@@ -191,8 +191,8 @@ fn the_real_loop_reaches_a_held_out_round_and_the_status_document_stays_well_for
         false,
     );
     assert_eq!(status["schema_version"], melee_mario::status::SCHEMA_VERSION);
-    assert!(status["matchups"].as_array().unwrap().len() >= 1);
-    assert!(status["history"].as_array().unwrap().len() >= 1);
+    assert!(!status["matchups"].as_array().unwrap().is_empty());
+    assert!(!status["history"].as_array().unwrap().is_empty());
     assert!(status["champion"]["id"].as_str().is_some());
     // Every number in the document has to be finite or explicitly absent.
     let mut stack = vec![&status];

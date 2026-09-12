@@ -10,7 +10,7 @@
 //!
 //!   cargo test -j 2 -p melee-mario --test governor -- --test-threads=1
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 fn scratch(name: &str) -> PathBuf {
@@ -28,7 +28,7 @@ fn args(raw: &[&str]) -> Vec<String> {
 }
 
 /// Runs a bounded training session and returns (wall seconds, checkpoint).
-fn train(root: &PathBuf, run: &str, duty: &str, episodes: &str) -> (f64, serde_json::Value) {
+fn train(root: &Path, run: &str, duty: &str, episodes: &str) -> (f64, serde_json::Value) {
     let started = Instant::now();
     let code = melee_mario::cli::run(&args(&[
         "start",

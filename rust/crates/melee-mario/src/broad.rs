@@ -314,7 +314,9 @@ fn pick(stats: &SamplerStats, rng: &mut Stream, pool: &[Cell]) -> Cell {
         .map(|cell| weight(stats.cells.get(cell).unwrap_or(&CellStat::default())))
         .collect();
     let total: f64 = weights.iter().sum();
-    if !(total > 0.0) {
+    // A pool whose weights all vanished, or whose sum went non-finite, has no
+    // distribution to sample from, so the draw falls back to uniform.
+    if total.is_nan() || total <= 0.0 {
         return pool[rng.below(pool.len())];
     }
     let mut target = rng.unit() * total;
@@ -1017,7 +1019,7 @@ mod tests {
         let mut gate = round(0.80, 500);
         let mut at = 0u32;
         while gate.progress() == Progress::Running {
-            gate.record(at % 3 != 0);
+            gate.record(!at.is_multiple_of(3));
             at += 1;
         }
         let evaluation = &gate.evaluation;

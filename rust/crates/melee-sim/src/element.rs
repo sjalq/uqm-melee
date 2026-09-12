@@ -120,10 +120,14 @@ pub struct Image {
 }
 
 /// `Melee.Element.Body`. Payload-carrying variants keep the Elm payloads.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Default)]
 pub enum Body {
     Ship(Side),
     Wreck(Side),
+    /// The default body. `Element::default` is only ever a starting point a
+    /// spawner immediately overwrites, and the planet is the one body an arena
+    /// always holds.
+    #[default]
     Planet,
     Asteroid,
     Crew { origin: Side },
@@ -173,12 +177,6 @@ pub enum Body {
     YehatMissile,
     ZoqSpit,
     ZoqTongue,
-}
-
-impl Default for Body {
-    fn default() -> Self {
-        Body::Planet
-    }
 }
 
 impl Body {

@@ -18,9 +18,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# 16 hidden rows of N_IN, then 13 output rows of 17. N_IN is the 103 encoder
+# 16 hidden rows of N_IN, then 13 output rows of 17. N_IN is the 127 encoder
 # observations plus 13 feedback slots plus the bias.
-N_IN = 103 + 13 + 1
+N_IN = 127 + 13 + 1
 N_WEIGHTS = 16 * N_IN + 13 * 17
 ALL_SHIPS = [
     "Androsynth", "Arilou", "Chenjesu", "Chmmr", "Druuge", "Earthling",

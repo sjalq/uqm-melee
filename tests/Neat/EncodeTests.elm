@@ -9,11 +9,16 @@ exist so that widening, reordering or quietly dropping a block cannot pass
 unnoticed on this side either.
 
 What they do NOT try to prove is that every slot is something the cyborg also
-reads: that argument lives in the layout comment and in the Rust test
-`only_the_five_declared_slots_exceed_what_the_cyborg_reads`, which pins the five
-deliberate exceptions by index. What they prove here is that the shape the two
-languages agree on is the shape this module actually emits, on real arenas that
-have been fought in rather than on an opening position.
+reads. That argument is made in Rust, and it is made against code rather than
+against prose: `only_the_five_declared_slots_exceed_what_the_cyborg_reads` pins
+the five deliberate exceptions by index,
+`the_slots_credited_to_a_cyborg_function_agree_with_that_function` evaluates the
+cyborg itself and compares it slot by slot, and
+`the_cyborgs_own_weapon_concern_is_never_displaced_by_a_lesser_one` asks
+`cyborg::weapon_concern` for the cyborg's own ranking. What they prove here is
+that the shape the two languages agree on is the shape this module actually
+emits, on real arenas that have been fought in rather than on an opening
+position.
 
 -}
 
@@ -38,17 +43,17 @@ blocks : List ( String, Int )
 blocks =
     [ ( "own hull state", 11 )
     , ( "own motion predicates", 5 )
-    , ( "own resources", 4 )
+    , ( "own resources", 5 )
     , ( "own hull mass", 1 )
-    , ( "enemy geometry", 9 )
+    , ( "enemy geometry", 11 )
     , ( "enemy visible state", 4 )
     , ( "firing solutions", 5 )
     , ( "scalar ship comparisons", 5 )
     , ( "ability bits, both sides", 2 * Encode.abilityBits )
     , ( "gravity concern", 3 )
     , ( "ranked hostile threats", Encode.threatSlots * Encode.threatWidth )
-    , ( "crew concern", 4 )
-    , ( "neutral-body concern", 3 )
+    , ( "crew concern", 7 )
+    , ( "neutral-body concern", 6 )
     , ( "constant 1", 1 )
     , ( "hull identity", 2 * Encode.hullBitsPerSide )
     ]
@@ -58,7 +63,7 @@ blocks =
 -}
 starts : List Int
 starts =
-    [ 0, 11, 16, 20, 21, 30, 34, 39, 44, 58, 61, 85, 89, 92, 93 ]
+    [ 0, 11, 16, 21, 22, 33, 37, 42, 47, 61, 64, 103, 110, 116, 117 ]
 
 
 suite : Test
@@ -76,7 +81,7 @@ suite =
         , test "the combat sensors run up to and including the constant, then the hull bits" <|
             \() ->
                 Expect.equal ( Encode.combatSize, Encode.kindSize, Encode.size )
-                    ( 93, 10, 103 )
+                    ( 117, 10, 127 )
         , test "every fixture arena produces exactly the documented number of slots" <|
             \() ->
                 Expect.equal []
@@ -108,9 +113,9 @@ suite =
                     (Encode.vector Bottom (Init.arena Pkunk Umgah (Seed 5))
                         |> List.drop Encode.combatSize
                     )
-        , test "one threat record is eight slots and three of them are emitted" <|
+        , test "one threat record is thirteen slots and three of them are emitted" <|
             \() ->
-                Expect.equal 24 (Encode.threatSlots * Encode.threatWidth)
+                Expect.equal 39 (Encode.threatSlots * Encode.threatWidth)
         , test "the encoder rides the same range constants as the cyborg" <|
             \() ->
                 Expect.equal ( 4000, 150 ) ( Cyborg.longRange, Cyborg.fastShip )

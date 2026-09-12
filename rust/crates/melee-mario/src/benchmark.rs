@@ -59,6 +59,14 @@ use std::time::Instant;
 /// network the next time anything about mutation changed, and the printed node
 /// and link counts would document the drift without preventing it. Compiled
 /// into the binary so the benchmark does not depend on a working directory.
+///
+/// Widening the observation vector widens the input band, which moves every
+/// identifier above it and so cannot leave the fixture untouched. It was
+/// carried across the last widening rather than reminted: every node above the
+/// observation band moved up by the number of slots the vector grew and the new
+/// input identifiers were added unconnected, so the evolved topology, its
+/// weights and its 231 enabled links are the same graph they were. The
+/// fingerprint below still moves, because the workload genuinely did.
 const GENOME: &str = include_str!("../benchmark/genome.json");
 
 /// How many times the fixed task list is replayed. Five is enough for the
@@ -655,8 +663,8 @@ mod tests {
         // thing the whole module exists to prevent. This constant is the
         // tripwire: updating it is a deliberate act, and every number ever
         // recorded against the old one stops being comparable.
-        assert_eq!(genome.fingerprint(), "gb991c6862c90cc97");
-        assert_eq!(genome.nodes.len(), 192);
+        assert_eq!(genome.fingerprint(), "g21abb7facc59eecf");
+        assert_eq!(genome.nodes.len(), 216);
         assert_eq!(genome.enabled_count(), 231);
     }
 

@@ -370,7 +370,11 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
     // hull the same number of appearances, so the panel would not be balanced
     // and the aggregate it measures would not be the declared distribution.
     if options.config.broad.pairs == 0
-        || options.config.broad.pairs % melee_sim::catalog::MELEE_SHIP_COUNT != 0
+        || !options
+            .config
+            .broad
+            .pairs
+            .is_multiple_of(melee_sim::catalog::MELEE_SHIP_COUNT)
     {
         return Err("--overall-pairs must be a positive multiple of 25".into());
     }

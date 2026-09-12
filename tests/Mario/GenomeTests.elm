@@ -67,7 +67,7 @@ setAt index value values =
         values
 
 
-{-| Place one value in the flat 117 slot input vector and split it back into the
+{-| Place one value in the flat 141 slot input vector and split it back into the
 three request fields. This is the packing the Rust port must agree with.
 -}
 stepWithSlot : Int -> Float -> Step
@@ -325,23 +325,23 @@ suite =
 shapeSuite : Test
 shapeSuite =
     describe "slot layout"
-        [ test "the input band is 103 observations, 5 controls, 8 memory and a bias" <|
+        [ test "the input band is 127 observations, 5 controls, 8 memory and a bias" <|
             \() ->
-                Expect.equal [ 103, 5, 8, 117 ]
+                Expect.equal [ 127, 5, 8, 141 ]
                     [ Genome.observationCount, Genome.controlCount, Genome.memoryCount, Genome.inputCount ]
         , test "observation width matches the existing encoder" <|
             \() -> Expect.equal Encode.size Genome.observationCount
-        , test "ids are banded 0..116 inputs, 117..129 outputs, 130 and up hidden" <|
+        , test "ids are banded 0..140 inputs, 141..153 outputs, 154 and up hidden" <|
             \() ->
-                Expect.equal [ 116, 117, 129, 130 ]
+                Expect.equal [ 140, 141, 153, 154 ]
                     [ Genome.biasId, Genome.firstOutputId, Genome.lastOutputId, Genome.firstHiddenId ]
         , test "feedback bands start right after the observations" <|
             \() ->
-                Expect.equal [ 103, 108 ]
+                Expect.equal [ 127, 132 ]
                     [ Genome.firstControlFeedbackId, Genome.firstMemoryFeedbackId ]
         , test "outputs are five controls then eight memory channels" <|
             \() ->
-                Expect.equal ( 13, 122 ) ( Genome.outputCount, Genome.firstMemoryOutputId )
+                Expect.equal ( 13, 146 ) ( Genome.outputCount, Genome.firstMemoryOutputId )
         , fuzz2 shipFuzzer shipFuzzer "hull bits are five low bit first bits per side" <|
             \us them ->
                 Expect.equal

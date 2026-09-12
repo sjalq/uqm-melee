@@ -2,7 +2,7 @@ module Neat.Encode exposing (abilityBits, combatSize, hullBitsPerSide, kindSize,
 
 {-| Observation vector shared with `rust/crates/melee-neat/src/encode.rs`.
 
-CROSS-LANGUAGE CONTRACT. That module emits the same 103 numbers in the same
+CROSS-LANGUAGE CONTRACT. That module emits the same 127 numbers in the same
 order from the same arena, and `Mario.Dashboard.Slots` names them. A change here
 is a change to all three, plus `Mario.Genome.observationCount` on this side and
 `policy::N_OBS` and `melee_mario::genome::{N_OBS, N_INPUT}` on the other. It also
@@ -24,7 +24,15 @@ taken over facts it has already read, and every input to them is itself a slot
 here. This encoder emits the facts and leaves the gating to the network, which is
 what makes the comparison a comparison of policies rather than of eyesight.
 
-LAYOUT, 103 slots.
+One rule shapes every block that describes a moving object: the cyborg
+extrapolates with a whole velocity and steers off a whole bearing, so every
+object a block describes carries its direction of travel as a cosine and a sine,
+its speed, and its bearing relative to our own facing. A block that emitted only
+a magnitude or only a cosine would leave the network unable to tell two
+mirror-image situations apart, which is the one distinction the cyborg's own
+dodging and leading are built from.
+
+LAYOUT, 127 slots.
 
       0..10   own hull state
          0 energy / maxEnergy
@@ -41,53 +49,72 @@ LAYOUT, 103 slots.
      11..15   own motion predicates
         11 atLimit          12 beyondLimit      13 inGravityWell
         14 usesInertia      15 ultra
-     16..19   own resources against the costs that actually gate abilities
+     16..20   own resources against the costs that actually gate abilities
         16 energy >= weaponEnergyCost
         17 energy >= specialEnergyCost
         18 the Umgah approach budget, worldToTurn (160 * energy / special cost)
-        19 specialWait / 64, the exact timer, not just whether it expired
-     20       own hull mass / (2 * maxShipMass)
-     21..29   enemy geometry
-        21 dx to foe / half arena width     22 dy to foe / half arena height
-        23 distance to foe / longRange      24 closing rate / 200
-        25 cos(their facing - ours)         26 sin(their facing - ours)
-        27 their speed / their maxThrust    28 signed facing delta to foe / 8
-        29 foe hull mass / (2 * maxShipMass)
-     30..33   enemy visible state
-        30 foe element cloaked              31 our own cloak
-        32 their energy / their maxEnergy   SUPERSET
-        33 their crew / their maxCrew       SUPERSET
-     34..38   firing solutions
-        34 our firing solution against them, the cyborg's own predicate
-        35 our range probe closing on them, 1/(1+t)
-        36 their firing solution against us SUPERSET for missile hulls
-        37 their range probe closing on us  SUPERSET for missile hulls
-        38 their ability.immediateWeapon, which says whether 36 and 37 are the
+        19 core specialWait / 64, the live timer, not just whether it expired
+        20 characteristics specialWait / 64, the reload constant, which is also
+           the slot Umgah overwrites with the approach distance it stashes
+     21       own hull mass / (2 * maxShipMass)
+     22..32   enemy geometry
+        22 dx to foe / half arena width     23 dy to foe / half arena height
+        24 distance to foe / longRange      25 closing rate / 200
+        26 cos(their facing - ours)         27 sin(their facing - ours)
+        28 their speed / their maxThrust
+        29 cos(their travel angle - our facing)
+        30 sin(their travel angle - our facing)
+        31 signed facing delta to foe / 8
+        32 foe hull mass / (2 * maxShipMass)
+     33..36   enemy visible state
+        33 foe element cloaked              34 our own cloak
+        35 their energy / their maxEnergy   SUPERSET
+        36 their crew / their maxCrew       SUPERSET
+     37..41   firing solutions
+        37 our firing solution against them, the cyborg's own predicate
+        38 our range probe closing on them, 1/(1+t)
+        39 their firing solution against us SUPERSET for missile hulls
+        40 their range probe closing on us  SUPERSET for missile hulls
+        41 their ability.immediateWeapon, which says whether 39 and 40 are the
            cyborg-visible case or the superset case
-     39..43   scalar ship comparisons
-        39 our intelRange / longRange       40 their intelRange / longRange
-        41 maneuverability ours / fastShip  42 maneuverability theirs / fastShip
-        43 (our maxThrust - their maxThrust) / 64
-     44..57   ability bits, ours 44..50 then theirs 51..57, each in the order
+     42..46   scalar ship comparisons
+        42 our intelRange / longRange       43 their intelRange / longRange
+        44 maneuverability ours / fastShip  45 maneuverability theirs / fastShip
+        46 (our maxThrust - their maxThrust) / 64
+     47..60   ability bits, ours 47..53 then theirs 54..60, each in the order
               seekingWeapon, seekingSpecial, immediateWeapon, firesFore,
               firesRight, firesAft, firesLeft
-     58..60   gravity concern
-        58 planet dx / 4000                 59 planet dy / 4000
-        60 1/(1+t) from the cyborg's own three-margin gravity battery
-     61..84   the three most urgent hostile projectiles, 8 slots each,
-              base 61 + 8 * rank:
-        +0 1/(1+t) of the predicted impact  +1 cos(its travel angle - our facing)
+     61..63   gravity concern
+        61 planet dx / 4000                 62 planet dy / 4000
+        63 1/(1+t) from the cyborg's own three-margin gravity battery
+     64..102  the three most urgent hostile projectiles, 13 slots each, base
+              64 + 13 * rank. The rank key is considerWeapon's own whichTurn,
+              which is the seeking branch's turn count for a homing weapon and
+              the coasted intercept for a ballistic one:
+        +0 1/(1+t) of that concern turn
+        +1 cos(its travel angle - our facing)
         +2 sin(its travel angle - our facing)
-        +3 cos(its travel angle - its bearing to us), the cyborg's closing test
-        +4 seeking                          +5 finiteLife
-        +6 its mass / our maxCrew           +7 its remaining life / 64
-     85..88   crew concern
-        85 dx / half width  86 dy / half height  87 1/(1+turns)
-        88 our ship already targets it
-     89..91   neutral-body concern, the nearest parentless body (asteroids)
-        89 dx / 4000        90 dy / 4000           91 1/(1+turns)
-     92       constant 1, the last of the 93 combat sensors
-     93..102  hull identity, our 5-bit roster index then theirs, low bit first
+        +3 its speed / turnWorld
+        +4 cos(its bearing from us - our facing)
+        +5 sin(its bearing from us - our facing)
+        +6 1/(1+turns) of its straight-line range, seekingWeapon's own measure
+        +7 cos(its travel angle - its bearing back to us), the closing test
+        +8 sin of that same angle, whose SIGN is the side enticeAvoid dodges
+        +9 seeking                         +10 finiteLife
+       +11 its mass / our maxCrew          +12 its remaining life / 64
+    103..109  crew concern
+       103 dx / half width 104 dy / half height 105 1/(1+turns)
+       106 cos(its travel angle - our facing)
+       107 sin(its travel angle - our facing)
+       108 its speed / turnWorld
+       109 our ship already targets it
+    110..115  neutral-body concern, the nearest parentless body (asteroids)
+       110 dx / 4000       111 dy / 4000          112 1/(1+turns)
+       113 cos(its travel angle - our facing)
+       114 sin(its travel angle - our facing)
+       115 its speed / turnWorld
+    116      constant 1, the last of the 117 combat sensors
+    117..126 hull identity, our 5-bit roster index then theirs, low bit first
 
 -}
 
@@ -107,7 +134,7 @@ import Melee.Units exposing (Angle(..), Facing(..), Side(..), VelocityDesc, Wait
 -}
 combatSize : Int
 combatSize =
-    93
+    117
 
 
 kindBits : Int
@@ -139,7 +166,7 @@ threatSlots =
 
 threatWidth : Int
 threatWidth =
-    8
+    13
 
 
 {-| Ability bits emitted per side, in `abilityOf` order.
@@ -233,7 +260,7 @@ vector side arena =
 
 
 
--- OWN HULL, SLOTS 0..20
+-- OWN HULL, SLOTS 0..21
 
 
 ownState : State.CombatantCore -> Element -> List Float
@@ -276,12 +303,20 @@ ownState core own =
 
     -- Umgah spends energy by the turn on its approach and compares this budget
     -- against the turns to the enemy, so the quantity is a turn count on the
-    -- same scale as slot 23.
+    -- same scale as slot 24.
     , ratio (Cyborg.worldToTurn (160 * core.energy // max 1 chars.specialEnergyCost)) 64
 
-    -- Chenjesu fires on specialWait == 1 exactly and Umgah compares the timer
-    -- against a value it stashed, neither of which slot 8 can say.
+    -- Chenjesu fires on specialWait == 1 exactly, which slot 8 cannot say.
     , ratio (clamp 0 64 (waitN core.specialWait)) 64
+
+    -- A DIFFERENT FIELD from the one above. Characteristics.specialWait is the
+    -- hull's reload constant, and it is the slot `remember` writes the Umgah
+    -- approach distance into; `umgah` then compares the turns to the enemy
+    -- against it and `pilot` persists it back into the arena. It is live,
+    -- cyborg-visible state that the live timer above cannot express. 255, the
+    -- "forget it" sentinel, saturates this ratio at one, which is the same
+    -- thing the comparison says.
+    , ratio (clamp 0 64 (waitN chars.specialWait)) 64
 
     -- considerEnemy reads a hull element's raw mass and tests it against
     -- maxShipMass to spot a transformed hull. Halving the scale keeps that
@@ -292,7 +327,7 @@ ownState core own =
 
 
 
--- THE OPPONENT, SLOTS 21..38
+-- THE OPPONENT, SLOTS 22..41
 
 
 enemyBlock : Arena -> Side -> State.CombatantCore -> State.CombatantCore -> Element -> Element -> List Float
@@ -319,6 +354,9 @@ enemyBlock arena side ownCore foeCore own foe =
         relFace =
             Trig.normalizeAngle (foeFacing * 4 - faceAng)
 
+        relTravel =
+            Trig.normalizeAngle (travelAngle foe.velocity - faceAng)
+
         turnErr =
             shortestFacing (angleToFacing (Trig.arctan dx dy) - facing)
 
@@ -336,6 +374,15 @@ enemyBlock arena side ownCore foeCore own foe =
     , unit relFace
     , unitS relFace
     , clamp01 (speed foe.velocity / toFloat (max 1 foeCore.characteristics.maxThrust))
+
+    -- pursue and entice both extrapolate the opponent with
+    -- `displacement whichTurn other.velocity` and enticeTarget reads
+    -- `travelAngle other.velocity` outright. The closing scalar above is only
+    -- the radial part of that velocity, so without these two the sign of the
+    -- tangential part is lost and two opposite circling directions would reach
+    -- the network as the same situation.
+    , unit relTravel
+    , unitS relTravel
     , clamp11 (toFloat turnErr / 8)
     , hullMass foe
     , flag (Element.objectCloaked foe.prim)
@@ -368,7 +415,7 @@ enemyBlock arena side ownCore foeCore own foe =
 
 
 
--- SCALARS AND ABILITY BITS, SLOTS 39..57
+-- SCALARS AND ABILITY BITS, SLOTS 42..60
 
 
 scalars : ShipKind -> ShipKind -> State.CombatantCore -> State.CombatantCore -> List Float
@@ -378,7 +425,7 @@ scalars ours theirs ownCore foeCore =
     , ratio (Cyborg.maneuverability ownCore.characteristics) Cyborg.fastShip
     , ratio (Cyborg.maneuverability foeCore.characteristics) Cyborg.fastShip
 
-    -- Slots 4 and 27 normalise each side's speed by its own maximum, which
+    -- Slots 4 and 28 normalise each side's speed by its own maximum, which
     -- destroys the raw comparison considerEnemy and enticeTarget make. This
     -- restores it.
     , clamp11 (toFloat (ownCore.characteristics.maxThrust - foeCore.characteristics.maxThrust) / 64)
@@ -406,17 +453,28 @@ abilityOf ability =
 
 
 
--- CONCERNS, SLOTS 58..91
+-- CONCERNS, SLOTS 61..115
 
 
 {-| One ranked hostile projectile, in the terms the cyborg classifies it.
 -}
 type alias Threat =
-    { hit : Int
+    { -- considerWeapon's own whichTurn for this projectile at the Awesome
+      -- rating: the seeking branch's turn count for a homing weapon, the coasted
+      -- intercept for a ballistic one. This is the key the cyborg ranks on.
+      concern : Int
+
+    -- Straight-line range in turns, which is what seekingWeapon measures and
+    -- what enticeAvoid needs alongside the bearing.
     , turns : Int
     , id : Int
     , travel : Int
+
+    -- Bearing from us to the projectile, and the bearing back from it to us.
+    -- enticeAvoid steers off the angle between the second and travel.
+    , bearing : Int
     , bearingBack : Int
+    , velocity : VelocityDesc
     , seeking : Bool
     , finiteLife : Bool
     , mass : Int
@@ -442,23 +500,23 @@ the gravity, threat, crew and neutral blocks it feeds.
 concernBlocks : Arena -> State.CombatantCore -> Element -> List Float
 concernBlocks arena core own =
     if not (Cyborg.colliding own) then
-        List.repeat (3 + threatSlots * threatWidth + 4 + 3) 0
+        List.repeat (3 + threatSlots * threatWidth + 7 + 6) 0
 
     else
         let
             scan =
-                Dict.foldl (\_ el acc -> consider arena own el acc)
+                Dict.foldl (\_ el acc -> consider arena core own el acc)
                     { planet = Nothing, empty = Nothing, crew = Nothing, threats = [] }
                     arena.elements
         in
         gravityBlock arena.space core own scan.planet
             ++ threatBlock core scan.threats
-            ++ crewBlock arena.space own scan.crew
-            ++ neutralBlock arena.space own scan.empty
+            ++ crewBlock arena.space core own scan.crew
+            ++ neutralBlock arena.space core own scan.empty
 
 
-consider : Arena -> Element -> Element -> Scan -> Scan
-consider arena own el scan =
+consider : Arena -> State.CombatantCore -> Element -> Element -> Scan -> Scan
+consider arena core own el scan =
     if el.id == own.id || not (Cyborg.colliding el) then
         scan
 
@@ -514,14 +572,14 @@ consider arena own el scan =
                 scan
 
         else if el.parent /= own.parent && Cyborg.lifeSpan el > 0 then
-            { scan | threats = threatOf arena own el dx dy turns :: scan.threats }
+            { scan | threats = threatOf arena core own el dx dy turns :: scan.threats }
 
         else
             scan
 
 
-threatOf : Arena -> Element -> Element -> Int -> Int -> Int -> Threat
-threatOf arena own el dx dy turns =
+threatOf : Arena -> State.CombatantCore -> Element -> Element -> Int -> Int -> Int -> Threat
+threatOf arena core own el dx dy turns =
     let
         ability =
             case el.parent of
@@ -531,17 +589,31 @@ threatOf arena own el dx dy turns =
                 -- considerWeapon's own fallback for a parentless projectile.
                 Nothing ->
                     (stock Shofixti).ability
+
+        seeking =
+            (ability.seekingWeapon && not (Cyborg.isSpecialBody el.body))
+                || (ability.seekingSpecial && Cyborg.isSpecialBody el.body)
     in
-    { -- considerWeapon's Awesome branch: the projectile coasted against us over
-      -- its own remaining life, at the cyborg's 40-display-unit margin.
-      hit = Cyborg.plotIntercept arena.space el own (Cyborg.lifeSpan el) (Cyborg.displayToWorld 40)
+    { -- considerWeapon's own split, at the Awesome rating. A homing weapon goes
+      -- to seekingWeapon, whose turn count is a straight-line range, and a
+      -- ballistic one is coasted against us over its remaining life at the
+      -- cyborg's 40-display-unit margin. Scoring every projectile by the
+      -- ballistic branch would sort a missile that is turning onto us but not
+      -- yet on a collision course behind every shot with a predicted impact,
+      -- which is the opposite of the order the cyborg acts in.
+      concern =
+        if seeking then
+            Cyborg.seekingWeaponTurn core.characteristics el dx dy
+
+        else
+            Cyborg.plotIntercept arena.space el own (Cyborg.lifeSpan el) (Cyborg.displayToWorld 40)
     , turns = turns
     , id = toInt el.id
     , travel = travelAngle el.velocity
+    , bearing = Trig.arctan dx dy
     , bearingBack = Trig.arctan (negate dx) (negate dy)
-    , seeking =
-        (ability.seekingWeapon && not (Cyborg.isSpecialBody el.body))
-            || (ability.seekingSpecial && Cyborg.isSpecialBody el.body)
+    , velocity = el.velocity
+    , seeking = seeking
     , finiteLife = el.flags.finiteLife
     , mass = el.mass
     , life = Cyborg.lifeSpan el
@@ -565,11 +637,15 @@ gravityBlock space core own planet =
             ]
 
 
-crewBlock : WorldExtent -> Element -> Maybe Near -> List Float
-crewBlock space own near =
+{-| Both concerns below reach `pursue`, which extrapolates the object with
+`displacement whichTurn other.velocity`, so each carries its whole velocity
+rather than a position the network would have to differentiate.
+-}
+crewBlock : WorldExtent -> State.CombatantCore -> Element -> Maybe Near -> List Float
+crewBlock space core own near =
     case near of
         Nothing ->
-            [ 0, 0, 0, 0 ]
+            [ 0, 0, 0, 0, 0, 0, 0 ]
 
         Just { turns, element } ->
             let
@@ -579,15 +655,16 @@ crewBlock space own near =
             [ clamp11 (toFloat dx / (toFloat space.width / 2))
             , clamp11 (toFloat dy / (toFloat space.height / 2))
             , urgency (max 1 turns)
-            , flag (own.target == Just element.id)
             ]
+                ++ motionOf element.velocity (faceAngle core)
+                ++ [ flag (own.target == Just element.id) ]
 
 
-neutralBlock : WorldExtent -> Element -> Maybe Near -> List Float
-neutralBlock space own near =
+neutralBlock : WorldExtent -> State.CombatantCore -> Element -> Maybe Near -> List Float
+neutralBlock space core own near =
     case near of
         Nothing ->
-            [ 0, 0, 0 ]
+            [ 0, 0, 0, 0, 0, 0 ]
 
         Just { turns, element } ->
             let
@@ -598,27 +675,30 @@ neutralBlock space own near =
             , clamp11 (toFloat dy / 4000)
             , urgency (max 1 turns)
             ]
+                ++ motionOf element.velocity (faceAngle core)
 
 
-{-| The cyborg keeps the soonest predicted impact, not the nearest object, so
-that is the primary key. Projectiles with no predicted impact sort after every
-one that has an impact, and among themselves by the distance the seeking branch
-measures in turns. Element id breaks the last tie so the order is a function of
-the arena alone.
+{-| considerWeapon keeps the smallest positive whichTurn, and on a tie it prefers
+the Avoid arm, which is the ballistic one. This is that rule: projectiles the
+cyborg would score at zero sort behind every one it would act on, then soonest
+concern first, then Avoid before Entice, then the nearer object, then element id
+so the order is a function of the arena alone.
 -}
 threatBlock : State.CombatantCore -> List Threat -> List Float
 threatBlock core threats =
     let
-        (Facing facing) =
-            core.facing
-
         ranked =
             threats
-                |> List.sortBy (\t -> ( ( ifElse (t.hit <= 0) 1 0, t.hit ), ( t.turns, t.id ) ))
+                |> List.sortBy
+                    (\t ->
+                        ( ( ifElse (t.concern <= 0) 1 0, t.concern, ifElse t.seeking 1 0 )
+                        , ( t.turns, t.id )
+                        )
+                    )
                 |> List.take threatSlots
 
         emitted =
-            List.concatMap (threatRecord core (facing * 4)) ranked
+            List.concatMap (threatRecord core (faceAngle core)) ranked
     in
     emitted ++ List.repeat ((threatSlots - List.length ranked) * threatWidth) 0
 
@@ -626,24 +706,34 @@ threatBlock core threats =
 threatRecord : State.CombatantCore -> Int -> Threat -> List Float
 threatRecord core faceAng t =
     let
-        relative =
-            Trig.normalizeAngle (t.travel - faceAng)
+        toward =
+            Trig.normalizeAngle (t.bearing - faceAng)
 
         closingAngle =
             Trig.normalizeAngle (t.travel - t.bearingBack)
     in
-    [ urgency t.hit
-    , unit relative
-    , unitS relative
-    , unit closingAngle
-    , flag t.seeking
-    , flag t.finiteLife
+    (urgency t.concern :: motionOf t.velocity faceAng)
+        ++ [ -- Where the shot is, in our own frame. Without these the network
+             -- holds an angle between two of the projectile's own directions
+             -- and no idea which side of us it passes.
+             unit toward
+           , unitS toward
+           , urgency (max 1 t.turns)
+           , unit closingAngle
 
-    -- Projectile mass is its damage, which Shofixti weighs against its own
-    -- remaining crew.
-    , ratio t.mass core.maxCrew
-    , ratio (clamp 0 64 t.life) 64
-    ]
+           -- enticeAvoid turns `dir = +/-1` on exactly the sign of this sine:
+           -- the cosine alone leaves the bearing recoverable only up to a mirror
+           -- reflection about the projectile's travel line, which is the one
+           -- thing a dodge has to choose between.
+           , unitS closingAngle
+           , flag t.seeking
+           , flag t.finiteLife
+
+           -- Projectile mass is its damage, which Shofixti weighs against its
+           -- own remaining crew.
+           , ratio t.mass core.maxCrew
+           , ratio (clamp 0 64 t.life) 64
+           ]
 
 
 
@@ -704,6 +794,39 @@ unit ang =
 unitS : Int -> Float
 unitS ang =
     toFloat (Trig.sine ang 100) / 100
+
+
+faceAngle : State.CombatantCore -> Int
+faceAngle core =
+    let
+        (Facing facing) =
+            core.facing
+    in
+    facing * 4
+
+
+{-| Speed of an object that has no maxThrust of its own to be measured against.
+Cyborg.turnWorld is the distance the cyborg calls one turn, so this reads as the
+fraction of a turn's distance the object covers per frame, on the same scale
+every worldToTurn slot in this vector already uses.
+-}
+pace : VelocityDesc -> Float
+pace v =
+    clamp01 (speed v / toFloat Cyborg.turnWorld)
+
+
+{-| Direction of travel and speed of an object the cyborg extrapolates with,
+expressed in our own frame. `displacement` consumes the whole velocity, so a
+block that named only its magnitude would leave two opposite headings
+indistinguishable.
+-}
+motionOf : VelocityDesc -> Int -> List Float
+motionOf v faceAng =
+    let
+        relative =
+            Trig.normalizeAngle (travelAngle v - faceAng)
+    in
+    [ unit relative, unitS relative, pace v ]
 
 
 waitN : Wait -> Int

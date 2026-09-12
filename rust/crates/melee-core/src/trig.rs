@@ -148,9 +148,11 @@ pub fn square_root(value: i64) -> i64 {
     let (mut lo, mut hi) = (0i64, value);
     while lo < hi {
         let mid = (lo + hi + 1) / 2;
-        if mid > 46340 {
-            hi = mid - 1;
-        } else if mid * mid > value {
+        // The clamp has to be tested first and has to short-circuit: above
+        // 46340 the square itself is what overflows, so `mid * mid` must not be
+        // evaluated. `Melee.Trig.isqrt` spells the same two tests as separate
+        // branches, which is the same order and the same outcome.
+        if mid > 46340 || mid * mid > value {
             hi = mid - 1;
         } else {
             lo = mid;

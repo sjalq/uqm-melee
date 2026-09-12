@@ -23,26 +23,26 @@ The trainer, the Elm oracle and this dashboard all agree on one fixed
 input assembly. Writing it down once here keeps the topology view
 honest: every circle on the left edge is named, and the two 5-bit ship
 identity groups and the eight memory channels are separately
-identifiable rather than disappearing into an anonymous stack of 117
+identifiable rather than disappearing into an anonymous stack of 141
 inputs.
 
 Layout (node ids):
 
-       0 .. 92   93 combat sensors, slot 92 being the constant 1 the
+       0 .. 116  117 combat sensors, slot 116 being the constant 1 the
                  encoder already emits
-      93 .. 97   our ship identity, 5 bits, least significant bit first
-      98 .. 102  their ship identity, 5 bits, least significant bit first
-                 (0..102 together are the 103 observations)
-     103 .. 107  the five control bits actually applied on the previous
+     117 .. 121  our ship identity, 5 bits, least significant bit first
+     122 .. 126  their ship identity, 5 bits, least significant bit first
+                 (0..126 together are the 127 observations)
+     127 .. 131  the five control bits actually applied on the previous
                  step: left, right, thrust, weapon, special
-     108 .. 115  the eight explicit memory channels emitted on the
+     132 .. 139  the eight explicit memory channels emitted on the
                  previous step
-            116  the extra bias input, always 1
-     117 .. 121  control outputs: left, right, thrust, weapon, special
-     122 .. 129  memory outputs, channels 0 .. 7
-     130 ..      hidden nodes
+            140  the extra bias input, always 1
+     141 .. 145  control outputs: left, right, thrust, weapon, special
+     146 .. 153  memory outputs, channels 0 .. 7
+     154 ..      hidden nodes
 
-Sensor names 0..92 mirror the ordering in `Neat.Encode.vector`, whose own
+Sensor names 0..116 mirror the ordering in `Neat.Encode.vector`, whose own
 documentation is normative. If that encoder ever changes, this table must
 change with it.
 
@@ -51,7 +51,7 @@ change with it.
 
 sensorCount : Int
 sensorCount =
-    93
+    117
 
 
 shipBits : Int
@@ -303,7 +303,7 @@ sensorInfo id =
 
 abilityBase : Int
 abilityBase =
-    44
+    47
 
 
 abilityBits : Int
@@ -313,7 +313,7 @@ abilityBits =
 
 threatBase : Int
 threatBase =
-    61
+    64
 
 
 threatSlots : Int
@@ -323,7 +323,7 @@ threatSlots =
 
 threatWidth : Int
 threatWidth =
-    8
+    13
 
 
 {-| The seven ship flags the original cyborg branches on, ours then theirs. The
@@ -373,8 +373,9 @@ abilityInfo offset =
     ( prefix ++ short, "1 when " ++ side ++ "'s " ++ detail ++ "." )
 
 
-{-| Three hostile projectiles, ranked by how soon each is predicted to hit us,
-which is the order the cyborg itself ranks them in. Rank 0 is the most urgent.
+{-| Three hostile projectiles, ranked by the cyborg's own weapon concern: the
+coasted intercept for a shot that flies straight, the closing range for one that
+homes. Rank 0 is the most urgent.
 -}
 threatInfo : Int -> Int -> ( String, String )
 threatInfo rank field =
@@ -385,7 +386,7 @@ threatInfo rank field =
         ( short, detail ) =
             case field of
                 0 ->
-                    ( "urgency", "Urgency of the predicted impact. 0 when this projectile is not predicted to reach us, or when there is no such projectile." )
+                    ( "urgency", "Urgency of the concern the cyborg itself scores this projectile at: its predicted impact when it flies straight, its closing range when it homes. 0 when the cyborg would not act on it, or when there is no such projectile." )
 
                 1 ->
                     ( "travel cos", "Cosine of the direction it is travelling, relative to where we point." )
@@ -394,22 +395,37 @@ threatInfo rank field =
                     ( "travel sin", "Sine of the direction it is travelling, relative to where we point." )
 
                 3 ->
-                    ( "closing", "Cosine of the angle between its travel direction and its bearing to us. Near 1 means it is coming straight at us." )
+                    ( "speed", "How fast it is travelling, as a fraction of the 64 world units the cyborg counts as one turn's distance." )
 
                 4 ->
-                    ( "seeking", "1 when it homes, worked out from the ability of the ship that launched it." )
+                    ( "bearing cos", "Cosine of the direction it lies in, relative to where we point. With the sine beside it this says which side of us the shot is on." )
 
                 5 ->
-                    ( "finite life", "1 when it expires on a timer rather than persisting." )
+                    ( "bearing sin", "Sine of the direction it lies in, relative to where we point." )
 
                 6 ->
+                    ( "range", "Urgency of its straight-line distance in turns, which is the measure the cyborg's homing branch ranks on." )
+
+                7 ->
+                    ( "closing cos", "Cosine of the angle between its travel direction and its bearing to us. Near 1 means it is coming straight at us." )
+
+                8 ->
+                    ( "closing sin", "Sine of that same angle. Its sign is the side the cyborg dodges to, which the cosine alone cannot tell apart." )
+
+                9 ->
+                    ( "seeking", "1 when it homes, worked out from the ability of the ship that launched it." )
+
+                10 ->
+                    ( "finite life", "1 when it expires on a timer rather than persisting." )
+
+                11 ->
                     ( "damage", "Its mass, which is the crew it would cost us, over our maximum crew." )
 
                 _ ->
                     ( "life left", "How much of its flight time remains, over 64." )
     in
     ( rankName ++ " " ++ short
-    , "Ranked hostile projectile " ++ String.fromInt rank ++ ", soonest predicted impact first. " ++ detail
+    , "Ranked hostile projectile " ++ String.fromInt rank ++ ", soonest cyborg concern first. " ++ detail
     )
 
 
@@ -474,112 +490,139 @@ plainSensor id =
             ( "approach fuel", "How many turns of special the energy we hold would pay for, over 64. This is the budget Umgah plans its approach with." )
 
         19 ->
-            ( "special timer", "The special cooldown itself over 64, not just whether it expired. Chenjesu fires on exactly one tick remaining." )
+            ( "special timer", "The live special cooldown itself over 64, not just whether it expired. Chenjesu fires on exactly one tick remaining." )
 
         20 ->
-            ( "our hull mass", "Our hull's inertial mass over twice the ordinary maximum, so a transformed hull reads above one half." )
+            ( "special reload", "The hull's special reload constant over 64. Umgah overwrites this very field with the approach distance it stashes and then compares the turns to the enemy against it, so it is live state and not a catalogue number." )
 
         21 ->
-            ( "foe dx", "Horizontal offset to the opponent across the wrapped arena, scaled by half the arena width." )
+            ( "our hull mass", "Our hull's inertial mass over twice the ordinary maximum, so a transformed hull reads above one half." )
 
         22 ->
-            ( "foe dy", "Vertical offset to the opponent across the wrapped arena, scaled by half the arena height." )
+            ( "foe dx", "Horizontal offset to the opponent across the wrapped arena, scaled by half the arena width." )
 
         23 ->
-            ( "foe range", "Straight-line distance to the opponent, scaled by 4000 world units and clamped." )
+            ( "foe dy", "Vertical offset to the opponent across the wrapped arena, scaled by half the arena height." )
 
         24 ->
-            ( "closing rate", "How fast the gap to the opponent is shrinking, scaled by 200 and clamped." )
+            ( "foe range", "Straight-line distance to the opponent, scaled by 4000 world units and clamped." )
 
         25 ->
-            ( "foe facing cos", "Cosine of the opponent's facing relative to ours." )
+            ( "closing rate", "How fast the gap to the opponent is shrinking, scaled by 200 and clamped." )
 
         26 ->
-            ( "foe facing sin", "Sine of the opponent's facing relative to ours." )
+            ( "foe facing cos", "Cosine of the opponent's facing relative to ours." )
 
         27 ->
-            ( "foe speed", "Opponent speed divided by their maximum thrust speed." )
+            ( "foe facing sin", "Sine of the opponent's facing relative to ours." )
 
         28 ->
-            ( "aim error", "Signed turn error between our facing and the bearing to the opponent, in facing steps over 8." )
+            ( "foe speed", "Opponent speed divided by their maximum thrust speed." )
 
         29 ->
-            ( "foe hull mass", "The opponent hull's inertial mass over twice the ordinary maximum, so a transformed hull reads above one half." )
+            ( "foe travel cos", "Cosine of the direction the opponent is actually travelling, relative to where we point." )
 
         30 ->
-            ( "foe cloak", "1 while the opponent's hull is drawn cloaked, which is what widens the cyborg's aiming margin." )
+            ( "foe travel sin", "Sine of that same direction. With the cosine beside it this says which way the opponent is circling, which the closing rate alone cannot tell apart, and it is what every lead the cyborg takes is built from." )
 
         31 ->
-            ( "we cloak", "1 while our ship is cloaked." )
+            ( "aim error", "Signed turn error between our facing and the bearing to the opponent, in facing steps over 8." )
 
         32 ->
-            ( "foe energy", "Opponent battery charge divided by their maximum. Deliberately more than the cyborg reads." )
+            ( "foe hull mass", "The opponent hull's inertial mass over twice the ordinary maximum, so a transformed hull reads above one half." )
 
         33 ->
-            ( "foe crew", "Opponent crew divided by their maximum crew. Deliberately more than the cyborg reads." )
+            ( "foe cloak", "1 while the opponent's hull is drawn cloaked, which is what widens the cyborg's aiming margin." )
 
         34 ->
-            ( "we can fire", "1 when a shot fired right now would connect, by the cyborg's own firing test." )
+            ( "we cloak", "1 while our ship is cloaked." )
 
         35 ->
-            ( "we close in", "Urgency of closing to within three quarters of our own weapon range." )
+            ( "foe energy", "Opponent battery charge divided by their maximum. Deliberately more than the cyborg reads." )
 
         36 ->
-            ( "they can fire", "1 when a shot the opponent fires now would connect with us. Against a missile hull this is more than the cyborg is told." )
+            ( "foe crew", "Opponent crew divided by their maximum crew. Deliberately more than the cyborg reads." )
 
         37 ->
-            ( "they close in", "Urgency of the opponent closing to within three quarters of their weapon range." )
+            ( "we can fire", "1 when a shot fired right now would connect, by the cyborg's own firing test." )
 
         38 ->
-            ( "they hit instantly", "1 when the opponent's weapon hits the instant it is fired. This says whether the two slots before it are what the cyborg also sees." )
+            ( "we close in", "Urgency of closing to within three quarters of our own weapon range." )
 
         39 ->
-            ( "our range", "Our weapon's engagement range over 4000 world units." )
+            ( "they can fire", "1 when a shot the opponent fires now would connect with us. Against a missile hull this is more than the cyborg is told." )
 
         40 ->
-            ( "their range", "The opponent's engagement range over 4000 world units." )
+            ( "they close in", "Urgency of the opponent closing to within three quarters of their weapon range." )
 
         41 ->
-            ( "our agility", "Our maneuverability rating over 150, the fast-ship mark." )
+            ( "they hit instantly", "1 when the opponent's weapon hits the instant it is fired. This says whether the two slots before it are what the cyborg also sees." )
 
         42 ->
-            ( "their agility", "The opponent's maneuverability rating over 150." )
+            ( "our range", "Our weapon's engagement range over 4000 world units." )
 
         43 ->
+            ( "their range", "The opponent's engagement range over 4000 world units." )
+
+        44 ->
+            ( "our agility", "Our maneuverability rating over 150, the fast-ship mark." )
+
+        45 ->
+            ( "their agility", "The opponent's maneuverability rating over 150." )
+
+        46 ->
             ( "thrust edge", "Our maximum thrust minus theirs, over 64. The raw comparison the cyborg makes, which the two speed ratios destroy." )
 
-        58 ->
+        61 ->
             ( "planet dx", "Horizontal offset to the planet, scaled by 4000 world units and clamped." )
 
-        59 ->
+        62 ->
             ( "planet dy", "Vertical offset to the planet, scaled by 4000 world units and clamped." )
 
-        60 ->
+        63 ->
             ( "planet impact", "Urgency of a predicted collision with the planet, from the cyborg's own three-margin gravity test. 0 when no impact is predicted." )
 
-        85 ->
+        103 ->
             ( "crew dx", "Horizontal offset to the nearest floating crew pod, scaled by half the arena width." )
 
-        86 ->
+        104 ->
             ( "crew dy", "Vertical offset to the nearest floating crew pod, scaled by half the arena height." )
 
-        87 ->
+        105 ->
             ( "crew urgency", "Urgency of reaching the nearest floating crew pod. 0 when there is none." )
 
-        88 ->
+        106 ->
+            ( "crew travel cos", "Cosine of the direction that crew pod is drifting, relative to where we point." )
+
+        107 ->
+            ( "crew travel sin", "Sine of that same direction. The cyborg chases a pod by extrapolating its whole velocity, which needs the direction and not only the speed." )
+
+        108 ->
+            ( "crew speed", "How fast that crew pod is drifting, as a fraction of the 64 world units the cyborg counts as one turn's distance." )
+
+        109 ->
             ( "crew targeted", "1 when our ship is already chasing that crew pod." )
 
-        89 ->
+        110 ->
             ( "rock dx", "Horizontal offset to the nearest neutral body, an asteroid or debris, scaled by 4000 world units." )
 
-        90 ->
+        111 ->
             ( "rock dy", "Vertical offset to the nearest neutral body, scaled by 4000 world units." )
 
-        91 ->
+        112 ->
             ( "rock urgency", "Urgency of reaching the nearest neutral body. 0 when there is none." )
 
-        92 ->
-            ( "constant 1", "The constant sensor the encoder already emits. Always 1. Distinct from the extra bias input at node 116." )
+        113 ->
+            ( "rock travel cos", "Cosine of the direction that body is drifting, relative to where we point." )
+
+        114 ->
+            ( "rock travel sin", "Sine of that same direction, so the whole drift velocity is recoverable rather than just its speed." )
+
+        115 ->
+            ( "rock speed", "How fast that body is drifting, as a fraction of the 64 world units the cyborg counts as one turn's distance." )
+
+        116 ->
+            ( "constant 1", "The constant sensor the encoder already emits. Always 1. Distinct from the extra bias input at node 140." )
 
         _ ->
             ( "sensor " ++ String.fromInt id, "Combat sensor " ++ String.fromInt id ++ "." )

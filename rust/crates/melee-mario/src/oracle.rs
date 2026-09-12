@@ -4,7 +4,7 @@
 //!
 //! ```json
 //! {"genome": <genome schema 1>,
-//!  "steps": [{"observations":[103 numbers],"previous":[5],"memory":[8]}]}
+//!  "steps": [{"observations":[127 numbers],"previous":[5],"memory":[8]}]}
 //! ```
 //!
 //! Writes NDJSON on stdout, ONE LINE PER STEP, in order:

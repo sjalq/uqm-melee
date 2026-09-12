@@ -3027,7 +3027,7 @@ var $author$project$Neat$Policy$nHidden = 16;
 var $author$project$Neat$Policy$nControls = 5;
 var $author$project$Neat$Policy$nExtra = 8;
 var $author$project$Neat$Policy$nFeedback = $author$project$Neat$Policy$nControls + $author$project$Neat$Policy$nExtra;
-var $author$project$Neat$Encode$combatSize = 93;
+var $author$project$Neat$Encode$combatSize = 117;
 var $author$project$Neat$Encode$kindBits = 5;
 var $author$project$Neat$Encode$kindSize = $author$project$Neat$Encode$kindBits * 2;
 var $author$project$Neat$Encode$size = $author$project$Neat$Encode$combatSize + $author$project$Neat$Encode$kindSize;
@@ -4707,6 +4707,46 @@ var $author$project$Melee$Cyborg$plotIntercept$ = function (space, a, b, maxTurn
 	return (maxTurns <= 0) ? 0 : $author$project$Melee$Cyborg$plotFrom$(space, a, b, margin, maxTurns, 1);
 };
 var $author$project$Melee$Cyborg$plotIntercept = F5($author$project$Melee$Cyborg$plotIntercept$);
+var $author$project$Melee$Cyborg$halfCircle = 32;
+var $author$project$Melee$Cyborg$waitN = function (_v0) {
+	var n = _v0.a;
+	return n;
+};
+var $author$project$Melee$Cyborg$maneuverability = function (chars) {
+	var index = chars.maxThrust * chars.thrustIncrement;
+	var divisor = $author$project$Melee$Cyborg$waitN(chars.turnWait) + $author$project$Melee$Cyborg$waitN(chars.thrustWait);
+	return (divisor > 0) ? ((index / divisor) | 0) : ((index / 2) | 0);
+};
+var $author$project$Melee$Cyborg$mediumShip = 45;
+var $author$project$Melee$Cyborg$isUltra = function (chars) {
+	return _Utils_eq(chars.thrustIncrement, chars.maxThrust) && (_Utils_cmp(
+		$author$project$Melee$Cyborg$maneuverability(chars),
+		$author$project$Melee$Cyborg$mediumShip) > -1);
+};
+var $author$project$Melee$Cyborg$quadrant = 16;
+var $author$project$Melee$Cyborg$travelAngle = function (vel) {
+	var _v0 = vel.travelAngle;
+	var a = _v0.a;
+	return a;
+};
+var $author$project$Melee$Cyborg$turnWorld = 64;
+var $author$project$Melee$Cyborg$worldToTurn = function (d) {
+	return (d / $author$project$Melee$Cyborg$turnWorld) | 0;
+};
+var $author$project$Melee$Cyborg$seekingWeaponTurn$ = function (chars, el, dx, dy) {
+	var turns0 = $author$project$Melee$Cyborg$worldToTurn(
+		$author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy)));
+	var closing = _Utils_cmp(
+		$author$project$Melee$Trig$normalizeAngle(
+			($author$project$Melee$Cyborg$travelAngle(el.velocity) - $author$project$Melee$Trig$arctan$(-dx, -dy)) + $author$project$Melee$Cyborg$quadrant),
+		$author$project$Melee$Cyborg$halfCircle) > 0;
+	return ((!el.flags.finiteLife) && ((!el.flags.crewObject) && (_Utils_cmp(
+		chars.maxThrust,
+		$author$project$Melee$Cyborg$displayToWorld(8)) > 0))) ? 0 : (closing ? 0 : ($author$project$Melee$Cyborg$isUltra(chars) ? ((!turns0) ? 1 : ((turns0 > 16) ? 0 : turns0)) : ((!turns0) ? 1 : (((turns0 > 16) || ((_Utils_cmp(
+		$author$project$Melee$Cyborg$maneuverability(chars),
+		$author$project$Melee$Cyborg$mediumShip) > 0) && (turns0 > 8))) ? 0 : turns0))));
+};
+var $author$project$Melee$Cyborg$seekingWeaponTurn = F4($author$project$Melee$Cyborg$seekingWeaponTurn$);
 var $author$project$Melee$Id$toInt = function (_v0) {
 	var n = _v0.a;
 	return n;
@@ -4716,7 +4756,7 @@ var $author$project$Neat$Encode$travelAngle = function (vel) {
 	var a = _v0.a;
 	return a;
 };
-var $author$project$Neat$Encode$threatOf$ = function (arena, own, el, dx, dy, turns) {
+var $author$project$Neat$Encode$threatOf$ = function (arena, core, own, el, dx, dy, turns) {
 	var ability = function () {
 		var _v0 = el.parent;
 		if (_v0.$ === 'Just') {
@@ -4728,28 +4768,28 @@ var $author$project$Neat$Encode$threatOf$ = function (arena, own, el, dx, dy, tu
 			return $author$project$Melee$Ship$stock($author$project$Melee$Ship$Shofixti).ability;
 		}
 	}();
+	var seeking = (ability.seekingWeapon && (!$author$project$Melee$Cyborg$isSpecialBody(el.body))) || (ability.seekingSpecial && $author$project$Melee$Cyborg$isSpecialBody(el.body));
 	return {
+		bearing: $author$project$Melee$Trig$arctan$(dx, dy),
 		bearingBack: $author$project$Melee$Trig$arctan$(-dx, -dy),
-		finiteLife: el.flags.finiteLife,
-		hit: $author$project$Melee$Cyborg$plotIntercept$(
+		concern: seeking ? $author$project$Melee$Cyborg$seekingWeaponTurn$(core.characteristics, el, dx, dy) : $author$project$Melee$Cyborg$plotIntercept$(
 			arena.space,
 			el,
 			own,
 			$author$project$Melee$Cyborg$lifeSpan(el),
 			$author$project$Melee$Cyborg$displayToWorld(40)),
+		finiteLife: el.flags.finiteLife,
 		id: $author$project$Melee$Id$toInt(el.id),
 		life: $author$project$Melee$Cyborg$lifeSpan(el),
 		mass: el.mass,
-		seeking: (ability.seekingWeapon && (!$author$project$Melee$Cyborg$isSpecialBody(el.body))) || (ability.seekingSpecial && $author$project$Melee$Cyborg$isSpecialBody(el.body)),
+		seeking: seeking,
 		travel: $author$project$Neat$Encode$travelAngle(el.velocity),
-		turns: turns
+		turns: turns,
+		velocity: el.velocity
 	};
 };
-var $author$project$Neat$Encode$threatOf = F6($author$project$Neat$Encode$threatOf$);
-var $author$project$Melee$Cyborg$worldToTurn = function (d) {
-	return (d / 64) | 0;
-};
-var $author$project$Neat$Encode$consider$ = function (arena, own, el, scan) {
+var $author$project$Neat$Encode$threatOf = F7($author$project$Neat$Encode$threatOf$);
+var $author$project$Neat$Encode$consider$ = function (arena, core, own, el, scan) {
 	if (_Utils_eq(el.id, own.id) || (!$author$project$Melee$Cyborg$colliding(el))) {
 		return scan;
 	} else {
@@ -4785,12 +4825,12 @@ var $author$project$Neat$Encode$consider$ = function (arena, own, el, scan) {
 			{
 				threats: A2(
 					$elm$core$List$cons,
-					$author$project$Neat$Encode$threatOf$(arena, own, el, dx, dy, turns),
+					$author$project$Neat$Encode$threatOf$(arena, core, own, el, dx, dy, turns),
 					scan.threats)
 			}) : scan))));
 	}
 };
-var $author$project$Neat$Encode$consider = F4($author$project$Neat$Encode$consider$);
+var $author$project$Neat$Encode$consider = F5($author$project$Neat$Encode$consider$);
 var $elm$core$Basics$min$ = function (x, y) {
 	return (_Utils_cmp(x, y) < 0) ? x : y;
 };
@@ -4800,33 +4840,93 @@ var $author$project$Neat$Encode$clamp11 = function (x) {
 		-1,
 		$elm$core$Basics$min$(1, x));
 };
+var $author$project$Neat$Encode$faceAngle = function (core) {
+	var _v0 = core.facing;
+	var facing = _v0.a;
+	return facing * 4;
+};
+var $author$project$Neat$Encode$clamp01 = function (x) {
+	return $elm$core$Basics$max$(
+		0,
+		$elm$core$Basics$min$(1, x));
+};
+var $author$project$Neat$Encode$speed = function (vel) {
+	return $author$project$Melee$Trig$squareRoot((vel.vector.width * vel.vector.width) + (vel.vector.height * vel.vector.height));
+};
+var $author$project$Neat$Encode$pace = function (v) {
+	return $author$project$Neat$Encode$clamp01(
+		$author$project$Neat$Encode$speed(v) / $author$project$Melee$Cyborg$turnWorld);
+};
+var $author$project$Melee$Trig$sinShift = 14;
+var $author$project$Melee$Trig$sinetab = _List_fromArray(
+	[-16384, -16305, -16069, -15678, -15136, -14449, -13622, -12664, -11585, -10393, -9102, -7723, -6269, -4756, -3196, -1605, 0, 1605, 3196, 4756, 6269, 7723, 9102, 10393, 11585, 12664, 13622, 14449, 15136, 15678, 16069, 16305, 16384, 16305, 16069, 15678, 15136, 14449, 13622, 12664, 11585, 10393, 9102, 7723, 6269, 4756, 3196, 1605, 0, -1605, -3196, -4756, -6269, -7723, -9102, -10393, -11585, -12664, -13622, -14449, -15136, -15678, -16069, -16305]);
+var $author$project$Melee$Trig$sinVal = function (a) {
+	return $author$project$Melee$Trig$listAt$(
+		$author$project$Melee$Trig$normalizeAngle(a),
+		$author$project$Melee$Trig$sinetab);
+};
+var $author$project$Melee$Trig$sine$ = function (a, m) {
+	var scale = A2($elm$core$Basics$pow, 2, $author$project$Melee$Trig$sinShift);
+	var product = $author$project$Melee$Trig$sinVal(a) * m;
+	return (product < 0) ? (-(((((-product) + scale) - 1) / scale) | 0)) : ((product / scale) | 0);
+};
+var $author$project$Melee$Trig$sine = F2($author$project$Melee$Trig$sine$);
+var $author$project$Melee$Trig$cosine$ = function (a, m) {
+	return $author$project$Melee$Trig$sine$(a + $author$project$Melee$Trig$quadrant, m);
+};
+var $author$project$Melee$Trig$cosine = F2($author$project$Melee$Trig$cosine$);
+var $author$project$Neat$Encode$unit = function (ang) {
+	return $author$project$Melee$Trig$cosine$(ang, 100) / 100;
+};
+var $author$project$Neat$Encode$unitS = function (ang) {
+	return $author$project$Melee$Trig$sine$(ang, 100) / 100;
+};
+var $author$project$Neat$Encode$motionOf$ = function (v, faceAng) {
+	var relative = $author$project$Melee$Trig$normalizeAngle(
+		$author$project$Neat$Encode$travelAngle(v) - faceAng);
+	return _List_fromArray(
+		[
+			$author$project$Neat$Encode$unit(relative),
+			$author$project$Neat$Encode$unitS(relative),
+			$author$project$Neat$Encode$pace(v)
+		]);
+};
+var $author$project$Neat$Encode$motionOf = F2($author$project$Neat$Encode$motionOf$);
 var $author$project$Neat$Encode$urgency = function (t) {
 	return (t <= 0) ? 0 : (1 / (1 + t));
 };
-var $author$project$Neat$Encode$crewBlock$ = function (space, own, near) {
+var $author$project$Neat$Encode$crewBlock$ = function (space, core, own, near) {
 	if (near.$ === 'Nothing') {
 		return _List_fromArray(
-			[0, 0, 0, 0]);
+			[0, 0, 0, 0, 0, 0, 0]);
 	} else {
 		var element = near.a.element;
 		var turns = near.a.turns;
 		var _v1 = $author$project$Neat$Encode$nextDelta$(space, own, element);
 		var dx = _v1.a;
 		var dy = _v1.b;
-		return _List_fromArray(
-			[
-				$author$project$Neat$Encode$clamp11(dx / (space.width / 2)),
-				$author$project$Neat$Encode$clamp11(dy / (space.height / 2)),
-				$author$project$Neat$Encode$urgency(
-				$elm$core$Basics$max$(1, turns)),
-				$author$project$Neat$Encode$flag(
-				_Utils_eq(
-					own.target,
-					$elm$core$Maybe$Just(element.id)))
-			]);
+		return _Utils_ap(
+			_List_fromArray(
+				[
+					$author$project$Neat$Encode$clamp11(dx / (space.width / 2)),
+					$author$project$Neat$Encode$clamp11(dy / (space.height / 2)),
+					$author$project$Neat$Encode$urgency(
+					$elm$core$Basics$max$(1, turns))
+				]),
+			_Utils_ap(
+				$author$project$Neat$Encode$motionOf$(
+					element.velocity,
+					$author$project$Neat$Encode$faceAngle(core)),
+				_List_fromArray(
+					[
+						$author$project$Neat$Encode$flag(
+						_Utils_eq(
+							own.target,
+							$elm$core$Maybe$Just(element.id)))
+					])));
 	}
 };
-var $author$project$Neat$Encode$crewBlock = F3($author$project$Neat$Encode$crewBlock$);
+var $author$project$Neat$Encode$crewBlock = F4($author$project$Neat$Encode$crewBlock$);
 var $elm$core$Dict$foldl$ = function (func, acc, dict) {
 	foldl:
 	while (true) {
@@ -4850,21 +4950,6 @@ var $elm$core$Dict$foldl$ = function (func, acc, dict) {
 	}
 };
 var $elm$core$Dict$foldl = F3($elm$core$Dict$foldl$);
-var $author$project$Melee$Cyborg$waitN = function (_v0) {
-	var n = _v0.a;
-	return n;
-};
-var $author$project$Melee$Cyborg$maneuverability = function (chars) {
-	var index = chars.maxThrust * chars.thrustIncrement;
-	var divisor = $author$project$Melee$Cyborg$waitN(chars.turnWait) + $author$project$Melee$Cyborg$waitN(chars.thrustWait);
-	return (divisor > 0) ? ((index / divisor) | 0) : ((index / 2) | 0);
-};
-var $author$project$Melee$Cyborg$mediumShip = 45;
-var $author$project$Melee$Cyborg$isUltra = function (chars) {
-	return _Utils_eq(chars.thrustIncrement, chars.maxThrust) && (_Utils_cmp(
-		$author$project$Melee$Cyborg$maneuverability(chars),
-		$author$project$Melee$Cyborg$mediumShip) > -1);
-};
 var $author$project$Melee$Cyborg$gravityIntercept$ = function (space, planet, ship, chars) {
 	var maneuverTurn = $author$project$Melee$Cyborg$isUltra(chars) ? 16 : ((_Utils_cmp(
 		$author$project$Melee$Cyborg$maneuverability(chars),
@@ -4908,26 +4993,30 @@ var $author$project$Neat$Encode$gravityBlock$ = function (space, core, own, plan
 	}
 };
 var $author$project$Neat$Encode$gravityBlock = F4($author$project$Neat$Encode$gravityBlock$);
-var $author$project$Neat$Encode$neutralBlock$ = function (space, own, near) {
+var $author$project$Neat$Encode$neutralBlock$ = function (space, core, own, near) {
 	if (near.$ === 'Nothing') {
 		return _List_fromArray(
-			[0, 0, 0]);
+			[0, 0, 0, 0, 0, 0]);
 	} else {
 		var element = near.a.element;
 		var turns = near.a.turns;
 		var _v1 = $author$project$Neat$Encode$nextDelta$(space, own, element);
 		var dx = _v1.a;
 		var dy = _v1.b;
-		return _List_fromArray(
-			[
-				$author$project$Neat$Encode$clamp11(dx / 4000),
-				$author$project$Neat$Encode$clamp11(dy / 4000),
-				$author$project$Neat$Encode$urgency(
-				$elm$core$Basics$max$(1, turns))
-			]);
+		return _Utils_ap(
+			_List_fromArray(
+				[
+					$author$project$Neat$Encode$clamp11(dx / 4000),
+					$author$project$Neat$Encode$clamp11(dy / 4000),
+					$author$project$Neat$Encode$urgency(
+					$elm$core$Basics$max$(1, turns))
+				]),
+			$author$project$Neat$Encode$motionOf$(
+				element.velocity,
+				$author$project$Neat$Encode$faceAngle(core)));
 	}
 };
-var $author$project$Neat$Encode$neutralBlock = F3($author$project$Neat$Encode$neutralBlock$);
+var $author$project$Neat$Encode$neutralBlock = F4($author$project$Neat$Encode$neutralBlock$);
 var $elm$core$List$append$ = function (xs, ys) {
 	if (!ys.b) {
 		return xs;
@@ -4949,60 +5038,38 @@ var $elm$core$Basics$clamp$ = function (low, high, number) {
 	return (_Utils_cmp(number, low) < 0) ? low : ((_Utils_cmp(number, high) > 0) ? high : number);
 };
 var $elm$core$Basics$clamp = F3($elm$core$Basics$clamp$);
-var $author$project$Neat$Encode$clamp01 = function (x) {
-	return $elm$core$Basics$max$(
-		0,
-		$elm$core$Basics$min$(1, x));
-};
 var $author$project$Neat$Encode$ratio$ = function (numerator, denominator) {
 	return $author$project$Neat$Encode$clamp01(
 		numerator / $elm$core$Basics$max$(1, denominator));
 };
 var $author$project$Neat$Encode$ratio = F2($author$project$Neat$Encode$ratio$);
-var $author$project$Melee$Trig$sinShift = 14;
-var $author$project$Melee$Trig$sinetab = _List_fromArray(
-	[-16384, -16305, -16069, -15678, -15136, -14449, -13622, -12664, -11585, -10393, -9102, -7723, -6269, -4756, -3196, -1605, 0, 1605, 3196, 4756, 6269, 7723, 9102, 10393, 11585, 12664, 13622, 14449, 15136, 15678, 16069, 16305, 16384, 16305, 16069, 15678, 15136, 14449, 13622, 12664, 11585, 10393, 9102, 7723, 6269, 4756, 3196, 1605, 0, -1605, -3196, -4756, -6269, -7723, -9102, -10393, -11585, -12664, -13622, -14449, -15136, -15678, -16069, -16305]);
-var $author$project$Melee$Trig$sinVal = function (a) {
-	return $author$project$Melee$Trig$listAt$(
-		$author$project$Melee$Trig$normalizeAngle(a),
-		$author$project$Melee$Trig$sinetab);
-};
-var $author$project$Melee$Trig$sine$ = function (a, m) {
-	var scale = A2($elm$core$Basics$pow, 2, $author$project$Melee$Trig$sinShift);
-	var product = $author$project$Melee$Trig$sinVal(a) * m;
-	return (product < 0) ? (-(((((-product) + scale) - 1) / scale) | 0)) : ((product / scale) | 0);
-};
-var $author$project$Melee$Trig$sine = F2($author$project$Melee$Trig$sine$);
-var $author$project$Melee$Trig$cosine$ = function (a, m) {
-	return $author$project$Melee$Trig$sine$(a + $author$project$Melee$Trig$quadrant, m);
-};
-var $author$project$Melee$Trig$cosine = F2($author$project$Melee$Trig$cosine$);
-var $author$project$Neat$Encode$unit = function (ang) {
-	return $author$project$Melee$Trig$cosine$(ang, 100) / 100;
-};
-var $author$project$Neat$Encode$unitS = function (ang) {
-	return $author$project$Melee$Trig$sine$(ang, 100) / 100;
-};
 var $author$project$Neat$Encode$threatRecord$ = function (core, faceAng, t) {
-	var relative = $author$project$Melee$Trig$normalizeAngle(t.travel - faceAng);
+	var toward = $author$project$Melee$Trig$normalizeAngle(t.bearing - faceAng);
 	var closingAngle = $author$project$Melee$Trig$normalizeAngle(t.travel - t.bearingBack);
-	return _List_fromArray(
-		[
-			$author$project$Neat$Encode$urgency(t.hit),
-			$author$project$Neat$Encode$unit(relative),
-			$author$project$Neat$Encode$unitS(relative),
-			$author$project$Neat$Encode$unit(closingAngle),
-			$author$project$Neat$Encode$flag(t.seeking),
-			$author$project$Neat$Encode$flag(t.finiteLife),
-			$author$project$Neat$Encode$ratio$(t.mass, core.maxCrew),
-			$author$project$Neat$Encode$ratio$(
-			$elm$core$Basics$clamp$(0, 64, t.life),
-			64)
-		]);
+	return _Utils_ap(
+		A2(
+			$elm$core$List$cons,
+			$author$project$Neat$Encode$urgency(t.concern),
+			$author$project$Neat$Encode$motionOf$(t.velocity, faceAng)),
+		_List_fromArray(
+			[
+				$author$project$Neat$Encode$unit(toward),
+				$author$project$Neat$Encode$unitS(toward),
+				$author$project$Neat$Encode$urgency(
+				$elm$core$Basics$max$(1, t.turns)),
+				$author$project$Neat$Encode$unit(closingAngle),
+				$author$project$Neat$Encode$unitS(closingAngle),
+				$author$project$Neat$Encode$flag(t.seeking),
+				$author$project$Neat$Encode$flag(t.finiteLife),
+				$author$project$Neat$Encode$ratio$(t.mass, core.maxCrew),
+				$author$project$Neat$Encode$ratio$(
+				$elm$core$Basics$clamp$(0, 64, t.life),
+				64)
+			]));
 };
 var $author$project$Neat$Encode$threatRecord = F3($author$project$Neat$Encode$threatRecord$);
 var $author$project$Neat$Encode$threatSlots = 3;
-var $author$project$Neat$Encode$threatWidth = 8;
+var $author$project$Neat$Encode$threatWidth = 13;
 var $author$project$Neat$Encode$threatBlock$ = function (core, threats) {
 	var ranked = $elm$core$List$take$(
 		$author$project$Neat$Encode$threatSlots,
@@ -5010,16 +5077,18 @@ var $author$project$Neat$Encode$threatBlock$ = function (core, threats) {
 			$elm$core$List$sortBy,
 			function (t) {
 				return _Utils_Tuple2(
-					_Utils_Tuple2(
-						$author$project$Neat$Encode$ifElse$(t.hit <= 0, 1, 0),
-						t.hit),
+					_Utils_Tuple3(
+						$author$project$Neat$Encode$ifElse$(t.concern <= 0, 1, 0),
+						t.concern,
+						$author$project$Neat$Encode$ifElse$(t.seeking, 1, 0)),
 					_Utils_Tuple2(t.turns, t.id));
 			},
 			threats));
-	var _v0 = core.facing;
-	var facing = _v0.a;
 	var emitted = $elm$core$List$concatMap$(
-		A2($author$project$Neat$Encode$threatRecord, core, facing * 4),
+		A2(
+			$author$project$Neat$Encode$threatRecord,
+			core,
+			$author$project$Neat$Encode$faceAngle(core)),
 		ranked);
 	return _Utils_ap(
 		emitted,
@@ -5030,12 +5099,12 @@ var $author$project$Neat$Encode$threatBlock$ = function (core, threats) {
 var $author$project$Neat$Encode$threatBlock = F2($author$project$Neat$Encode$threatBlock$);
 var $author$project$Neat$Encode$concernBlocks$ = function (arena, core, own) {
 	if (!$author$project$Melee$Cyborg$colliding(own)) {
-		return $elm$core$List$repeat$(((3 + ($author$project$Neat$Encode$threatSlots * $author$project$Neat$Encode$threatWidth)) + 4) + 3, 0);
+		return $elm$core$List$repeat$(((3 + ($author$project$Neat$Encode$threatSlots * $author$project$Neat$Encode$threatWidth)) + 7) + 6, 0);
 	} else {
 		var scan = $elm$core$Dict$foldl$(
 			F3(
 				function (_v0, el, acc) {
-					return $author$project$Neat$Encode$consider$(arena, own, el, acc);
+					return $author$project$Neat$Encode$consider$(arena, core, own, el, acc);
 				}),
 			{crew: $elm$core$Maybe$Nothing, empty: $elm$core$Maybe$Nothing, planet: $elm$core$Maybe$Nothing, threats: _List_Nil},
 			arena.elements);
@@ -5044,8 +5113,8 @@ var $author$project$Neat$Encode$concernBlocks$ = function (arena, core, own) {
 			_Utils_ap(
 				$author$project$Neat$Encode$threatBlock$(core, scan.threats),
 				_Utils_ap(
-					$author$project$Neat$Encode$crewBlock$(arena.space, own, scan.crew),
-					$author$project$Neat$Encode$neutralBlock$(arena.space, own, scan.empty))));
+					$author$project$Neat$Encode$crewBlock$(arena.space, core, own, scan.crew),
+					$author$project$Neat$Encode$neutralBlock$(arena.space, core, own, scan.empty))));
 	}
 };
 var $author$project$Neat$Encode$concernBlocks = F3($author$project$Neat$Encode$concernBlocks$);
@@ -6201,9 +6270,6 @@ var $author$project$Neat$Encode$shortestFacing = function (d0) {
 	var d = $author$project$Melee$Trig$normalizeFacing(d0);
 	return (d > 8) ? (d - 16) : d;
 };
-var $author$project$Neat$Encode$speed = function (vel) {
-	return $author$project$Melee$Trig$squareRoot((vel.vector.width * vel.vector.width) + (vel.vector.height * vel.vector.height));
-};
 var $author$project$Neat$Encode$enemyBlock$ = function (arena, side, ownCore, foeCore, own, foe) {
 	var theirAbility = $author$project$Melee$Ship$stock(
 		$author$project$Melee$ShipState$kind(
@@ -6217,6 +6283,8 @@ var $author$project$Neat$Encode$enemyBlock$ = function (arena, side, ownCore, fo
 	var facing = _v1.a;
 	var faceAng = facing * 4;
 	var relFace = $author$project$Melee$Trig$normalizeAngle((foeFacing * 4) - faceAng);
+	var relTravel = $author$project$Melee$Trig$normalizeAngle(
+		$author$project$Neat$Encode$travelAngle(foe.velocity) - faceAng);
 	var _v2 = $author$project$Neat$Encode$nextDelta$(space, own, foe);
 	var dx = _v2.a;
 	var dy = _v2.b;
@@ -6235,6 +6303,8 @@ var $author$project$Neat$Encode$enemyBlock$ = function (arena, side, ownCore, fo
 			$author$project$Neat$Encode$unitS(relFace),
 			$author$project$Neat$Encode$clamp01(
 			$author$project$Neat$Encode$speed(foe.velocity) / $elm$core$Basics$max$(1, foeCore.characteristics.maxThrust)),
+			$author$project$Neat$Encode$unit(relTravel),
+			$author$project$Neat$Encode$unitS(relTravel),
 			$author$project$Neat$Encode$clamp11(turnErr / 8),
 			$author$project$Neat$Encode$hullMass(foe),
 			$author$project$Neat$Encode$flag(
@@ -6443,6 +6513,12 @@ var $author$project$Neat$Encode$ownState$ = function (core, own) {
 				64,
 				$author$project$Neat$Encode$waitN(core.specialWait)),
 			64),
+			$author$project$Neat$Encode$ratio$(
+			$elm$core$Basics$clamp$(
+				0,
+				64,
+				$author$project$Neat$Encode$waitN(chars.specialWait)),
+			64),
 			$author$project$Neat$Encode$hullMass(own)
 		]);
 };
@@ -6525,7 +6601,7 @@ var $author$project$Neat$Eval$think$ = function (net, side, arena, extra, round,
 		$author$project$Neat$Encode$vector$(side, arena),
 		_Utils_ap(
 			$author$project$Neat$Policy$actionsFrom(
-				$author$project$Melee$ShipState$core(ship).oldInput),
+				$author$project$Melee$ShipState$core(ship).input),
 			extra1));
 	return _Utils_Tuple3(stepped.input, stepped.extra, name);
 };
@@ -120862,11 +120938,6 @@ var $author$project$Melee$Cyborg$considerCrew$ = function (work, el, dx, dy, con
 		}) : concerns;
 };
 var $author$project$Melee$Cyborg$considerCrew = F5($author$project$Melee$Cyborg$considerCrew$);
-var $author$project$Melee$Cyborg$travelAngle = function (vel) {
-	var _v0 = vel.travelAngle;
-	var a = _v0.a;
-	return a;
-};
 var $author$project$Melee$Cyborg$considerEmpty$ = function (work, el, dx, dy, concerns) {
 	if (el.flags.finiteLife) {
 		return concerns;
@@ -120976,18 +121047,8 @@ var $author$project$Melee$Cyborg$considerGravity$ = function (work, el, _v0, _v1
 	}
 };
 var $author$project$Melee$Cyborg$considerGravity = F5($author$project$Melee$Cyborg$considerGravity$);
-var $author$project$Melee$Cyborg$halfCircle = 32;
-var $author$project$Melee$Cyborg$quadrant = 16;
 var $author$project$Melee$Cyborg$seekingWeapon$ = function (work, el, dx, dy) {
-	var turns0 = $author$project$Melee$Cyborg$worldToTurn(
-		$author$project$Melee$Trig$squareRoot((dx * dx) + (dy * dy)));
-	var closing = _Utils_cmp(
-		$author$project$Melee$Trig$normalizeAngle(
-			($author$project$Melee$Cyborg$travelAngle(el.velocity) - $author$project$Melee$Trig$arctan$(-dx, -dy)) + $author$project$Melee$Cyborg$quadrant),
-		$author$project$Melee$Cyborg$halfCircle) > 0;
-	var turns = ((!el.flags.finiteLife) && ((!el.flags.crewObject) && (_Utils_cmp(
-		work.core.characteristics.maxThrust,
-		$author$project$Melee$Cyborg$displayToWorld(8)) > 0))) ? 0 : (closing ? 0 : ($author$project$Melee$Cyborg$ultra(work) ? ((!turns0) ? 1 : ((turns0 > 16) ? 0 : turns0)) : ((!turns0) ? 1 : (((turns0 > 16) || ((_Utils_cmp(work.mi, $author$project$Melee$Cyborg$mediumShip) > 0) && (turns0 > 8))) ? 0 : turns0))));
+	var turns = $author$project$Melee$Cyborg$seekingWeaponTurn$(work.core.characteristics, el, dx, dy);
 	return (turns > 0) ? {
 		facing: $author$project$Melee$Cyborg$travelAngle(el.velocity),
 		move: $author$project$Melee$Cyborg$Entice,

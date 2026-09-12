@@ -19,21 +19,21 @@ produce the same outputs for the same genome and the same step sequence, so the
 semantics below are contractual, not incidental.
 
 
-# Slot layout (117 inputs, 13 outputs)
+# Slot layout (141 inputs, 13 outputs)
 
-    id   0 .. 102  observations (Neat.Encode.vector: 93 combat sensors that
+    id   0 .. 126  observations (Neat.Encode.vector: 117 combat sensors that
                    already include the encoder's own constant 1, then our hull
                    as 5 low-bit-first bits, then their hull as 5 low-bit-first
                    bits). Neat.Encode documents what each sensor carries and
                    which five of them deliberately exceed what the original
                    cyborg can read.
-    id 103 .. 107  the five control bits actually applied on the previous tick,
+    id 127 .. 131  the five control bits actually applied on the previous tick,
                    in the order left, right, thrust, weapon, special
-    id 108 .. 115  the eight explicit memory channels emitted last tick
-    id 116         bias, always exactly 1
-    id 117 .. 121  control outputs left, right, thrust, weapon, special
-    id 122 .. 129  the eight memory outputs
-    id >= 130      hidden nodes
+    id 132 .. 139  the eight explicit memory channels emitted last tick
+    id 140         bias, always exactly 1
+    id 141 .. 145  control outputs left, right, thrust, weapon, special
+    id 146 .. 153  the eight memory outputs
+    id >= 154      hidden nodes
 
 The explicit control and memory feedback is supplied by the caller on every
 step. It is deliberately separate from the graph's own recurrent activations,
@@ -103,11 +103,11 @@ import Set exposing (Set)
 -- SHAPE
 
 
-{-| Observation slots, matching Neat.Encode.size (93 combat sensors + 10 hull bits).
+{-| Observation slots, matching Neat.Encode.size (117 combat sensors + 10 hull bits).
 -}
 observationCount : Int
 observationCount =
-    103
+    127
 
 
 controlCount : Int

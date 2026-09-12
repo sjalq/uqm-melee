@@ -53,7 +53,7 @@ WIRE CONTRACT
   Request, one NDJSON line:
 
       {"genome": {"schema_version":1,"nodes":[...],"genes":[...]},
-       "steps": [{"observations":[103],"previous":[5],"memory":[8]}, ...]}
+       "steps": [{"observations":[127],"previous":[5],"memory":[8]}, ...]}
 
   Response, ONE LINE PER STEP in order:
 
@@ -76,7 +76,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-N_OBS = 103
+N_OBS = 127
 N_CONTROL = 5
 N_MEMORY = 8
 N_INPUT = N_OBS + N_CONTROL + N_MEMORY + 1

@@ -848,17 +848,17 @@ slotSuite =
                     , outputs = Slots.outputCount
                     , hiddenFirst = Slots.hiddenFirst
                     }
-                    { sensors = 93
-                    , observations = 103
-                    , bias = 116
-                    , inputs = 117
-                    , outputFirst = 117
+                    { sensors = 117
+                    , observations = 127
+                    , bias = 140
+                    , inputs = 141
+                    , outputFirst = 141
                     , outputs = 13
-                    , hiddenFirst = 130
+                    , hiddenFirst = 154
                     }
         , test "group boundaries land where the contract says" <|
             \() ->
-                Expect.equal (List.map Slots.groupOf [ 0, 92, 93, 97, 98, 102, 103, 107, 108, 115, 116, 117, 121, 122, 129, 130 ])
+                Expect.equal (List.map Slots.groupOf [ 0, 116, 117, 121, 122, 126, 127, 131, 132, 139, 140, 141, 145, 146, 153, 154 ])
                     [ Slots.Sensors
                     , Slots.Sensors
                     , Slots.OurShipBits
@@ -879,18 +879,18 @@ slotSuite =
         , test "ship identity bits are labelled least significant first" <|
             \() ->
                 Expect.equal
-                    (List.map (\i -> (Slots.slot i).short) [ 93, 94, 95, 96, 97, 98, 102 ])
+                    (List.map (\i -> (Slots.slot i).short) [ 117, 118, 119, 120, 121, 122, 126 ])
                     [ "us b0", "us b1", "us b2", "us b3", "us b4", "them b0", "them b4" ]
         , test "control outputs keep the encoder's order" <|
             \() ->
-                Expect.equal (List.map (\i -> (Slots.slot i).short) (List.range 117 121))
+                Expect.equal (List.map (\i -> (Slots.slot i).short) (List.range 141 145))
                     Slots.controlNames
         , test "memory outputs name the input they feed on the next step" <|
             \() ->
-                Expect.equal True (String.contains "input 108" (Slots.slot 122).detail)
+                Expect.equal True (String.contains "input 132" (Slots.slot 146).detail)
         , test "the sensor constant and the extra bias are described as different things" <|
             \() ->
-                Expect.equal True (String.contains "Distinct from the extra bias" (Slots.slot 92).detail)
+                Expect.equal True (String.contains "Distinct from the extra bias" (Slots.slot 116).detail)
         , fuzz (Fuzz.intRange 0 400) "every node id resolves to a named slot" <|
             \id ->
                 Expect.equal False (String.isEmpty (Slots.slot id).short)

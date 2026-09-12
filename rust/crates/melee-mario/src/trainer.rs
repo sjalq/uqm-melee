@@ -353,8 +353,8 @@ pub struct Unit {
 impl Trainer {
     pub fn fresh(config: Config) -> Trainer {
         let config_rates = config.neat.seed_rates;
-        let mut evolution = Stream::seeded(config.salt ^ 0xe0_1u64);
-        let sampling = Stream::seeded(config.salt ^ 0x5a_2u64);
+        let mut evolution = Stream::seeded(config.salt ^ 0x0e01_u64);
+        let sampling = Stream::seeded(config.salt ^ 0x05a2_u64);
         let population = Population::seed(config.neat, &mut evolution);
         let mut trainer = Trainer {
             config,
@@ -785,7 +785,10 @@ impl Trainer {
     fn should_probe(&self) -> bool {
         self.champion.is_some()
             && !self.gate_passed()
-            && self.population.generation % self.config.readiness_period == 0
+            && self
+                .population
+                .generation
+                .is_multiple_of(self.config.readiness_period)
     }
 
     /// Opens a readiness probe on the current champion: a cheap balanced
