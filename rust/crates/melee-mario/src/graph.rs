@@ -76,25 +76,44 @@ pub fn sigmoid(x: f64) -> f64 {
     }
 }
 
+/// One node's turn in the evaluation order, carrying the half-open range of
+/// the edge arrays that feeds it. Fusing the node with its span lets a decision
+/// walk `steps` and the edge arrays as three sequential streams.
 #[derive(Copy, Clone, Debug)]
-struct Edge {
-    source: u32,
-    weight: f64,
-    /// Reads the previous decision's activation instead of this one's.
-    recurrent: bool,
+struct Step {
+    node: u32,
+    start: u32,
+    end: u32,
 }
 
 /// Immutable compiled form of a genome. Shared by every episode that runs the
 /// same policy; all mutable per-episode data lives in [`Activations`].
+///
+/// An activation buffer is two halves of one allocation. The first `width`
+/// slots hold the decision being computed, one per node index. The rest are the
+/// SHADOW half: one slot per node that some recurrent edge reads, frozen at the
+/// top of a decision. Rule 3's choice between the previous and the current
+/// decision is therefore made once, at compile time, and survives as nothing
+/// but the slot number an edge carries, so the inner loop has no branch and the
+/// per-decision carry-over costs one slot per recurrent SOURCE rather than a
+/// copy of every node.
 #[derive(Clone, Debug)]
 pub struct Network {
     width: usize,
-    /// Non-input node indices, in evaluation order.
-    order: Vec<u32>,
-    edges: Vec<Edge>,
-    /// `spans[i]` is the half-open range of `edges` feeding node index `i`.
-    spans: Vec<(u32, u32)>,
+    /// Non-input nodes in evaluation order, each with its edge span.
+    steps: Vec<Step>,
+    /// Activation-buffer slot each incoming edge reads, in evaluation order and
+    /// within a node in ascending innovation order (rule 4).
+    edge_slot: Vec<u32>,
+    /// Weights parallel to `edge_slot`.
+    edge_weight: Vec<f64>,
+    /// Node indices frozen into the shadow half before a decision; the node at
+    /// position `i` lives in slot `width + i`.
+    recurrent_sources: Vec<u32>,
     input_slot: [Option<u32>; N_INPUT as usize],
+    /// Every input node is declared, so the input vector lands on slots
+    /// `0..N_INPUT` unchanged and can be written in one copy.
+    inputs_contiguous: bool,
     output_slot: [Option<u32>; N_OUTPUT as usize],
     node_count: usize,
     link_count: usize,
@@ -104,22 +123,20 @@ pub struct Network {
 /// compiled policy can be evaluated in many independent episodes.
 #[derive(Clone, Debug)]
 pub struct Activations {
-    current: Vec<f64>,
-    previous: Vec<f64>,
+    /// The current decision, then the shadow half; see [`Network`].
+    values: Vec<f64>,
 }
 
 impl Activations {
     pub fn new(net: &Network) -> Activations {
         Activations {
-            current: vec![0.0; net.width],
-            previous: vec![0.0; net.width],
+            values: vec![0.0; net.width + net.recurrent_sources.len()],
         }
     }
 
     /// Back to the start-of-episode state: every activation zero.
     pub fn reset(&mut self) {
-        self.current.fill(0.0);
-        self.previous.fill(0.0);
+        self.values.fill(0.0);
     }
 }
 
@@ -191,27 +208,52 @@ impl Network {
             }
         }
 
-        let mut edges = Vec::with_capacity(link_count);
-        let mut spans = vec![(0u32, 0u32); width];
-        for (index, list) in incoming.iter().enumerate() {
-            let start = edges.len() as u32;
-            for &(source, weight) in list {
-                edges.push(Edge {
-                    source,
-                    weight,
-                    recurrent: component[source as usize] == component[index]
-                        && cyclic[component[index] as usize],
-                });
+        // Edges are laid out in evaluation order so a decision streams through
+        // them once, front to back. Within a node the genome's innovation order
+        // is untouched (rule 4), which is the only order the sums depend on.
+        let mut steps = Vec::with_capacity(order.len());
+        let mut edge_slot: Vec<u32> = Vec::with_capacity(link_count);
+        let mut edge_weight: Vec<f64> = Vec::with_capacity(link_count);
+        let mut shadow_of = vec![u32::MAX; width];
+        let mut recurrent_sources: Vec<u32> = Vec::new();
+        for &index in order.iter() {
+            let start = edge_slot.len() as u32;
+            for &(source, weight) in incoming[index as usize].iter() {
+                let recurrent = component[source as usize] == component[index as usize]
+                    && cyclic[component[index as usize] as usize];
+                let slot = if !recurrent {
+                    source
+                } else if shadow_of[source as usize] != u32::MAX {
+                    shadow_of[source as usize]
+                } else {
+                    let slot = (width + recurrent_sources.len()) as u32;
+                    shadow_of[source as usize] = slot;
+                    recurrent_sources.push(source);
+                    slot
+                };
+                edge_slot.push(slot);
+                edge_weight.push(weight);
             }
-            spans[index] = (start, edges.len() as u32);
+            steps.push(Step {
+                node: index,
+                start,
+                end: edge_slot.len() as u32,
+            });
         }
+
+        let inputs_contiguous = input_slot
+            .iter()
+            .enumerate()
+            .all(|(id, slot)| *slot == Some(id as u32));
 
         Network {
             width,
-            order,
-            edges,
-            spans,
+            steps,
+            edge_slot,
+            edge_weight,
+            recurrent_sources,
             input_slot,
+            inputs_contiguous,
             output_slot,
             node_count: width,
             link_count,
@@ -221,30 +263,37 @@ impl Network {
     /// One decision. `inputs` is the assembled 57-slot input vector; the
     /// returned 13 values are the raw output activations.
     pub fn activate(&self, state: &mut Activations, inputs: &[f64; N_INPUT as usize]) -> [f64; N_OUTPUT as usize] {
-        state.previous.copy_from_slice(&state.current);
-        for (slot, value) in self.input_slot.iter().zip(inputs.iter()) {
-            if let Some(index) = slot {
-                state.current[*index as usize] = *value;
+        let values = &mut state.values;
+        // Rule 3. This has to happen before anything overwrites the current
+        // half: it freezes the PREVIOUS decision's value of every node a
+        // recurrent edge reads. Only those nodes are carried over, so a
+        // feed-forward genome copies nothing at all.
+        for (offset, &source) in self.recurrent_sources.iter().enumerate() {
+            values[self.width + offset] = values[source as usize];
+        }
+        if self.inputs_contiguous {
+            values[..N_INPUT as usize].copy_from_slice(inputs);
+        } else {
+            for (slot, value) in self.input_slot.iter().zip(inputs.iter()) {
+                if let Some(index) = slot {
+                    values[*index as usize] = *value;
+                }
             }
         }
-        for &index in &self.order {
-            let (start, end) = self.spans[index as usize];
+        for step in self.steps.iter() {
+            let (start, end) = (step.start as usize, step.end as usize);
+            let slots = &self.edge_slot[start..end];
+            let weights = &self.edge_weight[start..end];
             let mut sum = 0.0;
-            for edge in &self.edges[start as usize..end as usize] {
-                let source = edge.source as usize;
-                let value = if edge.recurrent {
-                    state.previous[source]
-                } else {
-                    state.current[source]
-                };
-                sum += edge.weight * value;
+            for (&slot, &weight) in slots.iter().zip(weights.iter()) {
+                sum += weight * values[slot as usize];
             }
-            state.current[index as usize] = sigmoid(sum);
+            values[step.node as usize] = sigmoid(sum);
         }
         let mut outputs = [0.0; N_OUTPUT as usize];
         for (out, slot) in outputs.iter_mut().zip(self.output_slot.iter()) {
             // An output slot the genome never declared reads as zero.
-            *out = slot.map_or(0.0, |index| state.current[index as usize]);
+            *out = slot.map_or(0.0, |index| values[index as usize]);
         }
         outputs
     }
@@ -515,5 +564,432 @@ mod tests {
             expected = sigmoid(expected);
         }
         assert!((net.activate(&mut state, &inputs)[0] - expected).abs() < 1e-14);
+    }
+
+    // ---------------------------------------------------------------------
+    // Reference equivalence.
+    //
+    // `reference` below is a second, deliberately naive evaluator written
+    // straight from the rules at the top of this module. It shares no code with
+    // `Network`: components come from a transitive-reachability closure instead
+    // of Tarjan, the condensation is ordered by repeated peeling instead of
+    // relying on Tarjan's emission order, and each decision keeps explicit
+    // current/previous maps keyed by node IDENTIFIER, copying the whole of
+    // current into previous the way the kernel did before the slot-compiled
+    // buffer replaced it. The compiled kernel has to agree with it BIT for bit,
+    // because a single last-bit difference can flip a control and therefore a
+    // whole fight.
+    // ---------------------------------------------------------------------
+
+    use std::collections::BTreeMap;
+
+    fn reference(genome: &Genome, steps: &[[f64; N_INPUT as usize]]) -> Vec<[f64; N_OUTPUT as usize]> {
+        let present = |id: u32| genome.nodes.iter().any(|n| n.id == id);
+        // Rule 1: disabled genes, and genes with an undeclared endpoint, are
+        // not part of the graph at all.
+        let links: Vec<&Gene> = genome
+            .genes
+            .iter()
+            .filter(|g| g.enabled && present(g.from) && present(g.to))
+            .collect();
+
+        // Only nodes touched by a link can ever be anything but zero: a node
+        // with no incoming link sums to zero and sigmoid(0) is zero, which is
+        // what it already held. So the condensation only needs the endpoints.
+        let mut active: Vec<u32> = Vec::new();
+        for link in links.iter() {
+            for end in [link.from, link.to] {
+                if !active.contains(&end) {
+                    active.push(end);
+                }
+            }
+        }
+        active.sort_unstable();
+        let position = |id: u32| active.iter().position(|&a| a == id).unwrap();
+        let n = active.len();
+
+        // Reachability closure, the long way round.
+        let mut reach = vec![vec![false; n]; n];
+        for link in links.iter() {
+            reach[position(link.from)][position(link.to)] = true;
+        }
+        for k in 0..n {
+            for i in 0..n {
+                for j in 0..n {
+                    if reach[i][k] && reach[k][j] {
+                        reach[i][j] = true;
+                    }
+                }
+            }
+        }
+
+        // Rule 2: mutual reachability is the component relation.
+        let mut component = vec![usize::MAX; n];
+        let mut groups: Vec<Vec<u32>> = Vec::new();
+        for i in 0..n {
+            if component[i] != usize::MAX {
+                continue;
+            }
+            let id = groups.len();
+            let mut group = Vec::new();
+            for j in 0..n {
+                if component[j] == usize::MAX && (i == j || (reach[i][j] && reach[j][i])) {
+                    component[j] = id;
+                    group.push(active[j]);
+                }
+            }
+            groups.push(group);
+        }
+        // Rule 3: a component is cyclic when it holds more than one node, or
+        // one node that links to itself.
+        let mut cyclic: Vec<bool> = groups.iter().map(|g| g.len() > 1).collect();
+        for link in links.iter() {
+            if link.from == link.to {
+                cyclic[component[position(link.from)]] = true;
+            }
+        }
+
+        // Peel the condensation: emit a component once nothing unemitted feeds
+        // it. Rule 3 makes the answer independent of which valid order that is,
+        // so the smallest remaining identifier is a fine tie-break.
+        let mut emitted = vec![false; groups.len()];
+        let mut order: Vec<u32> = Vec::new();
+        for _ in 0..groups.len() {
+            let mut choice: Option<usize> = None;
+            for (c, group) in groups.iter().enumerate() {
+                if emitted[c] {
+                    continue;
+                }
+                let fed = links.iter().any(|l| {
+                    let (from, to) = (component[position(l.from)], component[position(l.to)]);
+                    to == c && from != c && !emitted[from]
+                });
+                if fed {
+                    continue;
+                }
+                let better = match choice {
+                    None => true,
+                    Some(best) => group[0] < groups[best][0],
+                };
+                if better {
+                    choice = Some(c);
+                }
+            }
+            let c = choice.expect("the condensation is a DAG, so something is always ready");
+            emitted[c] = true;
+            for &id in groups[c].iter() {
+                // Rule 5: inputs are driven, never computed.
+                if NodeKind::of_id(id) != NodeKind::Input {
+                    order.push(id);
+                }
+            }
+        }
+
+        let mut current: BTreeMap<u32, f64> = genome.nodes.iter().map(|n| (n.id, 0.0)).collect();
+        let mut outputs = Vec::with_capacity(steps.len());
+        for inputs in steps.iter() {
+            let previous = current.clone();
+            for (id, value) in inputs.iter().enumerate() {
+                let id = id as u32;
+                if present(id) {
+                    current.insert(id, *value);
+                }
+            }
+            for &id in order.iter() {
+                let mut sum = 0.0;
+                // Rule 4: ascending innovation order, and `genes` is sorted by
+                // innovation, so this is the genome's own order.
+                for link in links.iter().filter(|l| l.to == id) {
+                    let same = component[position(link.from)] == component[position(link.to)];
+                    let source = if same && cyclic[component[position(id)]] {
+                        previous[&link.from]
+                    } else {
+                        current[&link.from]
+                    };
+                    sum += link.weight * source;
+                }
+                current.insert(id, sigmoid(sum));
+            }
+            let mut out = [0.0; N_OUTPUT as usize];
+            for (k, slot) in out.iter_mut().enumerate() {
+                let id = N_INPUT + k as u32;
+                *slot = current.get(&id).copied().unwrap_or(0.0);
+            }
+            outputs.push(out);
+        }
+        outputs
+    }
+
+    fn assert_matches_reference(genome: &Genome, steps: &[[f64; N_INPUT as usize]], what: &str) {
+        let expected = reference(genome, steps);
+        let net = Network::compile(genome);
+        let mut state = Activations::new(&net);
+        for (step, inputs) in steps.iter().enumerate() {
+            let got = net.activate(&mut state, inputs);
+            for (k, (a, b)) in got.iter().zip(expected[step].iter()).enumerate() {
+                assert_eq!(
+                    a.to_bits(),
+                    b.to_bits(),
+                    "{what}: output {k} differs from the reference at step {step}: {a} vs {b}"
+                );
+            }
+        }
+        // Rule 7: a reset returns the episode to its opening state exactly.
+        state.reset();
+        let reopened = net.activate(&mut state, &steps[0]);
+        for (k, (a, b)) in reopened.iter().zip(expected[0].iter()).enumerate() {
+            assert_eq!(a.to_bits(), b.to_bits(), "{what}: output {k} differs after a reset");
+        }
+    }
+
+    /// Deterministic so a failure is always the same failure.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0 >> 33
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+
+        fn weight(&mut self) -> f64 {
+            self.below(4001) as f64 / 1000.0 - 2.0
+        }
+    }
+
+    fn input_steps(rng: &mut Lcg, count: usize) -> Vec<[f64; N_INPUT as usize]> {
+        (0..count)
+            .map(|_| {
+                let mut inputs = [0.0; N_INPUT as usize];
+                for slot in inputs.iter_mut() {
+                    *slot = rng.below(2001) as f64 / 1000.0 - 1.0;
+                }
+                inputs[(N_INPUT - 1) as usize] = 1.0;
+                inputs
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hand_built_graphs_match_the_reference_evaluator() {
+        let mut rng = Lcg(0x5eed);
+        let steps = input_steps(&mut rng, 6);
+        let cases: Vec<(&str, Genome)> = vec![
+            ("no genes at all", Genome::minimal()),
+            (
+                "feed-forward chain",
+                genome(&[70], &[(1, 0, 70, 0.7), (2, 70, 57, -1.3)]),
+            ),
+            (
+                "self-loop",
+                genome(
+                    &[70],
+                    &[(1, 0, 70, 0.9), (2, 70, 70, 0.6), (3, 70, 57, 1.1)],
+                ),
+            ),
+            (
+                "two-cycle with an entry and an exit",
+                genome(
+                    &[70, 71],
+                    &[
+                        (1, 0, 70, 1.2),
+                        (2, 70, 71, -0.4),
+                        (3, 71, 70, 0.8),
+                        (4, 71, 57, 1.0),
+                    ],
+                ),
+            ),
+            (
+                "three-cycle behind a feed-forward front",
+                genome(
+                    &[70, 71, 72, 73],
+                    &[
+                        (1, 0, 73, 0.5),
+                        (2, 73, 70, 1.4),
+                        (3, 70, 71, 0.3),
+                        (4, 71, 72, -0.9),
+                        (5, 72, 70, 0.7),
+                        (6, 72, 57, 1.0),
+                        (7, 1, 58, -0.6),
+                    ],
+                ),
+            ),
+            (
+                "an output feeding a hidden node back",
+                genome(
+                    &[70],
+                    &[
+                        (1, 0, 57, 0.8),
+                        (2, 57, 70, 1.1),
+                        (3, 70, 57, -0.5),
+                        (4, 56, 70, 0.2),
+                    ],
+                ),
+            ),
+            (
+                "output straight to output",
+                genome(&[], &[(1, 2, 57, 1.7), (2, 57, 58, -1.2), (3, 58, 57, 0.4)]),
+            ),
+        ];
+        for (what, g) in cases {
+            assert_matches_reference(&g, &steps, what);
+        }
+
+        // Rule 1: the disabled variants of the same graphs, including one that
+        // disables an edge inside a cycle and so breaks the recurrence.
+        let mut disabled = genome(
+            &[70, 71],
+            &[
+                (1, 0, 70, 1.2),
+                (2, 70, 71, -0.4),
+                (3, 71, 70, 0.8),
+                (4, 71, 57, 1.0),
+            ],
+        );
+        disabled.genes[2].enabled = false;
+        assert_matches_reference(&disabled, &steps, "cycle broken by a disabled gene");
+        disabled.genes[0].enabled = false;
+        assert_matches_reference(&disabled, &steps, "two disabled genes");
+    }
+
+    #[test]
+    fn partial_node_sets_match_the_reference_evaluator() {
+        let mut rng = Lcg(0xfa11);
+        let steps = input_steps(&mut rng, 5);
+        // A genome that declares only some inputs and some outputs, so the
+        // input vector no longer lands on slots 0..57 and several output slots
+        // are undeclared.
+        let ids: [u32; 6] = [0, 3, 56, 58, 69, 70];
+        let nodes: Vec<Node> = ids
+            .iter()
+            .map(|&id| Node {
+                id,
+                kind: NodeKind::of_id(id),
+            })
+            .collect();
+        let genes = [
+            (1u32, 0u32, 70u32, 0.9f64),
+            (2, 70, 70, 0.5),
+            (3, 56, 58, -1.1),
+            (4, 70, 69, 0.3),
+            (5, 69, 70, 0.6),
+            (6, 3, 58, 1.4),
+        ];
+        let g = Genome {
+            nodes,
+            genes: genes
+                .iter()
+                .map(|&(innovation, from, to, weight)| Gene {
+                    innovation,
+                    from,
+                    to,
+                    weight,
+                    enabled: true,
+                })
+                .collect(),
+        }
+        .validate()
+        .unwrap();
+        assert_matches_reference(&g, &steps, "partial node set");
+    }
+
+    #[test]
+    fn random_graphs_match_the_reference_evaluator_bit_for_bit() {
+        let mut rng = Lcg(0xc0ffee);
+        for case in 0..200u32 {
+            // Half the cases declare every input, which is what an evolved
+            // genome looks like; the other half declare a sparse subset.
+            let full = case % 2 == 0;
+            let mut nodes: Vec<Node> = if full {
+                Genome::minimal().nodes
+            } else {
+                [0u32, 1, 2, 56, 57, 58, 69]
+                    .iter()
+                    .filter(|_| rng.below(4) != 0)
+                    .map(|&id| Node {
+                        id,
+                        kind: NodeKind::of_id(id),
+                    })
+                    .collect()
+            };
+            let hidden: Vec<u32> = (70..70 + rng.below(5) as u32).collect();
+            for &id in hidden.iter() {
+                nodes.push(Node {
+                    id,
+                    kind: NodeKind::Hidden,
+                });
+            }
+            nodes.sort_by_key(|n| n.id);
+            if nodes.is_empty() {
+                continue;
+            }
+
+            let ids: Vec<u32> = nodes.iter().map(|n| n.id).collect();
+            let sinks: Vec<u32> = ids
+                .iter()
+                .copied()
+                .filter(|&id| NodeKind::of_id(id) != NodeKind::Input)
+                .collect();
+            if sinks.is_empty() {
+                continue;
+            }
+            let mut genes: Vec<Gene> = Vec::new();
+            let mut seen: Vec<(u32, u32)> = Vec::new();
+            for _ in 0..rng.below(14) {
+                let from = ids[rng.below(ids.len() as u64) as usize];
+                let to = sinks[rng.below(sinks.len() as u64) as usize];
+                if seen.contains(&(from, to)) {
+                    continue;
+                }
+                seen.push((from, to));
+                genes.push(Gene {
+                    innovation: genes.len() as u32 + 1,
+                    from,
+                    to,
+                    weight: rng.weight(),
+                    // Rule 1: disabled genes have to drop out of the ordering
+                    // as well as out of the sums.
+                    enabled: rng.below(5) != 0,
+                });
+            }
+            let g = Genome { nodes, genes }.validate().unwrap();
+            let steps = input_steps(&mut rng, 4);
+            assert_matches_reference(&g, &steps, &format!("random case {case}"));
+        }
+    }
+
+    #[test]
+    fn only_the_sources_a_recurrent_edge_reads_are_carried_between_decisions() {
+        // The carry-over is the compiled recurrence, not a copy of the whole
+        // graph: a feed-forward genome carries nothing, and a cycle carries one
+        // slot per distinct recurrent SOURCE however many edges read it.
+        let forward = Network::compile(&genome(&[70], &[(1, 0, 70, 1.0), (2, 70, 57, 1.0)]));
+        assert_eq!(forward.recurrent_sources.len(), 0);
+        assert_eq!(Activations::new(&forward).values.len(), forward.width);
+
+        let cyclic = Network::compile(&genome(
+            &[70, 71],
+            &[
+                (1, 0, 70, 1.0),
+                (2, 70, 71, 1.0),
+                (3, 71, 70, 1.0),
+                // A second reader of the same recurrent source.
+                (4, 71, 71, 1.0),
+                (5, 71, 57, 1.0),
+            ],
+        ));
+        // 70 and 71 are each read from the previous decision; 71 by two edges.
+        assert_eq!(cyclic.recurrent_sources.len(), 2);
+        assert_eq!(
+            Activations::new(&cyclic).values.len(),
+            cyclic.width + 2,
+            "the shadow half is one slot per recurrent source"
+        );
     }
 }
