@@ -360,15 +360,18 @@ fn fill_concerns(work: &Work<'_>) -> Concerns {
         gravity: BLANK,
         empty: BLANK,
     };
-    for el in work.arena.elements.values().copied() {
-        concerns = consider(work, el, concerns);
+    // Same order, same tests. `Concerns` carries five `Option<Element>` payloads,
+    // so threading it by value copied roughly a kilobyte in and out of every
+    // arm for every element in the arena, on every side, every frame.
+    for el in work.arena.elements.values() {
+        consider(work, el, &mut concerns);
     }
     concerns
 }
 
-fn consider(work: &Work<'_>, el: Element, concerns: Concerns) -> Concerns {
-    if el.id == work.ship.id || !colliding(el) || !colliding(work.ship) {
-        return concerns;
+fn consider(work: &Work<'_>, el: &Element, concerns: &mut Concerns) {
+    if el.id == work.ship.id || !colliding(*el) || !colliding(work.ship) {
+        return;
     }
     let dx = trig::wrap_delta(
         el.next.location.x - work.ship.next.location.x,
@@ -378,28 +381,26 @@ fn consider(work: &Work<'_>, el: Element, concerns: Concerns) -> Concerns {
         el.next.location.y - work.ship.next.location.y,
         work.space.height,
     );
-    if is_gravity(el) {
-        consider_gravity(work, el, concerns)
-    } else if is_ship(el) {
-        consider_enemy(work, el, dx, dy, concerns)
+    if is_gravity(*el) {
+        consider_gravity(work, el, concerns);
+    } else if is_ship(*el) {
+        consider_enemy(work, el, dx, dy, concerns);
     } else if el.parent.is_none() {
-        consider_empty(el, dx, dy, concerns)
-    } else if !same_player(el, work.ship)
-        && !is_crew(el)
+        consider_empty(el, dx, dy, concerns);
+    } else if !same_player(*el, work.ship)
+        && !is_crew(*el)
         && concerns.weapon.which_turn > 1
-        && life_span(el) > 0
+        && life_span(*el) > 0
     {
-        consider_weapon(work, el, dx, dy, concerns)
-    } else if is_crew(el) && concerns.crew.which_turn > 1 {
-        consider_crew(work, el, dx, dy, concerns)
-    } else {
-        concerns
+        consider_weapon(work, el, dx, dy, concerns);
+    } else if is_crew(*el) && concerns.crew.which_turn > 1 {
+        consider_crew(work, el, dx, dy, concerns);
     }
 }
 
-fn consider_gravity(work: &Work<'_>, el: Element, mut concerns: Concerns) -> Concerns {
+fn consider_gravity(work: &Work<'_>, el: &Element, concerns: &mut Concerns) {
     if work.moved {
-        return concerns;
+        return;
     }
     let maneuver_turn = if ultra(work) {
         16
@@ -411,24 +412,24 @@ fn consider_gravity(work: &Work<'_>, el: Element, mut concerns: Concerns) -> Con
     let bounds = 80;
     let hit = plot_intercept(
         work.space,
-        el,
+        *el,
         work.ship,
         maneuver_turn,
         display_to_world(30 + bounds * 3),
     );
     if hit > 0
         && (hit > 1
-            || plot_intercept(work.space, el, work.ship, 1, display_to_world(35 + bounds)) > 0
+            || plot_intercept(work.space, *el, work.ship, 1, display_to_world(35 + bounds)) > 0
             || plot_intercept(
                 work.space,
-                el,
+                *el,
                 work.ship,
                 maneuver_turn * 2,
                 display_to_world(40 + bounds),
             ) > 1)
     {
         concerns.gravity = Eval {
-            object: Some(el),
+            object: Some(*el),
             movement: if ultra(work) {
                 MoveState::Avoid
             } else {
@@ -447,19 +448,12 @@ fn consider_gravity(work: &Work<'_>, el: Element, mut concerns: Concerns) -> Con
             which_turn: hit,
         };
     }
-    concerns
 }
 
-fn consider_enemy(
-    work: &Work<'_>,
-    el: Element,
-    dx: i64,
-    dy: i64,
-    mut concerns: Concerns,
-) -> Concerns {
+fn consider_enemy(work: &Work<'_>, el: &Element, dx: i64, dy: i64, concerns: &mut Concerns) {
     let turns = world_to_turn(trig::square_root(dx * dx + dy * dy)).max(1);
     if turns > concerns.enemy.which_turn {
-        return concerns;
+        return;
     }
     let enemy = combatant(other_side(work.side), work.arena);
     let enemy_chars = enemy.core().characteristics;
@@ -474,7 +468,7 @@ fn consider_enemy(
                     && work.range < foe_range)));
     let facing = facing_to_angle(enemy.core().facing);
     concerns.enemy = Eval {
-        object: Some(el),
+        object: Some(*el),
         movement: if should_pursue {
             MoveState::Pursue
         } else {
@@ -489,41 +483,33 @@ fn consider_enemy(
     threat.range = foe_range;
     threat.facing = enemy.core().facing;
     threat.core = *enemy.core();
-    threat.ship = el;
+    threat.ship = *el;
     if foe_ability.immediate_weapon && ship_weapons(&threat, work.ship, 0) {
         concerns.weapon = Eval {
-            object: Some(el),
+            object: Some(*el),
             movement: MoveState::Avoid,
             facing,
             which_turn: 1,
         };
     }
-    concerns
 }
 
-fn consider_empty(el: Element, dx: i64, dy: i64, mut concerns: Concerns) -> Concerns {
+fn consider_empty(el: &Element, dx: i64, dy: i64, concerns: &mut Concerns) {
     if el.flags.finite_life {
-        return concerns;
+        return;
     }
     let turns = world_to_turn(trig::square_root(dx * dx + dy * dy));
     if turns < concerns.empty.which_turn {
         concerns.empty = Eval {
-            object: Some(el),
+            object: Some(*el),
             movement: MoveState::Pursue,
             facing: travel_angle(el.velocity),
             which_turn: turns.max(1),
         };
     }
-    concerns
 }
 
-fn consider_weapon(
-    work: &Work<'_>,
-    el: Element,
-    dx: i64,
-    dy: i64,
-    mut concerns: Concerns,
-) -> Concerns {
+fn consider_weapon(work: &Work<'_>, el: &Element, dx: i64, dy: i64, concerns: &mut Concerns) {
     let ability = el
         .parent
         .map(|side| combatant(side, work.arena).kind().stock().ability)
@@ -542,13 +528,13 @@ fn consider_weapon(
     } else {
         let hit = plot_intercept(
             work.space,
-            el,
+            *el,
             work.ship,
-            life_span(el),
+            life_span(*el),
             display_to_world(40),
         );
         Eval {
-            object: Some(el),
+            object: Some(*el),
             movement: MoveState::Avoid,
             facing: travel_angle(el.velocity),
             which_turn: hit,
@@ -560,10 +546,9 @@ fn consider_weapon(
     {
         concerns.weapon = eval;
     }
-    concerns
 }
 
-fn seeking_weapon(work: &Work<'_>, el: Element, dx: i64, dy: i64) -> Eval {
+fn seeking_weapon(work: &Work<'_>, el: &Element, dx: i64, dy: i64) -> Eval {
     let closing =
         trig::normalize_angle(travel_angle(el.velocity) - trig::arctan(-dx, -dy) + QUADRANT)
             > HALF_CIRCLE;
@@ -592,7 +577,7 @@ fn seeking_weapon(work: &Work<'_>, el: Element, dx: i64, dy: i64) -> Eval {
     };
     if turns > 0 {
         Eval {
-            object: Some(el),
+            object: Some(*el),
             movement: MoveState::Entice,
             facing: travel_angle(el.velocity),
             which_turn: turns,
@@ -625,14 +610,8 @@ fn is_special_body(body: Body) -> bool {
     )
 }
 
-fn consider_crew(
-    work: &Work<'_>,
-    el: Element,
-    dx: i64,
-    dy: i64,
-    mut concerns: Concerns,
-) -> Concerns {
-    let ours = (!el.flags.ignore_similar && same_player(el, work.ship)) || is_crew(el);
+fn consider_crew(work: &Work<'_>, el: &Element, dx: i64, dy: i64, concerns: &mut Concerns) {
+    let ours = (!el.flags.ignore_similar && same_player(*el, work.ship)) || is_crew(*el);
     let turns = world_to_turn(trig::square_root(dx * dx + dy * dy)).max(1);
     if ours
         && concerns.crew.which_turn > turns
@@ -640,13 +619,12 @@ fn consider_crew(
             || (concerns.enemy.which_turn > 8 && work.ship.target == Some(el.id)))
     {
         concerns.crew = Eval {
-            object: Some(el),
+            object: Some(*el),
             movement: MoveState::Pursue,
             facing: 0,
             which_turn: turns,
         };
     }
-    concerns
 }
 
 fn ship_intelligence(mut work: Work<'_>, concerns: Concerns) -> Work<'_> {

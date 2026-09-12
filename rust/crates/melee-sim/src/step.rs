@@ -397,12 +397,15 @@ fn collide_all(arena: &mut Arena) {
     // Keep the original ordered snapshots in stable slots. Removing a collision
     // victim marks its slot empty; survivors retain exactly the old pair order.
     // This avoids shifting and rebuilding the remaining vector after every pair.
-    let mut elements: Vec<_> = arena
-        .queue
-        .iter()
-        .filter_map(|&id| collision_element(arena, id))
-        .map(Some)
-        .collect();
+    // `filter_map` gives the collector no exact size, so the collected vector
+    // reallocated and memmoved its way up to one entry per queued element every
+    // tick. The queue length is the exact upper bound.
+    let mut elements: Vec<Option<CollisionElement>> = Vec::with_capacity(arena.queue.len());
+    for &id in &arena.queue {
+        if let Some(entry) = collision_element(arena, id) {
+            elements.push(Some(entry));
+        }
+    }
     for index in 0..elements.len() {
         let Some(mut first) = elements[index].take() else {
             continue;
@@ -672,17 +675,19 @@ fn apply_hit(arena: &mut Arena, weapon: Element, target: Element) {
         }
     }
 
-    let hit_snapshot = arena.clone();
-    impact(arena, weapon, target);
+    // `survives` reads only the weapon and target snapshots taken before the
+    // hit, so it is already decided here. Elm ran `impact` and then discarded
+    // the whole arena it produced when the weapon survived; skipping the call
+    // is the same state without cloning the arena to throw it away.
     let survives =
         !target.flags.player_ship && target.body != Body::Planet && weapon.points > target.mass;
     if survives {
-        *arena = hit_snapshot;
         if let Some(mut w) = get_el(arena, weapon.id) {
             w.points -= target.mass;
             put_el(arena, w);
         }
     } else {
+        impact(arena, weapon, target);
         remove_el(arena, weapon.id);
     }
 }
@@ -2679,4 +2684,190 @@ fn count_owned(arena: &Arena, body: Body, owner: Owner) -> usize {
         .values()
         .filter(|el| el.owner == owner && el.body == body)
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::ShipKind;
+    use crate::cyborg;
+    use crate::init;
+    use crate::input::CyborgRating;
+    use alloc::vec::Vec;
+    use melee_core::rng::Seed;
+
+    /// `apply_hit` verbatim as it read before the arena clone was removed: run
+    /// `impact`, then throw the whole arena away when the weapon survives.
+    fn apply_hit_snapshotting(arena: &mut Arena, weapon: Element, target: Element) {
+        if target.flags.player_ship {
+            if let Some(combatant) = combatant_of(arena, target.owner) {
+                let c = core(&combatant);
+                if c.shield_ticks > 0 {
+                    if kind(&combatant) == ShipKind::Utwig {
+                        map_combatant(arena, owner_side(target.owner), |live| {
+                            let mut co = core(&live);
+                            co.energy = (co.energy + weapon.mass).min(co.max_energy);
+                            set_core(co, live)
+                        });
+                    }
+                } else if weapon.body == Body::VuxLimpet {
+                    map_combatant(arena, owner_side(target.owner), |live| {
+                        let mut co = core(&live);
+                        co.characteristics.max_thrust =
+                            (co.characteristics.max_thrust * 7 / 8).max(4);
+                        co.characteristics.thrust_increment =
+                            (co.characteristics.thrust_increment * 7 / 8).max(1);
+                        co.characteristics.turn_wait += 1;
+                        set_core(co, live)
+                    });
+                } else if weapon.body == Body::MelnormeConfusion {
+                    map_combatant(arena, owner_side(target.owner), |live| {
+                        let mut co = core(&live);
+                        co.confused_ticks = 120;
+                        set_core(co, live)
+                    });
+                } else if weapon.body == Body::ChenjesuDogi {
+                    map_combatant(arena, owner_side(target.owner), |live| {
+                        let mut co = core(&live);
+                        co.energy = (co.energy - 10).max(0);
+                        set_core(co, live)
+                    });
+                } else {
+                    damage_ship(arena, weapon.mass, target);
+                }
+            }
+        } else if target.body != Body::Planet {
+            if target.points > weapon.mass {
+                let mut t = target;
+                t.points -= weapon.mass;
+                put_el(arena, t);
+            } else {
+                remove_el(arena, target.id);
+            }
+        }
+
+        let hit_snapshot = arena.clone();
+        impact(arena, weapon, target);
+        let survives =
+            !target.flags.player_ship && target.body != Body::Planet && weapon.points > target.mass;
+        if survives {
+            *arena = hit_snapshot;
+            if let Some(mut w) = get_el(arena, weapon.id) {
+                w.points -= target.mass;
+                put_el(arena, w);
+            }
+        } else {
+            remove_el(arena, weapon.id);
+        }
+    }
+
+    fn idle_input() -> BattleInput {
+        BattleInput {
+            turn: Turn::NoTurn,
+            thrust: false,
+            weapon: false,
+            special: false,
+        }
+    }
+
+    /// Both cyborgs piloting, so real projectiles, crew, blasts and wrecks
+    /// appear. Returns the arena state after each frame.
+    fn cyborg_frames(bottom: ShipKind, top: ShipKind, seed: i64, frames: usize) -> Vec<Arena> {
+        let mut arena = init::arena(bottom, top, Seed(seed));
+        let mut out = Vec::with_capacity(frames);
+        for _ in 0..frames {
+            let mut inputs = Sided::both(idle_input());
+            for side in [Side::Bottom, Side::Top] {
+                inputs.set(
+                    side,
+                    cyborg::pilot(CyborgRating::AwesomeCyborg, side, &mut arena),
+                );
+            }
+            tick_authoritative(inputs, &mut arena);
+            out.push(arena.clone());
+        }
+        out
+    }
+
+    /// Every weapon/other pair reachable in a real battle, applied both ways to
+    /// the same starting arena. Covers the surviving branch (the one that used
+    /// to roll the arena back) and the consumed branch.
+    #[test]
+    fn apply_hit_matches_the_snapshotting_version() {
+        let matchups = [
+            (ShipKind::Earthling, ShipKind::UrQuan),
+            (ShipKind::Chenjesu, ShipKind::Shofixti),
+            (ShipKind::Mycon, ShipKind::Arilou),
+        ];
+        let mut survived = 0usize;
+        let mut consumed = 0usize;
+        for (bottom, top) in matchups {
+            for state in cyborg_frames(bottom, top, 12345, 240) {
+                let ids: Vec<ElementId> = state.queue.clone();
+                for &wid in &ids {
+                    let Some(weapon) = get_el(&state, wid) else {
+                        continue;
+                    };
+                    if !is_weapon(weapon) {
+                        continue;
+                    }
+                    for &tid in &ids {
+                        if tid == wid {
+                            continue;
+                        }
+                        let Some(target) = get_el(&state, tid) else {
+                            continue;
+                        };
+                        let mut fast = state.clone();
+                        let mut reference = state.clone();
+                        apply_hit(&mut fast, weapon, target);
+                        apply_hit_snapshotting(&mut reference, weapon, target);
+                        assert_eq!(
+                            fast, reference,
+                            "apply_hit diverged for weapon {:?} against target {:?}",
+                            weapon.body, target.body
+                        );
+                        if !target.flags.player_ship
+                            && target.body != Body::Planet
+                            && weapon.points > target.mass
+                        {
+                            survived += 1;
+                        } else {
+                            consumed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            survived > 500,
+            "only {survived} surviving-weapon hits were exercised"
+        );
+        assert!(
+            consumed > 500,
+            "only {consumed} consumed-weapon hits were exercised"
+        );
+    }
+
+    /// The collision snapshot and the cyborg concern pass are the other two
+    /// changed paths. Same seed and same seats must replay identically.
+    #[test]
+    fn cyborg_battles_replay_identically() {
+        let matchups = [
+            (ShipKind::Earthling, ShipKind::UrQuan),
+            (ShipKind::Chenjesu, ShipKind::Shofixti),
+            (ShipKind::Mycon, ShipKind::Arilou),
+            (ShipKind::Chmmr, ShipKind::Thraddash),
+        ];
+        for (bottom, top) in matchups {
+            for seed in [1, 7777, 20260912] {
+                let first = cyborg_frames(bottom, top, seed, 300);
+                let second = cyborg_frames(bottom, top, seed, 300);
+                assert_eq!(first, second, "{bottom:?} vs {top:?} seed {seed} replay");
+                let last = first.last().expect("frames");
+                assert_eq!(last.frame, 300);
+                assert!(!last.queue.is_empty());
+            }
+        }
+    }
 }
