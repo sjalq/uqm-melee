@@ -922,13 +922,18 @@ fn supervise(options: Options) -> Result<(), String> {
             .unwrap_or_default();
         if champion != shown_champion {
             // The genome changed, so the network document has to change too.
-            let spent = publish(&trainer, phase, "training", false);
+            // The phase pill already says the trainer is training, so the
+            // routine publish carries no message. A banner is for something
+            // the operator would not otherwise know: starting up, paused,
+            // stopped, failed. Repeating the phase on every poll turns the
+            // banner into furniture and hides the times it matters.
+            let spent = publish(&trainer, phase, "", false);
             trainer.phases.serve += spent.as_secs_f64();
             shown_champion = champion;
             shown_phase = phase;
             last_publish = Instant::now();
         } else if phase != shown_phase || last_publish.elapsed() >= PUBLISH_EVERY {
-            let spent = publish_status(&trainer, phase, "training");
+            let spent = publish_status(&trainer, phase, "");
             trainer.phases.serve += spent.as_secs_f64();
             shown_phase = phase;
             last_publish = Instant::now();
