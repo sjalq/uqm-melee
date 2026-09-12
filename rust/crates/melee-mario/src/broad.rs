@@ -54,16 +54,8 @@ pub struct BroadConfig {
     /// Fights each population member plays per generation.
     pub panel: usize,
     /// Share of that panel drawn by the balanced coverage rotation. The rest
-    /// is drawn adaptively.
+    /// is drawn adaptively, on the weights [`weight`] assigns.
     pub coverage: f64,
-    /// Rehearsal floor in the adaptive weight, so no cell is ever abandoned.
-    pub floor: f64,
-    /// Weight on the bounded "how little do we know about this cell" term.
-    pub uncertainty: f64,
-    /// Weight on the bounded "how much is still learnable here" term.
-    pub potential: f64,
-    /// Decayed games at which the uncertainty term has halved.
-    pub evidence_scale: f64,
     /// How fast older training evidence fades out of a cell's statistics. The
     /// adaptive weight is computed over decayed counts, so this constant is
     /// part of the sampler's memory rather than of the gate.
@@ -85,10 +77,6 @@ impl Default for BroadConfig {
             // the board every generation would cost 625 fights per genome.
             panel: 32,
             coverage: 0.5,
-            floor: 1.0,
-            uncertainty: 3.0,
-            potential: 4.0,
-            evidence_scale: 24.0,
             decay: 0.90,
             // 500 pairs is 1,000 games and exactly 20 appearances of every hull
             // on each side.
@@ -109,9 +97,7 @@ impl BroadConfig {
     }
 
     pub fn to_json(self) -> Value {
-        json!({"panel": self.panel, "coverage": self.coverage, "floor": self.floor,
-               "uncertainty": self.uncertainty, "potential": self.potential,
-               "evidence_scale": self.evidence_scale, "decay": self.decay,
+        json!({"panel": self.panel, "coverage": self.coverage, "decay": self.decay,
                "pairs": self.pairs, "target": self.target})
     }
 
@@ -119,12 +105,6 @@ impl BroadConfig {
     /// something the operator did not ask for. In particular a pair count that
     /// is not a multiple of the roster size could not be balanced.
     pub fn from_json(value: &Value) -> Option<BroadConfig> {
-        let number = |key: &str| {
-            value
-                .get(key)?
-                .as_f64()
-                .filter(|n| n.is_finite() && *n >= 0.0)
-        };
         let panel = value.get("panel")?.as_u64().filter(|n| *n > 0)? as usize;
         let coverage = value
             .get("coverage")?
@@ -146,10 +126,6 @@ impl BroadConfig {
         Some(BroadConfig {
             panel,
             coverage,
-            floor: number("floor")?,
-            uncertainty: number("uncertainty")?,
-            potential: number("potential")?,
-            evidence_scale: number("evidence_scale")?.max(1e-6),
             decay,
             pairs,
             target,
@@ -291,7 +267,22 @@ pub fn coverage_cell(salt: u64, cursor: u64) -> Cell {
     }
 }
 
+/// Rehearsal floor in the adaptive weight, so no cell is ever abandoned.
+const REHEARSAL_FLOOR: f64 = 1.0;
+/// Weight on the bounded "how little do we know about this cell" term.
+const UNCERTAINTY_WEIGHT: f64 = 3.0;
+/// Weight on the bounded "how much is still learnable here" term.
+const POTENTIAL_WEIGHT: f64 = 4.0;
+/// Decayed games at which the uncertainty term has halved.
+const EVIDENCE_SCALE: f64 = 24.0;
+
 /// How much attention the adaptive half of a panel gives one cell.
+///
+/// Constants rather than configuration: these four numbers shape the search
+/// itself, no flag has ever set them, and a run that stored them would be
+/// storing the algorithm it was compiled with. What IS configuration is how
+/// much of the panel reaches this function at all ([`BroadConfig::coverage`])
+/// and how fast the evidence it reads fades ([`BroadConfig::decay`]).
 ///
 /// Two bounded terms and a floor, and deliberately NO unbounded "still losing,
 /// try harder" term:
@@ -305,21 +296,22 @@ pub fn coverage_cell(salt: u64, cursor: u64) -> Cell {
 ///     is near a decision boundary and can actually still move.
 ///
 /// Both terms live in `[0, 1]`, so a cell's weight is bounded above by
-/// `floor + uncertainty + potential` however bad it gets, and bounded below by
-/// `floor`. The floor and the coverage rotation together are what keep a
-/// hopeless cell rehearsed rather than abandoned, while the bound is what stops
-/// it eating the panel forever.
-pub fn weight(config: &BroadConfig, stat: &CellStat) -> f64 {
+/// `REHEARSAL_FLOOR + UNCERTAINTY_WEIGHT + POTENTIAL_WEIGHT` however bad it
+/// gets, and bounded below by
+/// [`REHEARSAL_FLOOR`]. The floor and the coverage rotation together are what
+/// keep a hopeless cell rehearsed rather than abandoned, while the bound is
+/// what stops it eating the panel forever.
+pub fn weight(stat: &CellStat) -> f64 {
     let p = stat.smoothed();
-    let uncertainty = 1.0 / (1.0 + stat.games / config.evidence_scale.max(1e-6));
+    let uncertainty = 1.0 / (1.0 + stat.games / EVIDENCE_SCALE);
     let potential = (4.0 * p * (1.0 - p)).clamp(0.0, 1.0);
-    config.floor + config.uncertainty * uncertainty + config.potential * potential
+    REHEARSAL_FLOOR + UNCERTAINTY_WEIGHT * uncertainty + POTENTIAL_WEIGHT * potential
 }
 
-fn pick(config: &BroadConfig, stats: &SamplerStats, rng: &mut Stream, pool: &[Cell]) -> Cell {
+fn pick(stats: &SamplerStats, rng: &mut Stream, pool: &[Cell]) -> Cell {
     let weights: Vec<f64> = pool
         .iter()
-        .map(|cell| weight(config, stats.cells.get(cell).unwrap_or(&CellStat::default())))
+        .map(|cell| weight(stats.cells.get(cell).unwrap_or(&CellStat::default())))
         .collect();
     let total: f64 = weights.iter().sum();
     if !(total > 0.0) {
@@ -356,7 +348,7 @@ pub fn draw(
             *cursor += 1;
             cell
         } else {
-            pick(config, stats, rng, &pool)
+            pick(stats, rng, &pool)
         };
         let swap = slot % 2 == 1;
         stats.issued += 1;
@@ -795,14 +787,15 @@ mod tests {
 
     #[test]
     fn the_adaptive_weight_is_bounded_and_abandons_neither_end() {
-        let config = BroadConfig::default();
-        let ceiling = config.floor + config.uncertainty + config.potential;
-        let unseen = weight(&config, &stat(0.0, 0.0));
-        let hopeless = weight(&config, &stat(1.0, 200.0));
-        let mastered = weight(&config, &stat(199.0, 200.0));
-        let contested = weight(&config, &stat(100.0, 200.0));
+        // The ceiling both bounded terms can reach at once, which is what
+        // makes the draw a bounded preference rather than a takeover.
+        let ceiling = REHEARSAL_FLOOR + UNCERTAINTY_WEIGHT + POTENTIAL_WEIGHT;
+        let unseen = weight(&stat(0.0, 0.0));
+        let hopeless = weight(&stat(1.0, 200.0));
+        let mastered = weight(&stat(199.0, 200.0));
+        let contested = weight(&stat(100.0, 200.0));
         for w in [unseen, hopeless, mastered, contested] {
-            assert!(w >= config.floor, "a cell fell below the rehearsal floor");
+            assert!(w >= REHEARSAL_FLOOR, "a cell fell below the rehearsal floor");
             assert!(w <= ceiling + 1e-9, "a cell's weight was unbounded");
         }
         // A cell being lost almost always must NOT out-draw a contested one:

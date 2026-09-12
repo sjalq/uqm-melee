@@ -2,14 +2,13 @@
 //!
 //! Two rules the dashboard depends on:
 //!
-//!   * The graded question is the balanced AGGREGATE in `overall`. The
-//!     `matchups` list carries training exposure and per-hull diagnostics; no
-//!     number in it gates anything, and none of it may be read as per-matchup
-//!     mastery.
+//!   * The graded question is the balanced AGGREGATE in `overall`, and it is
+//!     stated there ONCE. The `matchups` list carries training exposure and
+//!     per-hull diagnostics; no number in it gates anything, and none of it may
+//!     be read as per-matchup mastery.
 //!   * A measurement that has not been made is `null`, never zero. Zero means
 //!     "measured, and it was zero".
 
-use crate::audit::{max_losses, Round};
 use crate::broad::{self, Cell, Evaluation, Source};
 use crate::genome::Genome;
 use crate::trainer::{iso8601, Mode, Trainer};
@@ -18,13 +17,20 @@ use serde_json::{json, Value};
 /// Bumped when the shape of the published documents changes. Version 2 dropped
 /// the staged ladder: there is no `curriculum` object, no `regression` object
 /// and no per-matchup audit evidence, because none of those measurements
-/// exists any more. A reader that still wants version 1 is asking for numbers
-/// this engine does not produce, and should be told so rather than shown
-/// zeroes.
-pub const SCHEMA_VERSION: i64 = 2;
+/// exists any more. Version 3 dropped what was left over from it: the `audit`
+/// object and the champion's `validated_*` figures, which restated `overall`
+/// word for word, the combat-win window, and a handful of constants that a
+/// reader could only ever read back unchanged. A reader that wants an earlier
+/// version is asking for numbers this engine does not produce, and should be
+/// told so rather than shown zeroes.
+pub const SCHEMA_VERSION: i64 = 3;
 
-/// The phase the SERVER reports, which includes states the trainer itself has
-/// no opinion about (paused by an operator, stopped, failed to start).
+/// The phase the SERVER reports, which includes the two states the trainer
+/// itself has no opinion about: paused by an operator, and stopped.
+///
+/// Every variant has a producer. A start that fails never publishes at all, it
+/// exits with the reason on stderr, so there is no "error" phase to report and
+/// none is representable.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Phase {
     Initializing,
@@ -32,7 +38,6 @@ pub enum Phase {
     Auditing,
     Paused,
     Stopped,
-    Error,
 }
 
 impl Phase {
@@ -43,7 +48,6 @@ impl Phase {
             Phase::Auditing => "auditing",
             Phase::Paused => "paused",
             Phase::Stopped => "stopped",
-            Phase::Error => "error",
         }
     }
 }
@@ -56,30 +60,6 @@ fn number(value: Option<f64>) -> Value {
 }
 
 impl Trainer {
-    /// The round in flight, as (round, games played, games declared).
-    fn auditing_now(&self) -> Option<(Round, u32, u32)> {
-        match &self.mode {
-            Mode::Overall { gate } => Some((
-                gate.round,
-                gate.evaluation.games,
-                gate.tasks.len() as u32,
-            )),
-            _ => None,
-        }
-    }
-
-    /// The champion's HELD-OUT evidence: the round in flight if there is one,
-    /// otherwise the most recent finished gate round. A readiness probe is
-    /// deliberately not among them, because it is a cheap diagnostic on its own
-    /// stream and reporting it as validated evidence would flatter the
-    /// champion with numbers that never gated anything.
-    fn shown_gate_evidence(&self) -> Option<&Evaluation> {
-        if let Mode::Overall { gate } = &self.mode {
-            return Some(&gate.evaluation);
-        }
-        self.broad_confirm.as_ref().or(self.broad_audit.as_ref())
-    }
-
     /// The balanced evaluation the per-hull diagnostics table should show: the
     /// round in flight if there is one, otherwise whichever finished reading
     /// `broad_shown` names. All of them belong to the current champion.
@@ -134,7 +114,8 @@ impl Trainer {
             "games": tally.games,
             "win_rate": number(tally.rate()),
             "lower_bound": number(tally.lower_bound()),
-            "champion_id": champion.clone().unwrap_or_default(),
+            // Null, not an empty string: there is no candidate to name yet.
+            "champion_id": champion.clone(),
             "passed": cleared_by.is_some() && cleared_by == champion,
             "passed_by": cleared_by,
             "audit": summary(self.broad_audit.as_ref()),
@@ -144,15 +125,7 @@ impl Trainer {
     }
 
     pub fn status(&self, phase: Phase, message: &str, checkpoint: &str, stale: bool) -> Value {
-        let target = self.config.broad.target;
         let board = broad::board();
-        // The champion's validated numbers are its HELD-OUT balanced evidence,
-        // which is the only evidence in the run that was withheld from
-        // training. Training exposure is reported per matchup and never here.
-        let aggregate = self
-            .shown_gate_evidence()
-            .map(Evaluation::tally)
-            .unwrap_or_default();
         let per_second = if self.elapsed > 0.0 {
             self.episodes as f64 / self.elapsed
         } else {
@@ -169,34 +142,20 @@ impl Trainer {
             // Extension: fights that reached no victory, the tick ceiling and
             // the evaluator's Selecting phase alike. Never counted as wins.
             "episodes_unresolved": self.unresolved,
-            // FACTUAL combat victories, whatever the configured gate counts.
-            // Under the crew-lead criterion every other success number in this
-            // document means a crew lead rather than a win, and these three
-            // fields are the only ones that may be labelled combat wins.
-            //
-            // The count covers the window that opens at `counted_since`, which
-            // is zero, and therefore all time, for any run that started under
-            // a build with this counter. `all_time` is the same number when
-            // the window is the whole run and NULL otherwise, so a resumed
-            // legacy checkpoint cannot have its partial post-resume count read
-            // against its all-time episode total.
+            // FACTUAL combat victories over the whole run, whatever the
+            // configured gate counts. Under the crew-lead criterion every
+            // other success number in this document means a crew lead rather
+            // than a win, and this is the only field that may be labelled a
+            // combat win.
             "episodes_combat_wins": self.combat_wins,
-            "episodes_combat_counted_since": self.combat_counted_since,
-            "episodes_combat_wins_all_time": match self.combat_counted_since {
-                0 => json!(self.combat_wins),
-                _ => Value::Null,
-            },
             "elapsed_seconds": self.elapsed,
             "episodes_per_second": per_second,
             "updated_at": iso8601(unix_now()),
             "stale": stale,
             // What the population is RANKED by, what a gate, an audit, a
             // probe and the sampler COUNT as a success, and what a fight that
-            // did the enemy no net harm is worth. A run whose configuration
-            // predates any of the three reads back as the combat scorer gated
-            // on combat wins with no penalty, which is what it was in fact
-            // trained under; the block is absent only when the binary serving
-            // the document predates the field entirely.
+            // did the enemy no net harm is worth. Always present: a run that
+            // predates any of the three cannot be resumed by this build at all.
             //
             // `gate` is what every other success number here means. When it is
             // "crew-lead", each wins/games/win_rate/lower_bound field below,
@@ -206,22 +165,23 @@ impl Trainer {
             "scoring": self.config.scoring.to_json(),
             // The board every generation trains on, in full, from generation
             // one. There is no schedule to report and nothing here is earned:
-            // `total_matchups` is what is ACTIVE, never what is mastered.
+            // `total_matchups` is what is ACTIVE, never what is mastered. The
+            // target it is judged against is stated in `overall`, beside the
+            // numbers it judges.
             "board": {
-                "total_matchups": board.len(),
-                "target": target,
-                "evaluation_scope": "overall-balanced"
+                "total_matchups": board.len()
             },
+            // What the champion IS. What it has been shown to do is `overall`
+            // and nothing here restates it: the held-out numbers were reported
+            // in both places, word for word, off the same evidence.
+            //
+            // No champion means no topology, so every figure is null rather
+            // than zero: a zero here would read as a graph with no nodes.
             "champion": match self.champion.as_ref() {
-                None => json!({"id": "", "validated_wins": 0, "validated_games": 0,
-                               "win_rate": Value::Null, "lower_bound": Value::Null,
-                               "nodes": 0, "connections": 0}),
+                None => json!({"id": Value::Null, "nodes": Value::Null,
+                               "connections": Value::Null, "hidden_nodes": Value::Null}),
                 Some(genome) => json!({
                     "id": genome.fingerprint(),
-                    "validated_wins": aggregate.wins,
-                    "validated_games": aggregate.games,
-                    "win_rate": number(aggregate.rate()),
-                    "lower_bound": number(aggregate.lower_bound()),
                     "nodes": genome.nodes.len(),
                     "connections": genome.enabled_count(),
                     "hidden_nodes": genome.hidden_count()
@@ -251,34 +211,21 @@ impl Trainer {
                 // capacity ceiling, not an observation.
                 "workers": self.pool.workers(),
                 "duty_cycle": self.config.duty,
-                // Extensions: what the cap covers, and what it actually came to.
-                "covers": ["training", "readiness", "audit", "confirm"],
+                // Extension: what the cap actually came to.
                 "measured_duty": number((self.elapsed > 0.0)
                     .then(|| self.compute / self.elapsed)),
                 "compute_seconds": self.compute,
                 "episode_ticks": self.config.ticks,
                 "nice": self.nice
             },
-            // The round in flight, if one is. `spent` and `panel` are games,
-            // not matchups: the gate is one number over a distribution.
-            "audit": match self.auditing_now() {
-                None => json!({"round": Value::Null, "spent": 0,
-                               "panel": self.config.broad.games(),
-                               "max_losses": max_losses(self.config.broad.games() as u32, target)}),
-                Some((round, spent, panel)) => json!({
-                    "round": round.as_str(), "spent": spent,
-                    "panel": panel,
-                    "max_losses": max_losses(panel, target)
-                }),
-            },
+            // The round in flight is `overall.round`, and how far it has got is
+            // `overall.wins` over `overall.games`. There is no second place
+            // that says it.
             "readiness": {
                 "threshold": self.config.readiness_threshold,
                 "games": self.config.readiness_games,
                 "last_rate": number(self.last_validation),
-                "period": self.config.readiness_period,
-                // One meaning only: is this champion worth spending a held-out
-                // balanced round on. It is never evidence for one.
-                "purpose": "balanced readiness"
+                "period": self.config.readiness_period
             },
             "history": self.history.iter().map(|row| json!({
                 "generation": row.generation,
@@ -315,7 +262,9 @@ impl Trainer {
     /// One row per ordered matchup. Every number here is TRAINING exposure:
     /// how much of the panel a cell attracts, how many decayed games it has
     /// and how they went. None of it is held-out evidence and none of it gates
-    /// anything, so no row is ever "mastered".
+    /// anything, so no row carries a verdict: a cell with no games reads as a
+    /// null win rate over zero games, which is the whole of what is known
+    /// about it.
     fn matchups(&self, board: &[Cell]) -> Vec<Value> {
         board
             .iter()
@@ -325,8 +274,7 @@ impl Trainer {
                     "us": cell.our_ship().name(),
                     "them": cell.their_ship().name(),
                     "opponent_type": cell.foe.as_str(),
-                    "status": if stat.games > 0.0 { "learning" } else { "unseen" },
-                    "sample_weight": broad::weight(&self.config.broad, &stat),
+                    "sample_weight": broad::weight(&stat),
                     "training_games": stat.games,
                     "training_win_rate": number(
                         stat.games.gt(&0.0).then(|| stat.wins / stat.games)

@@ -45,14 +45,13 @@ COMMANDS
   serve          Serve an existing run's last checkpoint without training.
   oracle         Genome oracle: NDJSON in, one {\"outputs\":[13]} line per step.
   bench          Time a few fights and report episodes per second.
-  help           This text.
+  help           This text, which --help and -h also print.
 
-RUN OPTIONS
+SESSION OPTIONS
   --root <path>            Repository root that holds artifacts/ and scripts/.
                            Default: the current directory.
   --run <id>               Run identifier. start defaults to a timestamp,
                            resume and status default to the newest run.
-  --seed <n>               Master seed. Default: derived from the run id.
   --port <n>               Loopback port for the dashboard. Default 8788.
   --no-server              Train without listening on anything.
   --allow-rebuild          Resume even though this binary differs from the one
@@ -65,89 +64,77 @@ BUDGET OPTIONS (a bounded local run stops on whichever arrives first)
   --episodes <n>           Stop after this many simulated fights.
   --minutes <n>            Stop after this much wall time.
 
-RESOURCE OPTIONS
-  --duty <0..1>            Fraction of wall time the evaluator may compute.
-                           The share of WALL TIME the trainer may be computing
+RESOURCE OPTIONS (this invocation only; never part of the trajectory)
+  --duty <0..1>            Share of WALL TIME the evaluator may be computing
                            in, not a share of a core: with --workers 9 it paces
-                           all nine. Default 0.5, which at the default single
-                           worker is one half of one core.
+                           all nine. Default 0.5.
   --workers <n>            Threads evaluating fights. Default 1, which spawns
-                           no threads at all. Limited to max(1, cores - 1): a
-                           larger request is REJECTED, not quietly reduced. The
-                           spare core is capacity left for whatever launched
-                           the trainer, not a reservation; nothing is pinned
-                           and the OS still places every thread. A single-core
-                           host therefore gets one worker and no spare.
-                           Training and readiness probing use the pool; audit
-                           and confirmation rounds stay serial because they
-                           stop fighting the moment the result is settled. A
-                           pure resource knob: the same run at any worker count
-                           plays the same fights in the same order and reaches
-                           the same state.
-  --nice <n>               Scheduling penalty applied to this process.
-                           Default 10. Use 0 to leave the priority alone.
-                           Applies to the pool: workers inherit it.
+                           no threads at all. Limited to max(1, cores - 1), and
+                           a larger request is REJECTED rather than quietly
+                           reduced. Nothing is pinned; the spare core is
+                           capacity left for whatever launched the trainer, not
+                           a reservation. Training and readiness probing use
+                           the pool, held-out rounds stay serial. The same run
+                           at any worker count plays the same fights in the
+                           same order and reaches the same state.
+  --nice <n>               Scheduling penalty applied to this process, which
+                           the pool inherits. Default 10; 0 leaves it alone.
 
 TRAINING OPTIONS
+  Stored in the run, because every one of them changes what its stored numbers
+  mean. A resume reports the value on disk rather than obeying the command
+  line; start a new run to change one.
+  --seed <n>               Master seed. Default: derived from the run id.
   --population <n>         Genomes per generation. Default 300.
   --panel <n>              Fights each genome plays per generation. Default 32.
-                           Half are drawn by a balanced rotation over the whole
-                           board, half adaptively.
-  --coverage <0..1>        Share of the panel reserved for the balanced
-                           rotation. Default 0.5.
+  --coverage <0..1>        Share of that panel drawn by the balanced rotation
+                           over the board; the rest is drawn adaptively, on the
+                           champion's own decayed per-matchup record. Default
+                           0.5.
   --ticks <n>              Display ticks a fight may take. Default 3600, which
                            is one minute of melee. A timeout is never a win.
-  --rating <name>          standard, good or awesome. Default awesome.
-  --fitness <name>         What the population is RANKED by. Default combat,
-                           which is the scorer every existing run used and the
-                           meaning of a configuration that names none.
+  --rating <name>          Cyborg skill in the other seat: standard, good or
+                           awesome. Default awesome, which is what the gate is
+                           graded against.
+  --fitness <name>         What the population is RANKED by. This selects; it
+                           does NOT gate. Default combat.
                              combat      a win, plus crew advantage, plus speed.
                              crew-ratio  (our surviving crew / our starting
                                          crew) divided by the same fraction for
-                                         them. No win, kill, survival or time
-                                         term at all, so a slower fight with the
-                                         same end state scores identically. A
-                                         score of 1 means both sides kept the
-                                         same PERCENTAGE of the crew they
-                                         started with; it is a raw ratio, not a
-                                         win rate. Fractions are of STARTING
-                                         crew, so a hull that gains crew may
-                                         legitimately go above 1. Wiping them
-                                         out while we still have crew scores
-                                         1000, a mutual wipeout scores 1, and
-                                         being wiped out ourselves scores 0.
-                           This selects; it does NOT gate. What opens a gate is
-                           --gate, which is a separate choice.
-  --gate <name>            What the audit round, the confirmation round, the
-                           readiness probe and the sampler's own weakness
-                           statistics all COUNT as a success. Default
-                           combat-wins, which is what every existing run was
-                           gated on and the meaning of a configuration that
-                           names none.
+                                         them, with no win, kill, survival or
+                                         time term at all, so a slower fight
+                                         with the same end state scores
+                                         identically. A raw ratio, not a win
+                                         rate: 1 means both sides kept the same
+                                         PERCENTAGE of the crew they started
+                                         with, a hull that gains crew may go
+                                         above 1, wiping them out while we
+                                         still have crew scores 1000, a mutual
+                                         wipeout 1, and being wiped out 0.
+  --gate <name>            What a held-out round, the readiness probe and the
+                           sampler's own statistics COUNT as a success.
+                           Default combat-wins.
                              combat-wins  an actual won-and-resolved fight. A
-                                          timeout is not a win and never opens
-                                          a gate.
+                                          timeout is not a win.
                              crew-lead    we ended STRICTLY ahead on surviving
                                           fraction of STARTING crew, compared
-                                          as an exact integer cross product.
-                                          Every tie fails, a mutual wipeout
-                                          included. A fight that hit the tick
+                                          as an exact integer cross product, so
+                                          every tie fails and a mutual wipeout
+                                          with it. A fight that hit the tick
                                           ceiling while we were ahead IS a
                                           success, which is the whole
                                           difference from counting victories.
                            Under crew-lead every win-named rate this run
-                           reports counts LEADS, not wins. The factual combat
-                           victory count is published separately and is never
-                           affected by this flag.
+                           reports counts LEADS. The factual combat victory
+                           count is published separately and this flag never
+                           touches it.
   --no-damage-penalty <m>  Score a fight that left the enemy no worse off at
                            -m instead of whatever the scorer would have said.
-                           Default 0, which switches the penalty off entirely
-                           and is what every existing run means. Leaving them
-                           no worse off is an ENDPOINT comparison, their final
-                           crew against their starting crew, not an
-                           attribution of damage:
-                           crew we did kill and they then regained counts as no
-                           net loss. Independent of --fitness and of --gate.
+                           Default 0, which switches the penalty off. No worse
+                           off is an ENDPOINT comparison, their final crew
+                           against their starting crew, so crew we did kill and
+                           they then regained counts as no net loss.
+                           Independent of --fitness and of --gate.
   --overall-pairs <n>      Ordered pairs in one held-out round; each is played
                            in both seats, so the round is twice this many games.
                            Must be a multiple of 25. Default 500, giving a
@@ -166,15 +153,16 @@ NOTES
   POST /api/control {\"action\":\"pause\"|\"resume\"|\"stop\"}, GET / and
   GET /dashboard.js from scripts/mario. There is no option that exposes it.
 
-  ANY VERSUS ANY is the only mode. All 625 ordered matchups are active from the
-  first generation and the graded question is ONE question: does the frozen
-  champion clear the target on a BALANCED any-versus-any distribution against
-  the Awesome cyborg? A held-out audit round and a disjoint confirmation round
-  must each clear a Wilson lower bound above the target, every game including
-  timeouts counts as played, and per-hull numbers are reported next to the
-  aggregate as blind-spot diagnostics that gate nothing. Paired seat outcomes
-  are correlated, so this is an operational confidence check on the aggregate,
-  not a formal guarantee about every matchup.
+  ANY VERSUS ANY is the only mode, so there is no flag that selects one. All
+  625 ordered matchups are active from the first generation and the graded
+  question is ONE question: does the frozen champion clear the target on a
+  BALANCED any-versus-any distribution against the cyborg? A held-out audit
+  round and a disjoint confirmation round must each clear a Wilson lower bound
+  above the target, every game including timeouts counts as played, and
+  per-hull numbers are reported next to the aggregate as blind-spot diagnostics
+  that gate nothing. Paired seat outcomes are correlated, so this is an
+  operational confidence check on the aggregate, not a formal guarantee about
+  every matchup.
 ";
 
 pub struct Options {
@@ -389,9 +377,10 @@ const PUBLISH_EVERY: Duration = Duration::from_secs(1);
 ///
 /// A checkpoint is the whole run: population, disabled genes, both random
 /// streams, species, innovation book, the sampler's decayed statistics and the
-/// champion's held-out evidence, tens of megabytes of it. Writing that at every generation boundary spends most of a
-/// generation's wall clock in the writer while the evaluation pool sits idle,
-/// and buys back only the few generations a crash would cost. Every fifth
+/// champion's held-out evidence, tens of megabytes of it. Writing that at every
+/// generation boundary spends most of a generation's wall clock in the writer
+/// while the evaluation pool sits idle, and buys back only the few generations
+/// a crash would cost. Every fifth
 /// boundary, with [`SAVE_AT_LEAST_EVERY`] underneath it and an unconditional
 /// save on the way out, bounds that loss without paying for it continuously.
 const SAVE_EVERY_GENERATIONS: u32 = 5;
@@ -402,7 +391,7 @@ const SAVE_AT_LEAST_EVERY: Duration = Duration::from_secs(60);
 /// Options that belong to a RUN rather than to one session of it. Changing any
 /// of them would change the trajectory, so a resume keeps the stored value and
 /// says so instead of quietly obeying the command line.
-const RUN_OWNED_FLAGS: [&str; 13] = [
+const RUN_OWNED_FLAGS: [&str; 14] = [
     "--population",
     "--panel",
     "--coverage",
@@ -424,8 +413,12 @@ const RUN_OWNED_FLAGS: [&str; 13] = [
     // different claims.
     "--overall-pairs",
     "--overall-target",
+    // And the probe, all three of it. A probe decides when a round is opened
+    // and with what evidence, so its size, its trigger and its period are all
+    // recorded with the history of rates they produced.
     "--readiness-games",
     "--readiness-threshold",
+    "--readiness-period",
 ];
 
 /// Set by the signal handler. The supervisor notices it at the next safe point
@@ -951,6 +944,96 @@ mod tests {
 
     fn args(raw: &[&str]) -> Vec<String> {
         raw.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Every flag [`parse`] accepts, with a value that satisfies it.
+    ///
+    /// The help text and this list are checked against each other in both
+    /// directions, because the two ways they drift are both bad and only one of
+    /// them is obvious. A flag documented after its mechanism was deleted reads
+    /// as a knob an operator can turn and silently is not one; a flag the
+    /// parser accepts but the help never mentions can only be found by reading
+    /// the source.
+    const EVERY_FLAG: [(&str, Option<&str>); 26] = [
+        ("--root", Some(".")),
+        ("--run", Some("a-run")),
+        ("--seed", Some("1")),
+        ("--port", Some("8788")),
+        ("--no-server", None),
+        ("--allow-rebuild", None),
+        ("--help", None),
+        ("--generations", Some("1")),
+        ("--episodes", Some("1")),
+        ("--minutes", Some("1")),
+        ("--duty", Some("0.5")),
+        ("--workers", Some("1")),
+        ("--nice", Some("0")),
+        ("--population", Some("8")),
+        ("--panel", Some("4")),
+        ("--coverage", Some("0.5")),
+        ("--ticks", Some("100")),
+        ("--rating", Some("good")),
+        ("--fitness", Some("combat")),
+        ("--gate", Some("crew-lead")),
+        ("--no-damage-penalty", Some("0")),
+        ("--overall-pairs", Some("25")),
+        ("--overall-target", Some("0.8")),
+        ("--readiness-games", Some("4")),
+        ("--readiness-threshold", Some("0.5")),
+        ("--readiness-period", Some("2")),
+    ];
+
+    /// Every `--flag` token the help mentions, with the punctuation that
+    /// follows one in prose trimmed off.
+    fn flags_in_help() -> std::collections::BTreeSet<String> {
+        HELP.split_whitespace()
+            .filter(|word| word.starts_with("--"))
+            .map(|word| word.trim_end_matches(['.', ',', ';', ':', '?', ')']).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn every_documented_flag_is_wired_and_every_wired_flag_is_documented() {
+        let documented = flags_in_help();
+        for (flag, value) in EVERY_FLAG {
+            let mut typed = vec!["start", flag];
+            typed.extend(value);
+            parse(&args(&typed)).unwrap_or_else(|error| {
+                panic!("{flag} is documented but the parser refused it: {error}")
+            });
+            assert!(documented.contains(flag), "{flag} is wired but undocumented");
+        }
+        // And nothing is documented that the parser would reject, which is the
+        // failure a deleted mechanism leaves behind.
+        let wired: std::collections::BTreeSet<&str> =
+            EVERY_FLAG.iter().map(|(flag, _)| *flag).collect();
+        for flag in &documented {
+            assert!(
+                wired.contains(flag.as_str()),
+                "{flag} is documented but no longer does anything"
+            );
+        }
+    }
+
+    /// The help promises that everything under TRAINING OPTIONS is reported
+    /// rather than obeyed on a resume. That promise is [`RUN_OWNED_FLAGS`], so
+    /// the two have to be the same set: a flag listed there and missing from
+    /// the constant would be silently ignored on every resume.
+    #[test]
+    fn the_help_section_that_promises_run_ownership_lists_exactly_the_run_owned_flags() {
+        let at = HELP.find("TRAINING OPTIONS").expect("the section exists");
+        let end = HELP[at..].find("\nNOTES").expect("NOTES follows it") + at;
+        let documented: std::collections::BTreeSet<String> = HELP[at..end]
+            .split_whitespace()
+            .filter(|word| word.starts_with("--"))
+            .map(|word| word.trim_end_matches(['.', ',', ';', ':', '?', ')']).to_string())
+            .collect();
+        let owned: std::collections::BTreeSet<String> =
+            RUN_OWNED_FLAGS.iter().map(|f| f.to_string()).collect();
+        assert_eq!(
+            documented, owned,
+            "the run-owned help section and RUN_OWNED_FLAGS disagree"
+        );
     }
 
     #[test]

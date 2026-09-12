@@ -234,16 +234,10 @@ pub struct Trainer {
     /// Actual won-and-resolved fights, counted whatever the configured gate
     /// criterion is. Under `crew-lead` every other success count in the run
     /// means something else, so this is the only number that may be called a
-    /// combat win. See [`Trainer::combat_counted_since`] for the window it
-    /// covers: the pair is meaningless apart.
+    /// combat win. It covers the whole run, always: it is seeded at zero and
+    /// only ever incremented, and a document that predates it is refused by
+    /// schema version rather than resumed with a partial window.
     pub combat_wins: u64,
-    /// The episode total at which `combat_wins` began counting. Zero for a
-    /// fresh run, so its count is exact and covers all time. A checkpoint
-    /// written before this counter existed carries no history for it, and a
-    /// resume of one starts the window at whatever episode total it arrived
-    /// with rather than pretending the missing history was zero wins; the
-    /// status document then reports no all-time figure at all.
-    pub combat_counted_since: u64,
     /// Wall-clock seconds spent inside the run loop, work and governor rest
     /// together, accumulated across every resume.
     pub elapsed: f64,
@@ -339,7 +333,6 @@ impl Trainer {
             episodes: 0,
             unresolved: 0,
             combat_wins: 0,
-            combat_counted_since: 0,
             elapsed: 0.0,
             compute: 0.0,
             audit_attempt: 0,

@@ -110,7 +110,9 @@ impl Outcome {
     /// among wins the crew advantage (<= 0.2) outranks speed (<= 0.02). There
     /// are no large legacy constants and nothing rewards a timeout.
     pub fn fitness(&self, ticks: i64) -> f64 {
-        (self.won as u8 as f64) + 0.2 * self.crew_advantage() + 0.02 * self.promptness(ticks)
+        WIN_WEIGHT * self.won as u8 as f64
+            + CREW_WEIGHT * self.crew_advantage()
+            + SPEED_WEIGHT * self.promptness(ticks)
     }
 
     /// Our surviving fraction of OUR starting crew. Not a fraction of maximum

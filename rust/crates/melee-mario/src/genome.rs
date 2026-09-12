@@ -32,9 +32,6 @@ pub const N_MEMORY: usize = 8;
 /// First identifier of each range. Inputs start at zero.
 pub const OUTPUT_BASE: u32 = N_INPUT; // 57
 pub const HIDDEN_BASE: u32 = N_INPUT + N_OUTPUT; // 70
-/// The bias input is the last input slot and is always driven with 1.0.
-pub const BIAS_INPUT: u32 = N_INPUT - 1; // 56
-
 pub const SCHEMA_VERSION: i64 = 1;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]

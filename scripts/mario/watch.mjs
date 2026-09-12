@@ -263,7 +263,6 @@ function snapshot(at, result, proc) {
     return { t: at, ok: false, error: result.error };
   }
   const s = result.status ?? {};
-  const curriculum = s.curriculum ?? {};
   const overall = s.overall ?? null;
   const checkpoint = s.checkpoint ?? {};
   const sampler = s.sampler ?? null;
@@ -284,24 +283,16 @@ function snapshot(at, result, proc) {
     eps: num(s.episodes_per_second),
     updated_at: str(s.updated_at),
     stale: s.stale === true,
-    stage: num(curriculum.stage),
-    ladder: str(curriculum.ladder),
-    scope: str(curriculum.evaluation_scope),
-    origin_run: str(curriculum.origin_run_id),
     champion: str(s.champion?.id),
     scoring: {
       fitness: str(scoring.fitness) ?? "combat",
       gate: str(scoring.gate) ?? "combat-wins",
       no_damage_penalty: num(scoring.no_damage_penalty) ?? 0,
     },
-    // Factual resolved victories, kept apart from every gate tally above. The
-    // all-time figure is null whenever the counter started part-way through a
-    // run, in which case the partial count and its baseline are what exist.
-    combat: {
-      wins: num(s.episodes_combat_wins),
-      counted_since: num(s.episodes_combat_counted_since),
-      wins_all_time: num(s.episodes_combat_wins_all_time),
-    },
+    // Factual resolved victories over the whole run, kept apart from every
+    // gate tally above: under a crew-lead gate those count leads, and this
+    // counts kills.
+    combat_wins: num(s.episodes_combat_wins),
     episodes_unresolved: num(s.episodes_unresolved),
     overall: overall
       ? {
@@ -402,16 +393,6 @@ function alertsFor(current, previous, memory, options, now) {
     add("phase_changed", "info", `phase ${previous.phase} -> ${current.phase}`);
   }
   if (previous && previous.ok) {
-    if (previous.ladder !== current.ladder || previous.scope !== current.scope) {
-      add(
-        "curriculum_changed",
-        "info",
-        `curriculum ${previous.ladder ?? "?"}/${previous.scope ?? "?"} -> ${current.ladder ?? "?"}/${current.scope ?? "?"}`,
-      );
-    }
-    if (previous.stage !== current.stage) {
-      add("stage_changed", "info", `stage ${previous.stage} -> ${current.stage}`);
-    }
     if (previous.champion !== current.champion) {
       add("champion_changed", "info", `champion ${previous.champion ?? "none"} -> ${current.champion ?? "none"}`);
     }
@@ -487,7 +468,6 @@ function describe(record) {
     `gen ${record.generation ?? "?"}`,
     `${record.episodes ?? "?"} episodes`,
   ];
-  if (record.ladder) parts.push(record.ladder);
   // Named on every line, because "12/40" means a different measurement under
   // each criterion and a log line is read long after the run is over.
   if (record.scoring?.gate) {
@@ -511,14 +491,9 @@ function describe(record) {
       `ready probe ${(record.readiness.last_rate * 100).toFixed(1)}% of ${record.readiness.games ?? "?"}`,
     );
   }
-  // Only the all-time figure may be read as the run's total. A partial count
-  // is printed with the baseline it started from, never bare.
-  if (record.combat?.wins_all_time !== null && record.combat?.wins_all_time !== undefined) {
-    parts.push(`${record.combat.wins_all_time} actual combat wins`);
-  } else if (record.combat?.wins !== null && record.combat?.wins !== undefined) {
-    parts.push(
-      `${record.combat.wins} actual combat wins since episode ${record.combat.counted_since ?? 0}`,
-    );
+  // The run's total, whatever the gate counts.
+  if (record.combat_wins !== null && record.combat_wins !== undefined) {
+    parts.push(`${record.combat_wins} actual combat wins`);
   }
   if (record.sampler?.cursor !== null && record.sampler?.cursor !== undefined) {
     parts.push(`cursor ${record.sampler.cursor}`);

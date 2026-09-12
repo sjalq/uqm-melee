@@ -88,17 +88,23 @@ fn a_fresh_run_opens_on_the_whole_board_and_claims_nothing() {
     let status = status_of(&trainer);
     assert_eq!(status["schema_version"], melee_mario::status::SCHEMA_VERSION);
     assert_eq!(status["board"]["total_matchups"], 625);
-    assert_eq!(status["board"]["evaluation_scope"], "overall-balanced");
-    assert_eq!(status["readiness"]["purpose"], "balanced readiness");
-    // Every ordered matchup is listed, and not one of them has been seen.
+    // Every ordered matchup is listed, and not one of them has been seen: a
+    // cell with no games has a null win rate over zero games, and carries no
+    // verdict of any kind.
     let matchups = status["matchups"].as_array().unwrap();
     assert_eq!(matchups.len(), 625);
-    assert!(matchups.iter().all(|row| row["status"] == "unseen"));
+    assert!(matchups.iter().all(|row| row["training_games"] == 0.0));
     assert!(matchups.iter().all(|row| row["training_win_rate"].is_null()));
-    // Nothing is claimed: no aggregate has been measured yet.
+    assert!(matchups.iter().all(|row| row.get("status").is_none()));
+    // Nothing is claimed: no aggregate has been measured yet, and there is no
+    // champion, so its topology is absent rather than a graph of no nodes.
     assert_eq!(status["overall"]["games"], 0);
     assert_eq!(status["overall"]["passed"], false);
     assert!(status["overall"]["passed_by"].is_null());
+    assert!(status["overall"]["champion_id"].is_null());
+    for field in ["id", "nodes", "connections", "hidden_nodes"] {
+        assert!(status["champion"][field].is_null(), "champion.{field}");
+    }
     assert_eq!(status["ship_performance"].as_array().unwrap().len(), 0);
     // The seeding event says what the run actually is.
     let seeded = trainer
@@ -254,12 +260,31 @@ fn the_gate_runs_for_real_and_the_status_document_stays_honest() {
 
     assert_eq!(status["sampler"]["panel"], 4);
     assert_eq!(status["sampler"]["coverage"], 0.5);
-    // No matchup is ever "mastered": nothing in this run gates per cell.
-    assert!(status["matchups"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|row| row["status"] == "learning" || row["status"] == "unseen"));
+    // No matchup carries a verdict at all, because nothing in this run gates
+    // per cell: a row is training exposure and says only how much of it there
+    // has been.
+    for row in status["matchups"].as_array().unwrap() {
+        let fields: Vec<&String> = row.as_object().unwrap().keys().collect();
+        assert_eq!(
+            fields,
+            [
+                "opponent_type",
+                "sample_weight",
+                "them",
+                "training_games",
+                "training_win_rate",
+                "us"
+            ],
+            "a matchup row grew a field that could be read as a verdict"
+        );
+    }
+    // Nor is the champion's held-out evidence restated on the champion: it is
+    // stated once, in `overall`.
+    for stale in ["validated_wins", "validated_games", "win_rate", "lower_bound"] {
+        assert!(status["champion"].get(stale).is_none(), "champion.{stale}");
+    }
+    // And the round in flight is reported in exactly one place.
+    assert!(status.get("audit").is_none());
 
     // Every number in the document is finite or explicitly absent.
     let mut stack = vec![&status];

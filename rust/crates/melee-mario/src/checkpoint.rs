@@ -8,9 +8,16 @@
 //!
 //! Schema 2 dropped the staged ladder and renumbered the board onto
 //! `ALL_SHIPS`, so the same cell indices name different hulls than they did
-//! under schema 1. There is no migration and none is possible: a schema 1
-//! document is refused by version, loudly, rather than read as a run about
-//! matchups that were never played.
+//! under schema 1. Schema 3 dropped the combat-win WINDOW, which only ever
+//! held anything for a document written before that counter existed, and with
+//! it every "this field may be missing" branch the decoder carried: a
+//! schema 3 document is written by [`Trainer::to_json`] and therefore has
+//! every field that function writes.
+//!
+//! There is no migration between any two of them and none is possible. An
+//! older document is refused BY VERSION, with a message that names both
+//! versions, rather than half loaded as a run about matchups that were never
+//! played.
 
 use crate::broad::{Cell, Evaluation, Opponent, Overall, Source};
 use crate::episode::Task;
@@ -24,8 +31,10 @@ use std::collections::VecDeque;
 
 /// Bumped when the meaning of a stored field changes. Schema 1 described the
 /// staged ladder and numbered cells by an expansion order that no longer
-/// exists, so it is refused rather than reinterpreted.
-pub const SCHEMA_VERSION: i64 = 2;
+/// exists; schema 2 still carried the combat-win window and the optional
+/// fields that went with the era before it. Both are refused rather than
+/// reinterpreted.
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub fn task_json(task: &Task) -> Value {
     json!([task.cell.encode(), task.swap, task.seed, task.ticks])
@@ -143,7 +152,6 @@ impl Trainer {
             "episodes": self.episodes,
             "unresolved": self.unresolved,
             "combat_wins": self.combat_wins,
-            "combat_counted_since": self.combat_counted_since,
             "elapsed_seconds": self.elapsed,
             "compute_seconds": self.compute,
             "audit_attempt": self.audit_attempt,
@@ -155,19 +163,37 @@ impl Trainer {
         })
     }
 
+    /// A version mismatch is reported on its own terms, naming both versions,
+    /// because it is the one failure an operator can act on: there is no
+    /// migration, so the answer is to start a new run rather than to look for
+    /// corruption that is not there. Everything else the decoder refuses is a
+    /// document that claims to be this schema and is not self-consistent.
     pub fn from_json(value: &Value) -> Result<Trainer, String> {
+        let schema = value.get("schema_version").and_then(Value::as_i64);
+        let engine = value.get("version").and_then(Value::as_str);
+        if schema != Some(SCHEMA_VERSION) || engine != Some(ENGINE_VERSION) {
+            return Err(format!(
+                "this checkpoint is {} schema {}, and this build reads {ENGINE_VERSION} \
+                 schema {SCHEMA_VERSION}. Its fields do not mean what this build would read \
+                 them as, there is no migration, and half loading one would resume a \
+                 different experiment. Start a new run instead.",
+                engine.unwrap_or("an unnamed engine"),
+                schema.map_or_else(|| "(none)".to_string(), |n| n.to_string())
+            ));
+        }
         decode(value).ok_or_else(|| {
-            "checkpoint does not describe a resumable run of this engine version".into()
+            format!(
+                "this checkpoint claims {ENGINE_VERSION} schema {SCHEMA_VERSION} but is not a \
+                 self-consistent run of it, so it is refused rather than repaired"
+            )
         })
     }
 }
 
+/// Decodes a document whose version [`Trainer::from_json`] has already
+/// checked. Every field [`Trainer::to_json`] writes is therefore present, so
+/// an absent one is a malformed document and not an older era to be tolerated.
 fn decode(value: &Value) -> Option<Trainer> {
-    if value.get("schema_version")?.as_i64()? != SCHEMA_VERSION
-        || value.get("version")?.as_str()? != ENGINE_VERSION
-    {
-        return None;
-    }
     let config = Config::from_json(value.get("config")?)?;
     let rng = value.get("rng")?;
     let population = Population::from_json(value.get("population")?)?;
@@ -295,48 +321,27 @@ fn decode(value: &Value) -> Option<Trainer> {
             }
         }
     }
-    // The factual combat-win counter and the window it covers are one fact in
-    // two fields, so they are decoded together and either BOTH tell a coherent
-    // story or the checkpoint is refused.
+    // The factual combat-win counter covers the whole run, always: there is no
+    // window field any more, because the only value a window ever held that
+    // was not zero came from a document written before the counter existed,
+    // and such a document is now refused by version.
     //
-    // Both absent is the one legacy case: a checkpoint written before the
-    // counter existed carries no history for it, so the window opens at the
-    // episode total it arrived with and no all-time figure is ever published
-    // for it. Anything else, one field without the other, a null, a negative,
-    // a fraction, a window that begins after the run ended, more victories
-    // than the window holds, or more victories than the run has resolved
-    // fights to give them, is a corrupt counter. Reading one of those as a
-    // known all-time zero would publish a lie quietly, so it is rejected as
-    // loudly as any other unreadable field.
+    // A null, a negative, a fraction, more victories than the run has
+    // episodes, or more victories than it has RESOLVED fights to give them,
+    // is a corrupt counter. Reading one of those as a known zero would publish
+    // a lie quietly, so it is rejected as loudly as any other unreadable
+    // field.
     //
     // Every bound below is written as a SUBTRACTION from the episode total,
     // never as a sum of two decoded counts: a malformed checkpoint may carry
     // numbers near `u64::MAX`, and a sum of those would wrap to something
     // small and pass a check it should have failed.
     let episodes = value.get("episodes")?.as_u64()?;
-    let unresolved = value.get("unresolved").and_then(Value::as_u64).unwrap_or(0);
-    let (combat_wins, combat_counted_since) =
-        match (value.get("combat_wins"), value.get("combat_counted_since")) {
-            (None, None) => (0, episodes),
-            (Some(wins), Some(since)) => {
-                let wins = wins.as_u64()?;
-                let since = since.as_u64()?;
-                // The window has to lie inside the run, and cannot hold more
-                // victories than it holds episodes.
-                if since > episodes || wins > episodes - since {
-                    return None;
-                }
-                // Whatever the window covers, the fights counted in it are a
-                // subset of the run's RESOLVED fights, so the all-time
-                // unresolved count bounds it too. This holds for a partial
-                // window exactly as for a whole one.
-                if unresolved > episodes || wins > episodes - unresolved {
-                    return None;
-                }
-                (wins, since)
-            }
-            _ => return None,
-        };
+    let unresolved = value.get("unresolved")?.as_u64()?;
+    let combat_wins = value.get("combat_wins")?.as_u64()?;
+    if unresolved > episodes || combat_wins > episodes - unresolved {
+        return None;
+    }
     // The reading the dashboard is told to show has to exist.
     let shown_exists = match broad_shown {
         None => true,
@@ -348,19 +353,12 @@ fn decode(value: &Value) -> Option<Trainer> {
         return None;
     }
     Some(Trainer {
-        evaluator: value
-            .get("evaluator")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string(),
+        evaluator: value.get("evaluator")?.as_str()?.to_string(),
         evolution: Stream::from_json(rng.get("evolution")?)?,
         sampling: Stream::from_json(rng.get("sampling")?)?,
         population,
         champion,
-        champion_rates: match value.get("champion_rates") {
-            None | Some(Value::Null) => config.neat.seed_rates,
-            Some(other) => MutationRates::from_json(other)?,
-        },
+        champion_rates: MutationRates::from_json(value.get("champion_rates")?)?,
         stats: SamplerStats::from_json(value.get("stats")?)?,
         panel,
         mode,
@@ -373,15 +371,14 @@ fn decode(value: &Value) -> Option<Trainer> {
         episodes,
         unresolved,
         combat_wins,
-        combat_counted_since,
         elapsed: value
             .get("elapsed_seconds")?
             .as_f64()
             .filter(|n| n.is_finite() && *n >= 0.0)?,
-        compute: match value.get("compute_seconds") {
-            None | Some(Value::Null) => 0.0,
-            Some(other) => other.as_f64().filter(|n| n.is_finite() && *n >= 0.0)?,
-        },
+        compute: value
+            .get("compute_seconds")?
+            .as_f64()
+            .filter(|n| n.is_finite() && *n >= 0.0)?,
         audit_attempt: value.get("audit_attempt")?.as_u64()?,
         last_validation: match value.get("last_validation") {
             None | Some(Value::Null) => None,

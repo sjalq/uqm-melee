@@ -614,12 +614,10 @@ fn crew_lead_successes_are_never_published_as_combat_wins() {
     run_units(&mut trainer, 80);
     let document = status_of(&trainer);
 
-    // The factual counter is exact for a fresh run, and is the only number
-    // here that may be called a combat win.
+    // The factual counter covers the whole run, and is the only number here
+    // that may be called a combat win.
     assert_eq!(document["scoring"]["gate"], "crew-lead");
-    assert_eq!(document["episodes_combat_counted_since"], 0);
     assert_eq!(document["episodes_combat_wins"], trainer.combat_wins);
-    assert_eq!(document["episodes_combat_wins_all_time"], trainer.combat_wins);
     assert_eq!(document["episodes_unresolved"], trainer.unresolved);
 
     // A combat win is a subset of the episodes, and every episode that was not
@@ -649,7 +647,6 @@ fn a_gated_and_penalised_run_resumes_identically_on_the_real_simulator() {
     assert!(straight.episodes > 100, "expected real fights");
     assert!(straight.population.generation >= 2, "expected generations");
     assert_eq!(straight.combat_wins, stitched.combat_wins);
-    assert_eq!(straight.combat_counted_since, 0);
     every_number_is_finite(&status_of(&straight));
 }
 
@@ -683,28 +680,81 @@ fn the_penalty_really_reaches_fitness_and_leaves_every_number_finite() {
     every_number_is_finite(&saved);
 }
 
+/// An older document is refused BY VERSION, and the refusal has to name both
+/// versions: there is no migration, so the only thing an operator can do about
+/// it is start a new run, and a message about unreadable fields would send them
+/// looking for corruption that is not there.
 #[test]
-fn a_legacy_checkpoint_without_the_combat_counter_reports_no_all_time_figure() {
-    let mut trainer = Trainer::fresh(config("legacy-counter"));
+fn an_older_schema_is_refused_by_version_with_a_message_that_names_both() {
+    let mut trainer = Trainer::fresh(config("older-schema"));
     run_units(&mut trainer, 40);
-    let mut saved = trainer.to_json();
-    let episodes = saved["episodes"].as_u64().unwrap();
-    assert!(episodes > 0, "expected real fights");
+    let good = trainer.to_json();
+    assert!(Trainer::from_json(&good).is_ok(), "the fixture must restore");
 
-    // Exactly what a checkpoint written before the counter existed looks like.
-    let object = saved.as_object_mut().unwrap();
-    object.remove("combat_wins");
-    object.remove("combat_counted_since");
+    let expected = melee_mario::checkpoint::SCHEMA_VERSION;
+    for stale in [Value::from(expected - 1), Value::from(1), Value::Null] {
+        let mut old = good.clone();
+        old["schema_version"] = stale.clone();
+        let error = Trainer::from_json(&old)
+            .err()
+            .expect("an older schema must be refused");
+        assert!(
+            error.contains(&expected.to_string()),
+            "the refusal must name the schema this build reads: {error}"
+        );
+        assert!(
+            error.contains("no migration"),
+            "the refusal must say a migration is not possible: {error}"
+        );
+        // Stated as a version problem, not as a half-read document.
+        assert!(
+            error.contains("schema"),
+            "the refusal must say which part disagreed: {error}"
+        );
+    }
 
-    let restored = Trainer::from_json(&saved).expect("a legacy checkpoint must still restore");
-    // The window opens HERE rather than claiming the missing history was zero
-    // victories, and no all-time figure is published for it.
-    assert_eq!(restored.combat_wins, 0);
-    assert_eq!(restored.combat_counted_since, episodes);
-    let document = status_of(&restored);
-    assert_eq!(document["episodes_combat_wins"], 0);
-    assert_eq!(document["episodes_combat_counted_since"], episodes);
-    assert_eq!(document["episodes_combat_wins_all_time"], Value::Null);
+    // A document of the right schema that is simply not self-consistent is a
+    // different failure and says so rather than blaming the version.
+    let mut broken = good.clone();
+    broken["episodes"] = Value::Null;
+    let error = Trainer::from_json(&broken)
+        .err()
+        .expect("a malformed run must be refused");
+    assert!(
+        error.contains("self-consistent"),
+        "a malformed document must not be reported as a version mismatch: {error}"
+    );
+}
+
+/// Every field [`Trainer::to_json`] writes is required, because a document of
+/// this schema was written by that function. Tolerating an absent one would be
+/// tolerating a truncated write.
+#[test]
+fn a_checkpoint_missing_any_field_it_was_written_with_is_refused() {
+    let mut trainer = Trainer::fresh(config("required-fields"));
+    run_units(&mut trainer, 40);
+    let good = trainer.to_json();
+    assert!(Trainer::from_json(&good).is_ok(), "the fixture must restore");
+
+    // The fields whose absence the decoder used to read as an older era.
+    for field in [
+        "combat_wins",
+        "unresolved",
+        "compute_seconds",
+        "champion_rates",
+        "evaluator",
+    ] {
+        let mut stripped = good.clone();
+        stripped
+            .as_object_mut()
+            .unwrap()
+            .remove(field)
+            .unwrap_or_else(|| panic!("{field} is not written at all"));
+        assert!(
+            Trainer::from_json(&stripped).is_err(),
+            "a checkpoint without {field} should have been refused"
+        );
+    }
 }
 
 #[test]
@@ -719,11 +769,6 @@ fn a_malformed_combat_counter_is_refused_rather_than_read_as_a_known_zero() {
     // tampering and not about the rest of the document.
     assert!(Trainer::from_json(&good).is_ok());
 
-    let strip = |field: &str| {
-        let mut document = good.clone();
-        document.as_object_mut().unwrap().remove(field);
-        document
-    };
     let set = |field: &str, value: Value| {
         let mut document = good.clone();
         document[field] = value;
@@ -731,22 +776,18 @@ fn a_malformed_combat_counter_is_refused_rather_than_read_as_a_known_zero() {
     };
 
     for (why, bad) in [
-        // Half a pair says nothing about the other half.
-        ("wins present without its window", strip("combat_counted_since")),
-        ("window present without its wins", strip("combat_wins")),
         // A null is not a count, and neither is a string or a fraction.
         ("null wins", set("combat_wins", Value::Null)),
-        ("null window", set("combat_counted_since", Value::Null)),
         ("string wins", set("combat_wins", Value::String("3".into()))),
         ("fractional wins", set("combat_wins", Value::from(1.5))),
         // as_u64 refuses a negative, which is what makes this a rejection
         // rather than a silent wrap to an enormous positive.
         ("negative wins", set("combat_wins", Value::from(-1))),
-        ("negative window", set("combat_counted_since", Value::from(-1))),
-        // A window that opens after the run ended describes no episodes.
-        ("window past the end", set("combat_counted_since", Value::from(episodes + 1))),
-        // More victories than the window can hold.
+        ("negative unresolved", set("unresolved", Value::from(-1))),
+        // More victories than the run has episodes to hold them.
         ("more wins than episodes", set("combat_wins", Value::from(episodes + 1))),
+        // More fights without a result than the run played at all.
+        ("more unresolved than episodes", set("unresolved", Value::from(episodes + 1))),
     ] {
         assert!(
             Trainer::from_json(&bad).is_err(),
@@ -754,38 +795,29 @@ fn a_malformed_combat_counter_is_refused_rather_than_read_as_a_known_zero() {
         );
     }
 
-    // More victories than the run has resolved fights to give them. The bound
-    // holds whatever window the count covers, so it is checked both ways.
-    for since in [0, 1] {
-        let mut overclaimed = good.clone();
-        overclaimed["combat_counted_since"] = Value::from(since);
-        overclaimed["combat_wins"] = Value::from(episodes - since);
-        // One more unresolved fight than the window leaves room for, so the
-        // claim exceeds the resolved bound in both cases rather than only the
-        // whole-run one.
-        overclaimed["unresolved"] = Value::from(since + 1);
-        assert!(
-            Trainer::from_json(&overclaimed).is_err(),
-            "more victories than resolved fights should have been refused \
-             for a window opening at {since}"
-        );
-    }
+    // More victories than the run has RESOLVED fights to give them: every
+    // fight it won is one it resolved, so the unresolved count bounds the
+    // victories as tightly as the episode total does.
+    let mut overclaimed = good.clone();
+    overclaimed["combat_wins"] = Value::from(episodes - 1);
+    overclaimed["unresolved"] = Value::from(2);
+    assert!(
+        Trainer::from_json(&overclaimed).is_err(),
+        "more victories than resolved fights should have been refused"
+    );
 
     // Counts near the top of the range. Every bound is a subtraction from the
     // episode total rather than a sum of two decoded counts, so none of these
     // can wrap into looking reasonable.
-    for (why, wins, since, unresolved) in [
-        ("max wins", u64::MAX, 0, 0),
-        ("max window", 0, u64::MAX, 0),
-        ("both at max", u64::MAX, u64::MAX, 0),
-        ("max unresolved", 0, 0, u64::MAX),
+    for (why, wins, unresolved) in [
+        ("max wins", u64::MAX, 0),
+        ("max unresolved", 0, u64::MAX),
+        ("both at max", u64::MAX, u64::MAX),
         // The pair that a sum would wrap to zero and wave through.
-        ("wins and unresolved summing past the range", u64::MAX, 0, 1),
-        ("wins and window summing past the range", u64::MAX, 1, 0),
+        ("wins and unresolved summing past the range", u64::MAX, 1),
     ] {
         let mut tampered = good.clone();
         tampered["combat_wins"] = Value::from(wins);
-        tampered["combat_counted_since"] = Value::from(since);
         tampered["unresolved"] = Value::from(unresolved);
         assert!(
             Trainer::from_json(&tampered).is_err(),
@@ -794,15 +826,13 @@ fn a_malformed_combat_counter_is_refused_rather_than_read_as_a_known_zero() {
     }
 
     // And the boundary case that is merely unusual, not impossible, is kept:
-    // a window covering the whole run with every resolved fight won.
+    // every fight resolved and every one of them won.
     let mut perfect = good.clone();
-    perfect["combat_counted_since"] = Value::from(0);
     perfect["unresolved"] = Value::from(0);
     perfect["combat_wins"] = Value::from(episodes);
     assert_eq!(perfect["episodes"].as_u64(), Some(episodes));
     let back = Trainer::from_json(&perfect).expect("a perfect record is possible, not malformed");
     assert_eq!(back.combat_wins, episodes);
-    assert_eq!(back.combat_counted_since, 0);
 }
 
 

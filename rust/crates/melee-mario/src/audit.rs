@@ -71,16 +71,6 @@ impl Round {
     }
 }
 
-/// How many losses a panel of `panel` games may take and still clear `target`.
-/// Reported next to the target because "lower bound above 0.8" is a much
-/// harder demand than "win rate above 0.8".
-pub fn max_losses(panel: u32, target: f64) -> u32 {
-    (0..=panel)
-        .filter(|losses| wilson_lower(panel - losses, panel).is_some_and(|b| b > target))
-        .max()
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,16 +95,15 @@ mod tests {
 
     #[test]
     fn the_bound_demands_much_more_than_an_eighty_percent_observed_rate() {
-        // This is the cost of refusing lucky passes, spelled out: on a panel of
-        // sixty-four a candidate may lose six and no more.
-        assert_eq!(max_losses(32, 0.8), 1);
-        assert_eq!(max_losses(64, 0.8), 6);
-        assert_eq!(max_losses(100, 0.8), 12);
-        assert_eq!(max_losses(8, 0.8), 0);
-        // An observed 80% never clears the bound at any practical panel size.
-        for panel in [32u32, 64, 100, 400] {
+        // An observed 80% never clears the bound at any practical panel size,
+        // which is the whole cost of refusing lucky passes.
+        for panel in [32u32, 64, 100, 400, 1000] {
             assert!(wilson_lower(panel * 8 / 10, panel).unwrap() <= 0.80);
         }
+        // On a panel of sixty-four the margin is narrow: fifty-eight of
+        // sixty-four clears the target and fifty-seven does not.
+        assert!(wilson_lower(58, 64).unwrap() > 0.80);
+        assert!(wilson_lower(57, 64).unwrap() <= 0.80);
     }
 
     #[test]
