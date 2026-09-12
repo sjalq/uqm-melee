@@ -16,6 +16,7 @@ pub mod genome;
 pub mod graph;
 pub mod neat;
 pub mod oracle;
+pub mod pool;
 pub mod rng;
 pub mod sampler;
 pub mod server;

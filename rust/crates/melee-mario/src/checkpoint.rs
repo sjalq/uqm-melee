@@ -462,6 +462,7 @@ fn decode(value: &Value) -> Option<Trainer> {
             Some(other) => Some(other.as_f64().filter(|n| n.is_finite())?),
         },
         nice: 0,
+        pool: crate::pool::Pool::new(1),
         regression_swept: value
             .get("regression_swept")
             .and_then(Value::as_u64)

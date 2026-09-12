@@ -22,6 +22,7 @@ use crate::episode::{self, Rival, ScoringConfig, Task};
 use crate::genome::Genome;
 use crate::graph::Network;
 use crate::neat::{MutationRates, NeatConfig, Population};
+use crate::pool::Pool;
 use crate::rng::{episode_seed, Stream, StreamTag};
 use crate::sampler::{self, Panel, SamplerConfig, SamplerStats};
 use melee_sim::input::CyborgRating;
@@ -32,6 +33,18 @@ use std::sync::Arc;
 pub const ENGINE_VERSION: &str = "melee-mario/1";
 const MAX_HISTORY: usize = 4000;
 const MAX_EVENTS: usize = 200;
+/// Fights a single-worker unit of training or readiness work plays. The legacy
+/// unit, kept exactly so the default configuration is the evaluator it
+/// replaced rather than a reshaped one.
+const SERIAL_PANEL: usize = 8;
+/// How many fights a unit of work queues per worker. More than one, because
+/// fights end at wildly different ticks and a worker that draws a short one
+/// should have another waiting rather than idling until the batch drains.
+const FIGHTS_PER_WORKER: usize = 4;
+/// Ceiling on candidates per unit of work, so a large pool or a tiny panel
+/// cannot stretch one unit far enough to make a pause, a stop or a status
+/// publish wait on it.
+const MAX_CANDIDATES: usize = 32;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -373,6 +386,12 @@ pub struct Trainer {
     /// current invocation rather than of the run, so it is reported from the
     /// live value and never restored from a checkpoint.
     pub nice: i32,
+    /// The evaluation pool this PROCESS is running, exactly like `nice` a
+    /// property of the invocation rather than of the run: never checkpointed,
+    /// never part of the evaluator fingerprint, and never visible in the
+    /// trajectory. Changing it changes only how fast the same fights are
+    /// played. See [`Trainer::use_workers`].
+    pub(crate) pool: Pool,
     pub history: VecDeque<HistoryRow>,
     pub events: VecDeque<Event>,
     pub saved_at: Option<String>,
@@ -381,6 +400,29 @@ pub struct Trainer {
     /// fight.
     pub(crate) cache: Option<(String, Arc<Network>)>,
     pub(crate) opponent_cache: Option<(String, Arc<Network>)>,
+}
+
+/// One fight, described entirely by owned values.
+///
+/// Nothing here borrows the trainer, holds a random stream or shares a game
+/// arena, so [`Fight::run`] is a pure function that a worker thread may
+/// evaluate in any order without the result depending on which worker took it
+/// or when. Building one is the boundary where trainer state stops.
+struct Fight {
+    task: Task,
+    ours: Arc<Network>,
+    /// The frozen self-play snapshot, resolved before the fight was queued.
+    theirs: Option<Arc<Network>>,
+    rating: CyborgRating,
+}
+
+impl Fight {
+    fn run(&self) -> episode::Outcome {
+        match &self.theirs {
+            Some(theirs) => episode::run(&self.task, &self.ours, Rival::Model(theirs)),
+            None => episode::run(&self.task, &self.ours, Rival::Cyborg(self.rating)),
+        }
+    }
 }
 
 /// What one unit of work accomplished, so the caller can pace itself.
@@ -434,6 +476,7 @@ impl Trainer {
             regression_swept: 0,
             regression_failed: 0,
             nice: 0,
+            pool: Pool::new(1),
             history: VecDeque::new(),
             events: VecDeque::new(),
             saved_at: None,
@@ -499,25 +542,83 @@ impl Trainer {
         Some(network)
     }
 
-    fn play(&mut self, task: &Task, network: &Arc<Network>) -> episode::Outcome {
-        let outcome = match task.cell.foe {
-            Opponent::Cyborg => episode::run(task, network, Rival::Cyborg(self.config.rating)),
-            Opponent::Model => match self.compiled_opponent() {
-                Some(theirs) => episode::run(task, network, Rival::Model(&theirs)),
-                // No snapshot yet: fall back to the graded opponent rather than
-                // inventing an opponent the evidence would not describe.
-                None => episode::run(task, network, Rival::Cyborg(self.config.rating)),
+    /// Replaces the evaluation pool for this process. A pure resource knob:
+    /// the same run at one worker and at nine plays the same fights in the
+    /// same order and reaches the same state, so this is safe to change on a
+    /// resume without touching the evaluator fingerprint.
+    pub fn use_workers(&mut self, workers: usize) {
+        if workers != self.pool.workers() {
+            self.pool = Pool::new(workers);
+        }
+    }
+
+    pub fn workers(&self) -> usize {
+        self.pool.workers()
+    }
+
+    /// Everything one fight needs, owned, so it can be handed to a worker
+    /// without borrowing any trainer state.
+    fn fight(&mut self, task: Task, ours: &Arc<Network>) -> Fight {
+        Fight {
+            task,
+            ours: ours.clone(),
+            // Resolved once, here on the main thread, so every fight in a
+            // batch faces the same opponent snapshot whatever order the
+            // workers take them in. No snapshot yet falls back to the graded
+            // opponent rather than inventing one the evidence would not
+            // describe.
+            theirs: match task.cell.foe {
+                Opponent::Cyborg => None,
+                Opponent::Model => self.compiled_opponent(),
             },
-        };
-        // The single choke point every episode passes through, whichever
-        // work path asked for it: training, an extra species or incumbent
-        // evaluation, a readiness probe, an audit, a confirmation, a
-        // regression sweep or a broad round. Counting here is what makes each
-        // episode count exactly once.
+            rating: self.config.rating,
+        }
+    }
+
+    /// Folds one finished fight into the run's counters.
+    ///
+    /// The single choke point every episode passes through, whichever work
+    /// path asked for it: training, an extra species or incumbent evaluation,
+    /// a readiness probe, an audit, a confirmation, a regression sweep or a
+    /// broad round. Counting here, on the main thread and in the order the
+    /// fights were queued, is what makes each episode count exactly once and
+    /// count in the same place at every worker setting. A fight computed
+    /// speculatively and then discarded never reaches this function and is
+    /// therefore never counted.
+    fn absorb(&mut self, outcome: episode::Outcome) -> episode::Outcome {
         self.episodes += 1;
         self.unresolved += !outcome.resolved as u64;
         self.combat_wins += outcome.won as u64;
         outcome
+    }
+
+    fn play(&mut self, task: &Task, network: &Arc<Network>) -> episode::Outcome {
+        let fight = self.fight(*task, network);
+        self.absorb(fight.run())
+    }
+
+    /// How many fights a unit of work should queue to keep the pool fed, and
+    /// exactly [`SERIAL_PANEL`] when there is a single worker.
+    fn fight_budget(&self) -> usize {
+        match self.pool.workers() {
+            1 => SERIAL_PANEL,
+            workers => workers * FIGHTS_PER_WORKER,
+        }
+    }
+
+    /// How many candidates one unit of training work scores.
+    ///
+    /// Exactly one on a single worker, whatever the panel size, because that
+    /// is the legacy unit and the default configuration has to remain the
+    /// evaluator it replaced rather than a rescheduled one. Only a real pool
+    /// batches, and only far enough to keep its workers fed.
+    fn candidates_per_unit(&self, panel: usize) -> usize {
+        if self.pool.workers() == 1 {
+            return 1;
+        }
+        self.fight_budget()
+            .div_ceil(panel.max(1))
+            .clamp(1, MAX_CANDIDATES)
     }
 
     /// One bounded unit of work.
@@ -553,56 +654,96 @@ impl Trainer {
         if cursor >= members {
             return self.close_panel();
         }
-        // The member being scored is looked up by index. Materialising every
+        // One member's fitness is a pure function of its genome and the panel,
+        // so several members can be in flight at once. They are queued in
+        // population order and folded back in population order, which is what
+        // keeps the trajectory identical at every worker setting: the pool
+        // changes only when the arithmetic happens, never what it is or what
+        // order it happens in.
+        let candidates = self
+            .candidates_per_unit(tasks.len())
+            .min(members - cursor);
+        // Members being scored are looked up by index. Materialising every
         // genome in the population on every unit of work was quadratic in the
         // population size, which at three hundred genomes with a hundred links
         // each was the single largest allocation cost in the loop.
-        let found = self
+        let batch: Vec<Genome> = self
             .population
             .members()
-            .nth(cursor)
-            .map(|member| member.genome.clone());
-        let Some(genome) = found else {
+            .skip(cursor)
+            .take(candidates)
+            .map(|member| member.genome.clone())
+            .collect();
+        if batch.is_empty() {
             return self.close_panel();
-        };
-        let fingerprint = genome.fingerprint();
-        let network = self.compiled(&genome);
+        }
         let champion = self.champion.as_ref().map(Genome::fingerprint);
-        // Sampler evidence follows the champion, because the sampler's job is
-        // to find where the policy we actually gate on is still weak. Before a
-        // champion exists the first member stands in for it.
-        let record = champion.map_or(cursor == 0, |c| c == fingerprint);
         let gate = self.config.scoring.gate;
-        let mut total = 0.0;
-        let mut wins = 0u32;
-        for task in &tasks {
-            let outcome = self.play(task, &network);
-            // The run's configured scorer, so every number that is compared
-            // with another, this member, the rescored incumbent and the
-            // species references drawn from them, comes from one definition.
-            total += outcome.score(self.config.scoring, ticks);
-            // The run's configured gate criterion, for the same reason: the
-            // sampler must chase weakness in the thing the run is actually
-            // graded on. Under `crew-lead` these are LEAD successes, not
-            // combat wins; `self.combat_wins` keeps the factual count.
-            wins += outcome.succeeded(gate) as u32;
+        // The strongly-connected-component pass is paid once per genome rather
+        // than once per fight, exactly as the single-candidate path did.
+        let networks: Vec<Arc<Network>> = batch
+            .iter()
+            .map(|genome| Arc::new(Network::compile(genome)))
+            .collect();
+        // The self-play snapshot is resolved once for the whole batch rather
+        // than once per fight, so every candidate in it faces the same frozen
+        // opponent and the genome is fingerprinted once instead of forty times.
+        let theirs = self.compiled_opponent();
+        let rating = self.config.rating;
+        let queued: Vec<Fight> = networks
+            .iter()
+            .flat_map(|network| tasks.iter().map(move |task| (*task, network.clone())))
+            .map(|(task, ours)| Fight {
+                task,
+                ours,
+                theirs: match task.cell.foe {
+                    Opponent::Cyborg => None,
+                    Opponent::Model => theirs.clone(),
+                },
+                rating,
+            })
+            .collect();
+        let played = queued.len();
+        let outcomes = self.pool.map(queued, |fight| fight.run());
+        for (at, genome) in batch.iter().enumerate() {
+            // Sampler evidence follows the champion, because the sampler's job
+            // is to find where the policy we actually gate on is still weak.
+            // Before a champion exists the first member stands in for it.
+            let seat = cursor + at;
+            let record = champion
+                .as_ref()
+                .map_or(seat == 0, |c| *c == genome.fingerprint());
+            let mut total = 0.0;
+            let mut wins = 0u32;
+            for (task, outcome) in tasks.iter().zip(&outcomes[at * tasks.len()..]) {
+                let outcome = self.absorb(*outcome);
+                // The run's configured scorer, so every number that is compared
+                // with another, this member, the rescored incumbent and the
+                // species references drawn from them, comes from one definition.
+                total += outcome.score(self.config.scoring, ticks);
+                // The run's configured gate criterion, for the same reason: the
+                // sampler must chase weakness in the thing the run is actually
+                // graded on. Under `crew-lead` these are LEAD successes, not
+                // combat wins; `self.combat_wins` keeps the factual count.
+                wins += outcome.succeeded(gate) as u32;
+                if record {
+                    self.stats
+                        .record(task.cell, outcome.succeeded(gate), self.config.sampler.decay);
+                }
+            }
+            let fitness = total / tasks.len().max(1) as f64;
+            if let Some(member) = self.population.members_mut().nth(seat) {
+                member.fitness = Some(fitness);
+            }
             if record {
-                self.stats
-                    .record(task.cell, outcome.succeeded(gate), self.config.sampler.decay);
+                self.last_training_wins = Some(wins as f64 / tasks.len().max(1) as f64);
             }
         }
-        let fitness = total / tasks.len().max(1) as f64;
-        if let Some(member) = self.population.members_mut().nth(cursor) {
-            member.fitness = Some(fitness);
-        }
-        if record {
-            self.last_training_wins = Some(wins as f64 / tasks.len().max(1) as f64);
-        }
         if let Some(live) = self.panel.as_mut() {
-            live.cursor += 1;
+            live.cursor += batch.len();
         }
         Unit {
-            episodes: tasks.len() as u64,
+            episodes: played as u64,
             boundary: false,
         }
     }
@@ -873,12 +1014,20 @@ impl Trainer {
             };
         }
         let network = self.compiled(&genome);
-        let batch = tasks.len().min(cursor + 8);
+        // The probe panel is fixed and played to the end, so a whole slice of
+        // it can be queued at once: no fight in the batch is speculative and
+        // every one of them is counted.
+        let batch = tasks.len().min(cursor + self.fight_budget());
         let mut played = 0;
         let mut won = wins;
         let gate = self.config.scoring.gate;
-        for task in &tasks[cursor..batch] {
-            let outcome = self.play(task, &network);
+        let queued: Vec<Fight> = tasks[cursor..batch]
+            .iter()
+            .map(|task| self.fight(*task, &network))
+            .collect();
+        let outcomes = self.pool.map(queued, |fight| fight.run());
+        for (task, outcome) in tasks[cursor..batch].iter().zip(outcomes) {
+            let outcome = self.absorb(outcome);
             // The readiness probe decides whether to spend an audit, so it has
             // to ask the same question the audit will.
             let success = outcome.succeeded(gate);

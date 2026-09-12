@@ -1,16 +1,24 @@
 //! Command line, run supervision and the duty-cycle governor.
 //!
 //! The governor is the reason this can run on a laptop that is also being used
-//! for something else. One evaluator thread, niced down, and after every unit
-//! of work the supervisor sleeps for as long as that work took, scaled by the
-//! duty fraction. That cap covers training, readiness probing, auditing and
+//! for something else. A bounded evaluation pool, niced down, and after every
+//! unit of work the supervisor sleeps for as long as that work took, scaled by
+//! the duty fraction. That cap covers training, readiness probing, auditing and
 //! the mixed self-play phase alike, because every one of them is just another
 //! unit of work in the same loop.
+//!
+//! The duty cap governs the SUPERVISOR, which is one thread: it is a fraction
+//! of wall time in which the evaluator is allowed to be computing, not a
+//! fraction of a core. At `--workers 9 --duty 1` the trainer computes all the
+//! time on up to nine cores; at `--workers 1 --duty 0.5` it computes half the
+//! time on one. The worker count and the duty cap are independent knobs and
+//! the status document reports both without multiplying them together.
 
 use crate::audit::AuditConfig;
 use crate::broad::BroadConfig;
 use crate::episode::{GateCriterion, Scoring, ScoringConfig, DEFAULT_TICKS};
 use crate::neat::NeatConfig;
+use crate::pool;
 use crate::sampler::SamplerConfig;
 use crate::server::{self, Control, Shared};
 use crate::status::Phase;
@@ -86,9 +94,26 @@ BUDGET OPTIONS (a bounded local run stops on whichever arrives first)
 
 RESOURCE OPTIONS
   --duty <0..1>            Fraction of wall time the evaluator may compute.
-                           Default 0.5, which is one half of one core.
+                           The share of WALL TIME the trainer may be computing
+                           in, not a share of a core: with --workers 9 it paces
+                           all nine. Default 0.5, which at the default single
+                           worker is one half of one core.
+  --workers <n>            Threads evaluating fights. Default 1, which spawns
+                           no threads at all. Limited to max(1, cores - 1): a
+                           larger request is REJECTED, not quietly reduced. The
+                           spare core is capacity left for whatever launched
+                           the trainer, not a reservation; nothing is pinned
+                           and the OS still places every thread. A single-core
+                           host therefore gets one worker and no spare.
+                           Training and readiness probing use the pool; audits,
+                           confirmations, regression sweeps and broad rounds
+                           stay serial because they stop fighting the moment
+                           the result is settled. A pure resource knob: the
+                           same run at any worker count plays the same fights
+                           in the same order and reaches the same state.
   --nice <n>               Scheduling penalty applied to this process.
                            Default 10. Use 0 to leave the priority alone.
+                           Applies to the pool: workers inherit it.
 
 TRAINING OPTIONS
   --population <n>         Genomes per generation. Default 300.
@@ -191,6 +216,10 @@ pub struct Options {
     pub port: u16,
     pub serve: bool,
     pub nice: i32,
+    /// Requested evaluation threads. A property of this invocation, not of the
+    /// run: never stored in the run's configuration, never fingerprinted, and
+    /// free to differ between a run and its resume.
+    pub workers: usize,
     pub generations: Option<u32>,
     pub episodes: Option<u64>,
     pub minutes: Option<f64>,
@@ -223,6 +252,7 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
         port: server::DEFAULT_PORT,
         serve: true,
         nice: 10,
+        workers: 1,
         generations: None,
         episodes: None,
         minutes: None,
@@ -280,6 +310,7 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
             "--episodes" => options.episodes = Some(parse_value(next, "--episodes")?),
             "--minutes" => options.minutes = Some(parse_value(next, "--minutes")?),
             "--duty" => options.config.duty = parse_value(next, "--duty")?,
+            "--workers" => options.workers = parse_value(next, "--workers")?,
             "--population" => options.config.neat.population = parse_value(next, "--population")?,
             "--panel" => options.config.sampler.panel = parse_value(next, "--panel")?,
             "--ticks" => options.config.ticks = parse_value(next, "--ticks")?,
@@ -325,6 +356,19 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
     }
     if !(options.config.duty > 0.0 && options.config.duty <= 1.0) {
         return Err("--duty must be greater than 0 and at most 1".into());
+    }
+    if options.workers == 0 {
+        return Err("--workers must be at least 1".into());
+    }
+    // Refused rather than reduced: an operator who asked for every core has to
+    // be told the limit, not quietly given one fewer worker than they typed.
+    let limit = pool::available();
+    if options.workers > limit {
+        return Err(format!(
+            "--workers must be at most {limit}: max(1, cores - 1) on this machine, leaving a \
+             core's worth of CAPACITY for whatever launched the trainer. Nothing is pinned to a \
+             core, so this is a bound on how much work is in flight, not an affinity reservation"
+        ));
     }
     if options.config.ticks <= 0 {
         return Err("--ticks must be positive".into());
@@ -409,8 +453,16 @@ pub fn parse(arguments: &[String]) -> Result<Options, String> {
 }
 
 /// How long the evaluator must rest after `worked` seconds of computing to
-/// hold its long-run share of one core at `duty`. Pure so the arithmetic can
-/// be checked without waiting for a clock.
+/// hold its long-run SCHEDULER-ACTIVE WALL FRACTION at `duty`: the share of
+/// wall time in which the trainer is allowed to be computing at all.
+///
+/// Not a share of one core, and not a share of the machine. With one worker
+/// the two happen to coincide, which is why a duty of 0.5 used to be described
+/// as half a core; with a pool they do not, because the same active wall
+/// fraction now covers as many cores as there are workers. The cap paces the
+/// supervisor; the worker count decides how wide each paced interval is.
+///
+/// Pure so the arithmetic can be checked without waiting for a clock.
 pub fn rest_owed(worked: Duration, duty: f64) -> Duration {
     if duty >= 1.0 {
         return Duration::ZERO;
@@ -868,6 +920,11 @@ fn supervise(options: Options) -> Result<(), String> {
     };
 
     trainer.nice = options.nice;
+    // Applied AFTER the fingerprint guard above, and deliberately not subject
+    // to it: the worker count is a resource knob like `nice`, not part of the
+    // trajectory, so a run started on one worker may be resumed on nine and
+    // back again without any of the state it reaches differing.
+    trainer.use_workers(pool::clamp(options.workers));
     let shared = Shared::new(server::asset_dir(&options.root));
     let listener = if options.serve {
         match server::bind(options.port) {
@@ -1012,7 +1069,8 @@ fn supervise(options: Options) -> Result<(), String> {
         trainer.compute += worked.as_secs_f64();
 
         // The governor. Resting for `worked * (1 - duty) / duty` holds the
-        // long-run share of one core at `duty`. The whole debt is paid, never
+        // long-run scheduler-active wall fraction at `duty`, whatever the pool
+        // is doing during it. The whole debt is paid, never
         // truncated, because truncating it is exactly how a heavy graph or a
         // long audit would creep past the cap; it is paid in short slices so a
         // pause, a stop or a signal is still noticed promptly.
