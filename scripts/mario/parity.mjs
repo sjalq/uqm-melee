@@ -35,7 +35,7 @@
 //     --new    rust/target/release/melee-mario \
 //     --arm old:1 --arm new:1 --arm new:3 \
 //     --generations 2 \
-//     --scratch /tmp/mario-parity
+//     --scratch /tmp/mario-parity        # a PARENT; a fresh child is made inside it
 //
 // `old:N` runs the binary archived beside the source checkpoint; `new:N` runs
 // --new, which needs --allow-rebuild and gets it automatically. The first arm
@@ -43,7 +43,8 @@
 
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, writeFile, copyFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile, copyFile, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const STRIPPED_TOP = ["saved_at", "evaluator", "elapsed_seconds", "compute_seconds"];
@@ -72,7 +73,9 @@ function usage(message) {
       "                     different worker counts stop at different episode counts.",
       "  --duty <0..1>      Duty cap for every arm. Default 1.",
       "  --nice <n>         Scheduling penalty for every arm. Default 10.",
-      "  --scratch <dir>    Where the arms run. Default a temp directory.",
+      "  --scratch <parent> Directory to create a fresh working directory under.",
+      "                     Default the system temp directory. The parent is never",
+      "                     removed; only the child this run creates is.",
       "  --keep             Leave the scratch roots behind for inspection.",
       "  --dry-run          Print what each arm would run and exit.",
       "",
@@ -164,8 +167,17 @@ function normalize(document) {
   if (Array.isArray(out.events)) {
     out.events = out.events
       .filter((event) => !String(event?.message ?? "").startsWith(REBUILD_NOTICE))
-      // The timestamp is when the machine got there, not what happened.
-      .map((event) => ({ message: event?.message ?? null }));
+      // Only the timestamp is dropped, and only because it says when the
+      // machine got there rather than what happened. Every other field an
+      // event carries, including ones added after this was written, stays in
+      // the comparison: a normaliser that projects a fixed shape would go
+      // quietly blind to whatever the engine starts recording next.
+      .map((event) => {
+        if (!event || typeof event !== "object") return event;
+        const kept = { ...event };
+        delete kept.at;
+        return kept;
+      });
   }
   return out;
 }
@@ -275,7 +287,11 @@ async function exists(target) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const source = path.resolve(options.source);
+  // Resolved through every symlink before anything is compared against it. A
+  // containment check on unresolved paths is not a check at all: a scratch
+  // directory that is a symlink into the source tree passes it.
+  if (!(await exists(options.source))) usage(`--source not found: ${options.source}`);
+  const source = await realpath(path.resolve(options.source));
   const runId = path.basename(source);
   options.oldBin = path.resolve(options.oldBin ?? path.join(source, "bin", "melee-mario"));
   const arms = options.arms.map(parseArm);
@@ -296,13 +312,22 @@ async function main() {
     usage(`old binary not found: ${options.oldBin}`);
   }
 
-  const scratch = path.resolve(
-    options.scratch ?? path.join(process.env.TMPDIR ?? "/tmp", `mario-parity-${process.pid}`),
-  );
-  // The source run is live evidence. Nothing here may write inside it, and the
-  // cheapest way to be sure is to refuse a scratch path underneath it.
-  if (scratch === source || scratch.startsWith(`${source}${path.sep}`)) {
-    usage("--scratch must not be inside --source; the source run is read-only evidence");
+  // --scratch names a PARENT to work under, never the directory to work in.
+  // This script deletes what it creates, so it must only ever be handed a path
+  // it created itself: a caller who points --scratch at a directory of their
+  // own keeps it, and gets a fresh child inside it. The parent is created if
+  // missing and is never removed.
+  const parent = path.resolve(options.scratch ?? tmpdir());
+  await mkdir(parent, { recursive: true });
+  const realParent = await realpath(parent);
+  const scratch = await mkdtemp(path.join(realParent, "mario-parity-"));
+  const owned = await realpath(scratch);
+  // The source run is live evidence, and nothing here may write inside it.
+  // Checked on the owned child after resolution, so a symlinked parent cannot
+  // smuggle the working directory into the source tree.
+  if (owned === source || owned.startsWith(`${source}${path.sep}`)) {
+    await rm(owned, { recursive: true, force: true });
+    usage("--scratch resolves inside --source; the source run is read-only evidence");
   }
 
   const from = path.join(source, options.from);
@@ -318,18 +343,19 @@ async function main() {
     ? `--generations ${options.generations}`
     : `--episodes ${options.episodes} (UNSAFE across worker counts)`;
   console.log(`parity: budget ${budget}, duty ${options.duty}, nice ${options.nice}`);
-  console.log(`parity: scratch ${scratch}`);
+  console.log(`parity: scratch ${owned}`);
 
   const results = [];
   for (const arm of arms) {
-    const root = path.join(scratch, arm.name);
+    const root = path.join(owned, arm.name);
     const dir = path.join(root, "artifacts", "mario", runId);
     const { binary, args } = armCommand(arm, options, runId, root);
     if (options.dryRun) {
       console.log(`parity: ${arm.name}: ${binary} ${args.join(" ")}`);
       continue;
     }
-    await rm(root, { recursive: true, force: true });
+    // The scratch child was just created, so every arm directory is new and
+    // there is nothing here to delete.
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, "checkpoint.json"), startingBytes);
     if (hasConfig) await copyFile(config, path.join(dir, "config.json"));
@@ -357,7 +383,10 @@ async function main() {
         `, ${document.episodes ?? "?"} episodes, ${sha256(canonical(stripped)).slice(0, 16)}`,
     );
   }
-  if (options.dryRun) return;
+  if (options.dryRun) {
+    await rm(owned, { recursive: true, force: true });
+    return;
+  }
 
   const baseline = results[0];
   let failed = false;
@@ -391,8 +420,10 @@ async function main() {
         `  ${speed.toFixed(2)}x baseline wall`,
     );
   }
-  if (!options.keep) await rm(scratch, { recursive: true, force: true });
-  else console.log(`parity: scratch kept at ${scratch}`);
+  // Only the directory this run created is removed, never the parent it was
+  // asked to work under.
+  if (!options.keep) await rm(owned, { recursive: true, force: true });
+  else console.log(`parity: scratch kept at ${owned}`);
   process.exit(failed ? 1 : 0);
 }
 
