@@ -27,6 +27,7 @@ import Mario.Dashboard.Copy as Copy
 import Mario.Dashboard.Format as Format
 import Mario.Dashboard.Gate as Gate
 import Mario.Dashboard.Heatmap as Heatmap
+import Mario.Dashboard.Resources as Resources
 import Mario.Dashboard.Scoring as Scoring
 import Mario.Dashboard.Slots as Slots
 import Mario.Dashboard.Tip as Tip
@@ -50,6 +51,7 @@ suite =
         , controlSuite
         , broadSuite
         , scoringSuite
+        , resourceSuite
         ]
 
 
@@ -949,6 +951,147 @@ copySuite =
                     ( True, True )
         ]
 
+
+
+
+-- RESOURCES
+--
+-- Once the evaluator can run a pool, three numbers sit beside each other
+-- that are all easy to read as each other: the thread count, the duty
+-- cycle, and the share of the machine. The duty cycle is a scheduling
+-- fraction, identical for one thread and for nine, so nine threads at a
+-- full duty cycle is nine threads' worth of capacity and not "one core",
+-- and it is not a CPU measurement in either case. Every test below pins
+-- one of those misreadings shut.
+
+
+resourcePool : Api.Resources
+resourcePool =
+    { workers = 9, dutyCycle = 1.0, measuredDuty = Just 0.97, episodeTicks = Just 1200 }
+
+
+resourceLegacy : Api.Resources
+resourceLegacy =
+    { workers = 1, dutyCycle = 0.5, measuredDuty = Just 0.355, episodeTicks = Just 1200 }
+
+
+resourceSuite : Test
+resourceSuite =
+    describe "resource caps"
+        [ describe "decoding"
+            [ test "the measured duty cycle decodes beside the configured cap rather than replacing it" <|
+                \() ->
+                    case decode """{"resources":{"workers":9,"duty_cycle":1.0,"measured_duty":0.97}}""" of
+                        Ok status ->
+                            Expect.equal
+                                ( status.resources.workers, status.resources.dutyCycle, status.resources.measuredDuty )
+                                ( 9, 1.0, Just 0.97 )
+
+                        Err error ->
+                            Expect.fail error
+            , test "an unmeasured duty cycle stays Nothing rather than becoming a measured zero" <|
+                \() ->
+                    Expect.equal
+                        ( decode """{"resources":{"workers":9,"duty_cycle":1.0}}""" |> Result.map (.resources >> .measuredDuty)
+                        , decode """{"resources":{"measured_duty":null}}""" |> Result.map (.resources >> .measuredDuty)
+                        )
+                        ( Ok Nothing, Ok Nothing )
+            , test "a run from before the pool existed still reports its single thread" <|
+                \() ->
+                    decode """{"resources":{"workers":1,"duty_cycle":0.5}}"""
+                        |> Result.map (.resources >> .workers)
+                        |> Expect.equal (Ok 1)
+            ]
+        , describe "wording"
+            [ test "a pool is counted as threads in a pool, and one thread is not called a pool" <|
+                \() ->
+                    Expect.equal
+                        ( Resources.threadsLine resourcePool, Resources.threadsLine resourceLegacy )
+                        ( "9 in the evaluator pool", "1, evaluated inline" )
+            , test "an unreported thread count is absent rather than zero threads" <|
+                \() ->
+                    Resources.threadsLine Api.empty.resources
+                        |> Expect.equal "not reported"
+            , test "the duty line separates the cap from what was measured" <|
+                \() ->
+                    Resources.dutyLine resourceLegacy
+                        |> Expect.equal "50.0% cap, 35.5% measured working"
+            , test "an unmeasured duty cycle says so rather than reporting the cap as a measurement" <|
+                \() ->
+                    Resources.dutyLine { resourceLegacy | measuredDuty = Nothing }
+                        |> Expect.equal "50.0% cap, not yet measured"
+            , test "nine threads at a full duty cycle is nine cores of capacity, never one" <|
+                \() ->
+                    Expect.equal
+                        ( Resources.budgetLine resourcePool, Resources.budgetLine resourceLegacy )
+                        ( Just "9.0 cores allowed, not measured load", Just "0.5 cores allowed, not measured load" )
+            , test "the budget is absent when either factor is unreported, rather than claiming no cores" <|
+                \() ->
+                    Expect.equal
+                        ( Resources.budgetLine Api.empty.resources
+                        , Resources.budgetLine { resourcePool | dutyCycle = 0 }
+                        )
+                        ( Nothing, Nothing )
+            , test "no resource line claims to have measured the machine's CPU" <|
+                \() ->
+                    [ Resources.threadsLine resourcePool
+                    , Resources.dutyLine resourcePool
+                    , Maybe.withDefault "" (Resources.budgetLine resourcePool)
+                    ]
+                        |> List.filter (\line -> String.contains "cpu" (String.toLower line))
+                        |> Expect.equal []
+            ]
+        , describe "tooltips"
+            [ test "the thread tip no longer promises the trainer occupies about one core" <|
+                \() ->
+                    [ Copy.resourcesWorkers, Copy.resourcesDuty, Copy.resourcesBudget ]
+                        |> List.filter (\tip -> String.contains "one core" (String.toLower tip.body))
+                        |> List.map .id
+                        |> Expect.equal []
+            , test "the duty tip says a full duty cycle is not a full pool of busy threads" <|
+                \() ->
+                    Copy.resourcesDuty.body
+                        |> String.contains "only one thread of the pool busy"
+                        |> Expect.equal True
+            , test "the budget tip calls itself a ceiling rather than a measurement" <|
+                \() ->
+                    Expect.equal
+                        ( String.contains "ceiling" Copy.resourcesBudget.body
+                        , String.contains "never a measurement" Copy.resourcesBudget.body
+                        )
+                        ( True, True )
+            , test "the thread tip says the count changes speed and not what the run finds" <|
+                \() ->
+                    Copy.resourcesWorkers.body
+                        |> String.contains "never what it finds"
+                        |> Expect.equal True
+            ]
+        , describe "on screen"
+            [ test "a nine-thread run shows the pool, both duty figures and the capacity" <|
+                \() ->
+                    expectRendered """{"run_id":"mario-ratio-staged-20260912","resources":{"workers":9,"duty_cycle":1.0,"measured_duty":0.97,"episode_ticks":1200}}"""
+                        (Expect.all
+                            [ Query.has [ Selector.text "9 in the evaluator pool" ]
+                            , Query.has [ Selector.text "100.0% cap, 97.0% measured working" ]
+                            , Query.has [ Selector.text "Compute budget" ]
+                            , Query.has [ Selector.text "9.0 cores allowed, not measured load" ]
+                            ]
+                        )
+            , test "a legacy single-threaded run renders without a pool or an invented measurement" <|
+                \() ->
+                    expectRendered """{"run_id":"mario-ratio-staged-20260912","resources":{"workers":1,"duty_cycle":0.5,"episode_ticks":1200}}"""
+                        (Expect.all
+                            [ Query.has [ Selector.text "1, evaluated inline" ]
+                            , Query.has [ Selector.text "50.0% cap, not yet measured" ]
+                            , Query.hasNot [ Selector.text "9 in the evaluator pool" ]
+                            ]
+                        )
+            , test "a run that reports no resources at all shows no compute budget row" <|
+                \() ->
+                    expectRendered """{"run_id":"mario-main-20260911"}"""
+                        (Query.hasNot [ Selector.text "Compute budget" ])
+            ]
+        ]
 
 
 -- CONTROLS

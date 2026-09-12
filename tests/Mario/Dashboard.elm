@@ -51,6 +51,7 @@ import Mario.Dashboard.Copy as Copy
 import Mario.Dashboard.Format as Format
 import Mario.Dashboard.Gate as Gate
 import Mario.Dashboard.Heatmap as Heatmap
+import Mario.Dashboard.Resources as Resources
 import Mario.Dashboard.Scoring as Scoring
 import Mario.Dashboard.Slots as Slots
 import Mario.Dashboard.Tip as Tip
@@ -3079,21 +3080,24 @@ viewMachine tips status =
         , div [ Attr.style "margin-top" "16px" ]
             [ h3 [] [ text "Resource caps" ] ]
         , dl [ class "deflist", Attr.style "margin-top" "8px" ]
-            [ dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesWorkers [ text "Threads" ] ]
-            , dd [] [ text (String.fromInt resources.workers) ]
-            , dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesDuty [ text "Duty cycle" ] ]
-            , dd []
-                [ text
-                    (if resources.dutyCycle > 0 then
-                        Format.percent1 resources.dutyCycle ++ " working"
+            ([ dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesWorkers [ text "Threads" ] ]
+             , dd [] [ text (Resources.threadsLine resources) ]
+             , dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesDuty [ text "Duty cycle" ] ]
+             , dd [] [ text (Resources.dutyLine resources) ]
+             ]
+                ++ (case Resources.budgetLine resources of
+                        Just budget ->
+                            [ dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesBudget [ text "Compute budget" ] ]
+                            , dd [] [ text budget ]
+                            ]
 
-                     else
-                        "not measured"
-                    )
-                ]
-            , dt [] [ Tip.view tips Tip.AlignStart Copy.runId [ text "Run" ] ]
-            , dd [] [ text status.runId ]
-            ]
+                        Nothing ->
+                            []
+                   )
+                ++ [ dt [] [ Tip.view tips Tip.AlignStart Copy.runId [ text "Run" ] ]
+                   , dd [] [ text status.runId ]
+                   ]
+            )
         ]
 
 

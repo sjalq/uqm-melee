@@ -45,6 +45,7 @@ module Mario.Dashboard.Copy exposing
     , opponentTypes
     , phase
     , populationSize
+    , resourcesBudget
     , resourcesDuty
     , resourcesWorkers
     , rosterOurs
@@ -152,6 +153,7 @@ allTips scoring =
     , checkpointPath
     , resourcesWorkers
     , resourcesDuty
+    , resourcesBudget
     , winRateChart scoring
     , structureChart
     , throughputChart
@@ -760,10 +762,10 @@ resourcesWorkers : Tip
 resourcesWorkers =
     t "res-workers"
         "Evaluator threads"
-        "How many evaluator threads the trainer runs. The trainer is deliberately built to occupy about one core so the machine stays usable while it works."
-        [ ( "Denominator", "None; a count." )
-        , ( "Window", "Current configuration." )
-        , ( "Source", "Run configuration." )
+        "How many evaluator threads the pool actually runs, not how many were asked for. One is the legacy single-threaded trainer. More than one means independent fights and networks are evaluated side by side; the work is still planned and reduced in the one serial order, so the count changes how fast a generation finishes and never what it finds."
+        [ ( "Denominator", "None; a count of live pool threads." )
+        , ( "Window", "Current pool." )
+        , ( "Source", "The running pool, reported rather than configured." )
         ]
 
 
@@ -771,12 +773,23 @@ resourcesDuty : Tip
 resourcesDuty =
     t "res-duty"
         "Duty cycle"
-        "The measured fraction of each batch spent working rather than resting. It is enforced by real sleeps between batches, not by a busy wait, so a duty cycle of one half means the evaluator genuinely idles half the time."
-        [ ( "Denominator", "Work time over work plus rest time per batch." )
+        "The fraction of wall time the scheduler spends working rather than resting, enforced by real sleeps between batches rather than a busy wait. It is a scheduling figure, not a CPU measurement: an unbalanced batch can be wall-active the whole time with only one thread of the pool busy, so a full duty cycle never by itself means the threads beside it are full. The cores line states the configured budget, threads multiplied by the cap, which is the capacity the run may use and not the load it is measured to draw."
+        [ ( "Denominator", "Wall time working over working plus resting, per batch." )
         , ( "Window", "Recent batches." )
-        , ( "Source", "Evaluator scheduling, measured rather than assumed." )
+        , ( "Source", "Evaluator scheduling, measured rather than assumed. Actual CPU load is measured outside the trainer." )
         ]
 
+
+
+resourcesBudget : Tip
+resourcesBudget =
+    t "res-budget"
+        "Compute budget"
+        "The threads the pool runs multiplied by the duty cap: the share of the machine this run is allowed to occupy, stated in cores. It is a ceiling the scheduler is built to respect and never a measurement of load. What the run actually draws is measured outside the trainer, and an unbalanced batch or a serial stretch will draw less than the budget while the duty cycle still reads full."
+        [ ( "Denominator", "Cores; threads multiplied by the duty cap." )
+        , ( "Window", "Current pool and configuration." )
+        , ( "Source", "Pool size and configured cap. Not a CPU measurement." )
+        ]
 
 
 -- CHARTS

@@ -336,8 +336,15 @@ function snapshot(at, result, proc) {
       games: num(readiness.games),
       threshold: num(readiness.threshold),
     },
+    // Three separate facts, never one. `workers` is the pool the engine
+    // actually runs, `duty` is the configured cap, and `duty_measured` is the
+    // scheduler's wall-active fraction, which reads the same for one thread
+    // and for nine. None of them is measured CPU: the product of the first two
+    // is the capacity the run is allowed, and real load is measured outside
+    // the trainer, so the log must not be read as saying otherwise.
     workers: num(resources.workers),
     duty: num(resources.duty_cycle),
+    duty_measured: num(resources.measured_duty),
     proc: proc ?? null,
   };
 }
@@ -518,6 +525,13 @@ function describe(record) {
   }
   if (record.checkpoint?.generation !== null && record.checkpoint?.generation !== undefined) {
     parts.push(`ckpt g${record.checkpoint.generation}`);
+  }
+  // Throughput above is only readable beside the pool that produced it. The
+  // cap is capacity, not load; the process sample below is the only measured
+  // CPU on this line.
+  if (record.workers !== null && record.workers > 1) {
+    const cap = record.duty === null ? "?" : `${(record.duty * 100).toFixed(0)}%`;
+    parts.push(`${record.workers} threads @ ${cap} cap`);
   }
   if (record.proc?.rss_mb) parts.push(`${record.proc.rss_mb}MB ${record.proc.cpu_pct}%cpu`);
   return parts.join(" | ");

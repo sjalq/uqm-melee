@@ -766,6 +766,13 @@ type alias Resources =
     { workers : Int
     , dutyCycle : Float
 
+    -- The measured fraction of wall time the evaluator pool spends working
+    -- rather than resting, averaged over its workers. It is a property of the
+    -- pool, not of the machine: eight workers at 0.5 and one worker at 0.5
+    -- report the same number while occupying very different amounts of the
+    -- box. Absent when the engine has not measured it yet.
+    , measuredDuty : Maybe Float
+
     -- How long one fight is allowed to last, in simulation ticks. The
     -- crew ratio is read at this deadline, so the figure is part of what
     -- the score means rather than a scheduling detail. Absent when the
@@ -1365,7 +1372,7 @@ decodeCheckpoint =
 
 emptyResources : Resources
 emptyResources =
-    { workers = 0, dutyCycle = 0, episodeTicks = Nothing }
+    { workers = 0, dutyCycle = 0, measuredDuty = Nothing, episodeTicks = Nothing }
 
 
 decodeResources : Decoder Resources
@@ -1373,6 +1380,7 @@ decodeResources =
     Decode.succeed Resources
         |> optional "workers" Decode.int 0
         |> optional "duty_cycle" (safeFloat 0) 0
+        |> optional "measured_duty" finiteFloat Nothing
         |> optional "episode_ticks" (Decode.nullable Decode.int) Nothing
 
 
