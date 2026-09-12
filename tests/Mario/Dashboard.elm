@@ -2678,7 +2678,7 @@ viewWinChart tips model status =
                     Chart.series "training"
                         ("Training "
                             ++ Scoring.rateLabel status.scoring
-                            ++ " (sampled panel, whole population)"
+                            ++ " (champion's own sampled panel this generation)"
                         )
                         "#ffb23f"
                         (List.map .trainingWinRate status.history)
@@ -2689,9 +2689,9 @@ viewWinChart tips model status =
             let
                 base =
                     Chart.series "validation"
-                        ("Champion audit "
+                        ("Champion readiness "
                             ++ Scoring.rateLabel status.scoring
-                            ++ " (predeclared gate panel)"
+                            ++ " (screening probe, not audit evidence)"
                         )
                         "#4fd6e0"
                         (List.map .validationWinRate status.history)

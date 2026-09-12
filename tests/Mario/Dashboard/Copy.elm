@@ -786,15 +786,13 @@ winRateChart : Maybe Api.Scoring -> Tip
 winRateChart scoring =
     t "chart-winrate"
         (Scoring.successHeading scoring ++ " over generations")
-        ("Two different measurements, drawn so they cannot be mistaken for each other. The training line is the population's "
+        ("Two screening measurements, drawn so they cannot be mistaken for each other, and neither of them is gate evidence. The training line is the champion's own "
             ++ rateOf scoring
-            ++ " on the sampled training panel, which changes from generation to generation and is not gate evidence. The audit markers are the champion's fresh "
-            ++ rateOf scoring
-            ++ " on a predeclared gate panel. The line breaks at every stage change because a rate measured against a small roster is not comparable with one measured against a larger one."
+            ++ " on that generation's sampled training panel, recorded for the champion's member alone rather than averaged over the population. The markers are the recurring readiness probe: the trainer publishes them as the run's validation figure, but the probe only decides when an audit is worth spending, so a marker is never a passed gate. Both ask the same question the gate asks, on the run's own criterion. The line breaks at every stage change because a rate measured against a small roster is not comparable with one measured against a larger one."
         )
-        [ ( "Denominator", "Training: episodes on that generation's sampled panel. Audit: games on the predeclared gate panel." )
+        [ ( "Denominator", "Training: episodes on that generation's sampled panel for the champion's own member. Readiness: games in the probe's own batch." )
         , ( "Window", "Per generation, whole run, split at stage boundaries." )
-        , ( "Source", "Two distinct sources, never averaged together. Unmeasured generations leave a gap rather than a zero." )
+        , ( "Source", "Training play and the readiness probe, never averaged together. Neither is audit evidence; the gate panel above is. Unmeasured generations leave a gap rather than a zero." )
         ]
 
 
