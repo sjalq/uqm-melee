@@ -2,10 +2,10 @@
 //!
 //! Both expansion orders are fixed for the life of the project so that a stage
 //! number always means the same set of fights, in every run and after every
-//! resume. Ours starts at Pkunk, theirs at Umgah, and the rest follow catalog
-//! order with the already-placed hull skipped.
+//! resume. This experimental build starts BOTH sides at Arilou, and the rest
+//! follow catalog order with the already-placed hull skipped.
 //!
-//! Stage 0 is the single ordered pair Pkunk against Umgah. Each step adds one
+//! Stage 0 is the single ordered pair Arilou against Arilou. Each step adds one
 //! hull, the opponent side first, then ours, alternating to the full 25 by 25
 //! board at stage 48.
 
@@ -32,12 +32,12 @@ fn expansion(first: ShipKind) -> [ShipKind; MELEE_SHIP_COUNT] {
 
 /// Our hulls, in the order the curriculum unlocks them.
 pub fn ours() -> [ShipKind; MELEE_SHIP_COUNT] {
-    expansion(ShipKind::Pkunk)
+    expansion(ShipKind::Arilou)
 }
 
 /// Their hulls, in the order the curriculum unlocks them.
 pub fn theirs() -> [ShipKind; MELEE_SHIP_COUNT] {
-    expansion(ShipKind::Umgah)
+    expansion(ShipKind::Arilou)
 }
 
 /// How many hulls each side has at a stage, as `(ours, theirs)`. Moving from
@@ -196,8 +196,8 @@ mod tests {
             let unique: BTreeSet<u8> = order.iter().map(|k| *k as u8).collect();
             assert_eq!(unique.len(), MELEE_SHIP_COUNT);
         }
-        assert_eq!(ours()[0], ShipKind::Pkunk);
-        assert_eq!(theirs()[0], ShipKind::Umgah);
+        assert_eq!(ours()[0], ShipKind::Arilou);
+        assert_eq!(theirs()[0], ShipKind::Arilou);
         assert_eq!(ours()[1], ShipKind::Androsynth);
         assert_eq!(theirs()[1], ShipKind::Androsynth);
     }
@@ -206,8 +206,8 @@ mod tests {
     fn stage_zero_is_one_fight_and_the_last_stage_is_the_full_board() {
         assert_eq!(counts(0), (1, 1));
         assert_eq!(cells(0).len(), 1);
-        assert_eq!(cells(0)[0].our_ship(), ShipKind::Pkunk);
-        assert_eq!(cells(0)[0].their_ship(), ShipKind::Umgah);
+        assert_eq!(cells(0)[0].our_ship(), ShipKind::Arilou);
+        assert_eq!(cells(0)[0].their_ship(), ShipKind::Arilou);
         assert_eq!(counts(1), (1, 2));
         assert_eq!(counts(2), (2, 2));
         assert_eq!(counts(FINAL_STAGE), (25, 25));
