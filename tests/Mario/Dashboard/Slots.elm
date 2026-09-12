@@ -23,7 +23,7 @@ The trainer, the Elm oracle and this dashboard all agree on one fixed
 input assembly. Writing it down once here keeps the topology view
 honest: every circle on the left edge is named, and the two 5-bit ship
 identity groups and the eight memory channels are separately
-identifiable rather than disappearing into an anonymous stack of 57
+identifiable rather than disappearing into an anonymous stack of 117
 inputs.
 
 Layout (node ids):
