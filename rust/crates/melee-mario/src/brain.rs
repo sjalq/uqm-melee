@@ -166,45 +166,6 @@ impl Controller for SeatPilot {
     }
 }
 
-/// Drives both seats from two independent brains: ours and a frozen opponent
-/// snapshot. Each seat keeps its own graph state and memory.
-pub struct DuelPilot {
-    pub ours: Brain,
-    pub theirs: Brain,
-    pub our_seat: Side,
-}
-
-impl DuelPilot {
-    pub fn new(our_seat: Side, ours: Arc<Network>, theirs: Arc<Network>) -> DuelPilot {
-        DuelPilot {
-            ours: Brain::new(ours),
-            theirs: Brain::new(theirs),
-            our_seat,
-        }
-    }
-}
-
-impl Controller for DuelPilot {
-    fn decide(
-        &mut self,
-        side: Side,
-        ship: &'static str,
-        observation: &[f64; N_OBS],
-        previous: BattleInput,
-    ) -> BattleInput {
-        let brain = if side == self.our_seat {
-            &mut self.ours
-        } else {
-            &mut self.theirs
-        };
-        if brain.ship != ship {
-            brain.reset();
-            brain.ship = ship;
-        }
-        controls_of(&brain.step(observation, &control_bits(previous)))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

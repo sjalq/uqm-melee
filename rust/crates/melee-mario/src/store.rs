@@ -83,47 +83,7 @@ impl RunLock {
         Ok(RunLock { _file: file, owner })
     }
 
-    /// A SHARED claim on a run directory.
-    ///
-    /// Several readers may hold one at once, but none can be taken while a
-    /// trainer holds the exclusive claim, so a copy made under it can never
-    /// observe a half-written checkpoint. It writes NOTHING: the lock file's
-    /// bytes, including whatever pid the last owner recorded, are left exactly
-    /// as they were, which is what lets a source run be forked without being
-    /// modified in any way.
-    pub fn acquire_shared(dir: &Path) -> io::Result<RunLock> {
-        let path = dir.join(LOCK);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)?;
-        // Safety: as in `acquire`; flock only associates a lock with a valid,
-        // owned descriptor.
-        let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
-        if locked != 0 {
-            let error = io::Error::last_os_error();
-            let owner = fs::read_to_string(&path).unwrap_or_default();
-            let owner = owner.trim().to_string();
-            return Err(io::Error::new(
-                io::ErrorKind::AddrInUse,
-                format!(
-                    "run {} is being trained right now{}, so its state is still changing: {error}",
-                    dir.display(),
-                    if owner.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" by process {owner}")
-                    }
-                ),
-            ));
-        }
-        Ok(RunLock { _file: file, owner: 0 })
-    }
-
-    /// The process id recorded in the lock file, or zero for a shared claim,
-    /// which never writes one.
+    /// The process id recorded in the lock file.
     pub fn owner(&self) -> u32 {
         self.owner
     }
@@ -375,29 +335,6 @@ mod tests {
         held.lock().unwrap().clear();
         // And once the winner is gone the run is resumable again.
         drop(RunLock::acquire(&dir).expect("a released run must be resumable"));
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn a_shared_claim_reads_alongside_readers_but_never_beside_a_trainer() {
-        let dir = scratch("shared");
-        fs::write(dir.join(LOCK), "4242\n").unwrap();
-        // Several readers at once is the point of it.
-        let first = RunLock::acquire_shared(&dir).unwrap();
-        let second = RunLock::acquire_shared(&dir).unwrap();
-        assert_eq!(first.owner(), 0);
-        // And the bytes the last trainer wrote are untouched, so forking a run
-        // leaves the source exactly as it was found.
-        assert_eq!(fs::read_to_string(dir.join(LOCK)).unwrap(), "4242\n");
-        // A trainer cannot start while a copy is being read.
-        assert!(RunLock::acquire(&dir).is_err());
-        drop((first, second));
-
-        // And a copy cannot be read while a trainer is writing.
-        let trainer = RunLock::acquire(&dir).unwrap();
-        assert!(RunLock::acquire_shared(&dir).is_err());
-        drop(trainer);
-        drop(RunLock::acquire_shared(&dir).expect("a stopped run must be readable"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

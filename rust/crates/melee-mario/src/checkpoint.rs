@@ -2,23 +2,30 @@
 //! having stopped.
 //!
 //! Decoding is strict on purpose. A checkpoint that does not describe THIS
-//! engine version, this configuration, this stage's board or a self-consistent
-//! panel is rejected outright rather than repaired, because a repaired
-//! checkpoint would quietly resume a different experiment.
+//! engine version, this configuration, this schema or a self-consistent panel
+//! is rejected outright rather than repaired, because a repaired checkpoint
+//! would quietly resume a different experiment.
+//!
+//! Schema 2 dropped the staged ladder and renumbered the board onto
+//! `ALL_SHIPS`, so the same cell indices name different hulls than they did
+//! under schema 1. There is no migration and none is possible: a schema 1
+//! document is refused by version, loudly, rather than read as a run about
+//! matchups that were never played.
 
-use crate::audit::{Gate, Tally};
-use crate::broad::{Evaluation, Overall, Source};
-use crate::curriculum::{self, Cell};
+use crate::broad::{Cell, Evaluation, Opponent, Overall, Source};
 use crate::episode::Task;
 use crate::genome::Genome;
 use crate::neat::{MutationRates, Population};
 use crate::rng::Stream;
 use crate::sampler::{Panel, SamplerStats};
-use crate::trainer::{
-    Config, Event, HistoryRow, Ladder, Mode, Origin, Trainer, ENGINE_VERSION,
-};
+use crate::trainer::{Config, Event, HistoryRow, Mode, Trainer, ENGINE_VERSION};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
+
+/// Bumped when the meaning of a stored field changes. Schema 1 described the
+/// staged ladder and numbered cells by an expansion order that no longer
+/// exists, so it is refused rather than reinterpreted.
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub fn task_json(task: &Task) -> Value {
     json!([task.cell.encode(), task.swap, task.seed, task.ticks])
@@ -52,7 +59,6 @@ fn mode_json(mode: &Mode) -> Value {
         } => json!({"kind": "probing", "attempt": attempt, "champion": champion,
                     "cursor": cursor, "wins": wins,
                     "tasks": tasks.iter().map(task_json).collect::<Vec<_>>()}),
-        Mode::Auditing { gate } => json!({"kind": "auditing", "gate": gate.to_json()}),
         Mode::Overall { gate } => json!({"kind": "overall", "gate": gate.to_json()}),
     }
 }
@@ -82,9 +88,6 @@ fn mode_from_json(value: &Value, salt: u64, ticks: i64) -> Option<Mode> {
                 wins,
             })
         }
-        "auditing" => Some(Mode::Auditing {
-            gate: Gate::from_json(value.get("gate")?)?,
-        }),
         "overall" => Some(Mode::Overall {
             gate: Overall::from_json(value.get("gate")?, salt, ticks)?,
         }),
@@ -93,7 +96,7 @@ fn mode_from_json(value: &Value, salt: u64, ticks: i64) -> Option<Mode> {
 }
 
 fn history_json(row: &HistoryRow) -> Value {
-    json!({"generation": row.generation, "stage": row.stage,
+    json!({"generation": row.generation,
            "training_win_rate": row.training_win_rate,
            "validation_win_rate": row.validation_win_rate,
            "species": row.species, "nodes": row.nodes, "episodes": row.episodes})
@@ -106,7 +109,6 @@ fn history_from_json(value: &Value) -> Option<HistoryRow> {
     };
     Some(HistoryRow {
         generation: value.get("generation")?.as_u64()? as u32,
-        stage: curriculum::valid_stage(value.get("stage")?.as_u64()?)?,
         training_win_rate: rate("training_win_rate")?,
         validation_win_rate: rate("validation_win_rate")?,
         species: value.get("species")?.as_u64()? as usize,
@@ -119,31 +121,19 @@ impl Trainer {
     /// The complete resumable state, including the exact position inside a
     /// half-finished panel, probe or audit round.
     pub fn to_json(&self) -> Value {
-        let evidence: Vec<Value> = self
-            .evidence
-            .iter()
-            .map(|(cell, tally)| json!([cell.encode(), tally.wins, tally.games]))
-            .collect();
         json!({
-            "schema_version": 1,
+            "schema_version": SCHEMA_VERSION,
             "version": ENGINE_VERSION,
             "evaluator": self.evaluator,
             "config": self.config.to_json(),
             "saved_at": self.saved_at,
             "rng": {"evolution": self.evolution.to_json(), "sampling": self.sampling.to_json()},
             "population": self.population.to_json(),
-            "stage": self.stage,
-            "ladder": self.ladder.as_str(),
-            "opponent_revision": self.opponent_revision,
-            "frozen_opponent": self.frozen_opponent.as_ref().map(Genome::to_json),
             "champion": self.champion.as_ref().map(Genome::to_json),
             "champion_rates": self.champion_rates.to_json(),
-            "evidence": evidence,
-            "priority": self.priority.iter().map(|c| c.encode()).collect::<Vec<_>>(),
             "stats": self.stats.to_json(),
             "panel": self.panel.as_ref().map(Panel::to_json),
             "mode": mode_json(&self.mode),
-            "origin": self.origin.as_ref().map(Origin::to_json),
             "coverage_cursor": self.coverage_cursor,
             "broad_ready": self.broad_ready.as_ref().map(Evaluation::to_json),
             "broad_audit": self.broad_audit.as_ref().map(Evaluation::to_json),
@@ -159,8 +149,6 @@ impl Trainer {
             "audit_attempt": self.audit_attempt,
             "last_validation": self.last_validation,
             "last_training_wins": self.last_training_wins,
-            "regression_swept": self.regression_swept,
-            "regression_failed": self.regression_failed,
             "history": self.history.iter().map(history_json).collect::<Vec<_>>(),
             "events": self.events.iter()
                 .map(|e| json!({"at": e.at, "message": e.message})).collect::<Vec<_>>(),
@@ -175,7 +163,7 @@ impl Trainer {
 }
 
 fn decode(value: &Value) -> Option<Trainer> {
-    if value.get("schema_version")?.as_i64()? != 1
+    if value.get("schema_version")?.as_i64()? != SCHEMA_VERSION
         || value.get("version")?.as_str()? != ENGINE_VERSION
     {
         return None;
@@ -189,37 +177,12 @@ fn decode(value: &Value) -> Option<Trainer> {
     if population.config != config.neat {
         return None;
     }
-    let stage = curriculum::valid_stage(value.get("stage")?.as_u64()?)?;
-    let ladder = Ladder::parse(value.get("ladder")?.as_str()?)?;
     let genome = |key: &str| -> Option<Option<Genome>> {
         match value.get(key) {
             None | Some(Value::Null) => Some(None),
             Some(other) => Genome::from_json(other).ok().map(Some),
         }
     };
-    let active = curriculum::cells(stage);
-    let mut evidence = BTreeMap::new();
-    for raw in value.get("evidence")?.as_array()? {
-        let row = raw.as_array()?;
-        if row.len() != 3 {
-            return None;
-        }
-        let cell = Cell::decode(row.first()?)?;
-        let wins = row.get(1)?.as_u64()? as u32;
-        let games = row.get(2)?.as_u64()? as u32;
-        // Evidence for a cell outside this stage's board would inflate the
-        // mastered count, and more wins than games is impossible.
-        if wins > games || !active.contains(&cell) {
-            return None;
-        }
-        evidence.insert(cell, Tally { wins, games });
-    }
-    let priority = value
-        .get("priority")?
-        .as_array()?
-        .iter()
-        .map(Cell::decode)
-        .collect::<Option<Vec<_>>>()?;
     let panel = match value.get("panel") {
         None | Some(Value::Null) => None,
         Some(other) => Some(Panel::from_json(other)?),
@@ -241,25 +204,12 @@ fn decode(value: &Value) -> Option<Trainer> {
             })
         })
         .collect::<Option<VecDeque<_>>>()?;
-    let frozen_opponent = genome("frozen_opponent")?;
-    // The mixed phase is defined by having a frozen opponent to play.
-    if ladder == Ladder::Mixed && frozen_opponent.is_none() {
-        return None;
-    }
-    // Broad mode is defined by the whole board being active. A checkpoint that
-    // claimed broad scope on a narrower stage would sample and gate two
-    // different distributions.
-    if ladder == Ladder::Broad && stage != curriculum::FINAL_STAGE {
-        return None;
-    }
     let champion = genome("champion")?;
-    let opponent_revision = value.get("opponent_revision")?.as_u64()? as u32;
     let mode = mode_from_json(value.get("mode")?, config.salt, config.ticks)?;
-    // The evidence map is checked against the active board above, but a gate or
-    // probe caught mid-flight carries its OWN idea of which candidate, stage and
-    // opponent revision it is measuring. If any of those disagree with the run
-    // being resumed, the in-flight evidence describes something else and the
-    // checkpoint is not resumable.
+    // A round or probe caught mid-flight carries its OWN idea of which
+    // candidate it is measuring. If that disagrees with the run being resumed,
+    // the in-flight evidence describes something else and the checkpoint is
+    // not resumable.
     let fingerprint = champion.as_ref().map(Genome::fingerprint);
     // Broad evidence, in flight or finished, belongs to the champion it was
     // measured on and to the round that produced it. `broad_gate` is the
@@ -328,30 +278,17 @@ fn decode(value: &Value) -> Option<Trainer> {
                 return None;
             }
         }
-        Mode::Auditing { gate } => {
-            if fingerprint.as_deref() != Some(gate.champion.as_str())
-                || gate.stage != stage
-                || gate.opponent_revision != opponent_revision
-                || !gate.order.iter().all(|cell| active.contains(cell))
-            {
-                return None;
-            }
-        }
         Mode::Overall { gate } => {
-            // The broad gate is a fixed panel against the ORIGINAL cyborgs on
-            // the whole board, measuring one frozen candidate under THIS run's
-            // settings. A different candidate, a narrower scope, a frozen-model
-            // cell, a different target or a differently sized panel would all
-            // make the numbers describe something else. And a confirmation
-            // round may only be in flight if the audit before it cleared.
+            // The gate is a fixed balanced panel against the ORIGINAL cyborgs
+            // on the whole board, measuring one frozen candidate under THIS
+            // run's settings. A different candidate, a different target or a
+            // differently sized panel would all make the numbers describe
+            // something else. And a confirmation round may only be in flight
+            // if the audit before it cleared.
             if fingerprint.as_deref() != Some(gate.evaluation.champion.as_str())
-                || ladder != Ladder::Broad
                 || gate.target != config.broad.target
                 || gate.tasks.len() != config.broad.games()
-                || gate
-                    .tasks
-                    .iter()
-                    .any(|task| task.cell.foe != crate::curriculum::Opponent::Cyborg)
+                || gate.tasks.iter().any(|task| task.cell.foe != Opponent::Cyborg)
                 || (gate.round == crate::audit::Round::Confirm && !audit_cleared)
             {
                 return None;
@@ -419,28 +356,15 @@ fn decode(value: &Value) -> Option<Trainer> {
         evolution: Stream::from_json(rng.get("evolution")?)?,
         sampling: Stream::from_json(rng.get("sampling")?)?,
         population,
-        stage,
-        ladder,
-        opponent_revision,
-        frozen_opponent,
         champion,
         champion_rates: match value.get("champion_rates") {
             None | Some(Value::Null) => config.neat.seed_rates,
             Some(other) => MutationRates::from_json(other)?,
         },
-        evidence,
-        priority,
         stats: SamplerStats::from_json(value.get("stats")?)?,
         panel,
         mode,
-        origin: match value.get("origin") {
-            None | Some(Value::Null) => None,
-            Some(other) => Some(Origin::from_json(other)?),
-        },
-        coverage_cursor: value
-            .get("coverage_cursor")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        coverage_cursor: value.get("coverage_cursor")?.as_u64()?,
         broad_ready,
         broad_audit,
         broad_confirm,
@@ -465,14 +389,6 @@ fn decode(value: &Value) -> Option<Trainer> {
         },
         nice: 0,
         pool: crate::pool::Pool::new(1),
-        regression_swept: value
-            .get("regression_swept")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
-        regression_failed: value
-            .get("regression_failed")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize,
         last_training_wins: match value.get("last_training_wins") {
             None | Some(Value::Null) => None,
             Some(other) => Some(other.as_f64().filter(|n| n.is_finite())?),
@@ -488,7 +404,6 @@ fn decode(value: &Value) -> Option<Trainer> {
         // just decoded from disk.
         saved_generation: Some(restored_generation),
         cache: None,
-        opponent_cache: None,
         config,
     })
 }

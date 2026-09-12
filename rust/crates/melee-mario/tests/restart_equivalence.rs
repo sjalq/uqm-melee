@@ -9,11 +9,9 @@
 //!
 //!   cargo test -j 2 -p melee-mario --test restart_equivalence -- --test-threads=2
 
-use melee_mario::audit::AuditConfig;
 use melee_mario::broad::BroadConfig;
 use melee_mario::episode::{GateCriterion, Scoring, ScoringConfig};
 use melee_mario::neat::NeatConfig;
-use melee_mario::sampler::SamplerConfig;
 use melee_mario::trainer::{Config, Trainer};
 use melee_sim::input::CyborgRating;
 use serde_json::Value;
@@ -57,19 +55,9 @@ fn scored_config(run: &str, scoring: ScoringConfig) -> Config {
             stale_species: 3,
             ..NeatConfig::default()
         },
-        sampler: SamplerConfig {
-            panel: 3,
-            ..SamplerConfig::default()
-        },
-        audit: AuditConfig {
-            panel: 6,
-            budget: 40,
-            max_failures: 1,
-            target: 0.80,
-        },
         broad: BroadConfig {
-            panel: 4,
-            // One matching, so a held-out round is fifty games.
+            panel: 3,
+            // One matching per round, so a held-out round is fifty games.
             pairs: 25,
             ..BroadConfig::default()
         },
@@ -78,7 +66,6 @@ fn scored_config(run: &str, scoring: ScoringConfig) -> Config {
         // Deliberately reachable, so the probe and the gate really run.
         readiness_threshold: 0.0,
         readiness_period: 2,
-        regression_budget: 30,
     }
 }
 
@@ -186,16 +173,16 @@ fn a_resumed_run_keeps_evolving_identically_after_the_restart() {
 }
 
 #[test]
-fn the_real_loop_reaches_an_audit_and_the_status_document_stays_well_formed() {
+fn the_real_loop_reaches_a_held_out_round_and_the_status_document_stays_well_formed() {
     let mut trainer = Trainer::fresh(config("audited"));
     let mut saw_audit = false;
-    for _ in 0..260 {
+    for _ in 0..400 {
         trainer.step();
         if trainer.phase() == "auditing" {
             saw_audit = true;
         }
     }
-    assert!(saw_audit, "the readiness probe never opened an audit");
+    assert!(saw_audit, "the readiness probe never opened a held-out round");
 
     let status = trainer.status(
         melee_mario::status::Phase::Training,
@@ -203,7 +190,7 @@ fn the_real_loop_reaches_an_audit_and_the_status_document_stays_well_formed() {
         "checkpoint.json",
         false,
     );
-    assert_eq!(status["schema_version"], 1);
+    assert_eq!(status["schema_version"], melee_mario::status::SCHEMA_VERSION);
     assert!(status["matchups"].as_array().unwrap().len() >= 1);
     assert!(status["history"].as_array().unwrap().len() >= 1);
     assert!(status["champion"]["id"].as_str().is_some());
@@ -406,7 +393,7 @@ struct Disagreement {
 
 /// Replays a fixed batch of real fights with one network and tallies them
 /// under both criteria. No outcome is injected and no fight is shortened.
-fn disagreement(trainer: &Trainer, cells: &[melee_mario::curriculum::Cell]) -> Disagreement {
+fn disagreement(trainer: &Trainer, cells: &[melee_mario::broad::Cell]) -> Disagreement {
     use melee_mario::episode::{self, Rival, Task};
     use melee_mario::graph::Network;
     use std::sync::Arc;
@@ -458,14 +445,16 @@ fn the_two_criteria_really_disagree_about_real_fights() {
     // disagreement count would be zero and this fails.
     let mut trainer = Trainer::fresh(scored_config("disagree", staged()));
     run_units(&mut trainer, 60);
-    // This fixture's Arilou mirror fights have no crew leads. Include the
-    // next matchup so the fixed replay batch distinguishes the criteria.
-    let mut cells = trainer.cyborg_cells();
-    cells.push(melee_mario::curriculum::Cell {
-        foe: melee_mario::curriculum::Opponent::Cyborg,
-        us: 0,
-        them: 1,
-    });
+    // A fixed handful of matchups off the board, rather than the whole 625:
+    // the replay is twelve real fights per cell and the batch only has to be
+    // wide enough for the two criteria to part company somewhere in it.
+    let cells: Vec<melee_mario::broad::Cell> = (0..6u8)
+        .map(|at| melee_mario::broad::Cell {
+            foe: melee_mario::broad::Opponent::Cyborg,
+            us: at,
+            them: (at + 1) % 6,
+        })
+        .collect();
     let found = disagreement(&trainer, &cells);
 
     assert!(found.fights > 0, "expected real fights");
@@ -501,23 +490,36 @@ fn the_gate_criterion_really_changes_which_fights_count_as_successes() {
         gate: GateCriterion::CrewLead,
         ..gated_on_wins
     };
-    // Let this fixture audit past the mirror failure to reach a matchup
-    // that distinguishes the criteria, with the same allowance in both runs.
-    let patient = |scoring| Config {
-        audit: AuditConfig {
-            max_failures: 6,
-            ..scored_config("criterion", scoring).audit
-        },
-        ..scored_config("criterion", scoring)
+    // A lenient aggregate target, identical in both runs, so the held-out
+    // round plays most of its declared panel instead of being settled
+    // downward after a handful of games. The gate's strictness is not what
+    // this test is about; where the criterion is routed is.
+    let patient = |scoring| {
+        let mut config = scored_config("criterion", scoring);
+        config.broad.target = 0.2;
+        config
     };
     let mut wins = Trainer::fresh(patient(gated_on_wins));
     let mut leads = Trainer::fresh(patient(gated_on_leads));
-    // Stage 1 includes Androsynth. This fixed fixture does not reach it
-    // within its budget, so start both comparisons there explicitly.
-    wins.stage = 1;
-    leads.stage = 1;
-    run_units(&mut wins, 60);
-    run_units(&mut leads, 60);
+    // Both runs are walked to the SAME generation rather than to the same unit
+    // count, because a unit of work is a different amount of progress once one
+    // of them is inside a held-out round. The first finished audit round is
+    // captured on the way past, because a champion replacement discards it and
+    // a fixed stopping point would sometimes land after one.
+    let walk = |trainer: &mut Trainer, target: u32| -> Option<(u32, u32)> {
+        let mut first = None;
+        let mut guard = 0;
+        while trainer.population.generation < target {
+            trainer.step();
+            if first.is_none() {
+                first = trainer.broad_audit.as_ref().map(|r| (r.wins, r.games));
+            }
+            guard += 1;
+            assert!(guard < 20_000, "the run never reached generation {target}");
+        }
+        first
+    };
+    let first_round = (walk(&mut wins, 12), walk(&mut leads, 12));
     assert!(wins.episodes > 100, "expected real fights");
 
     // Each assertion below names a place the criterion is routed to, and each
@@ -562,24 +564,30 @@ fn the_gate_criterion_really_changes_which_fights_count_as_successes() {
         "the readiness probe rate did not depend on the criterion"
     );
 
-    // 4. The audit the probe opens.
+    // 4. The held-out audit round the probe opens.
     assert!(
-        wins.champion_evidence().games > 0 && leads.champion_evidence().games > 0,
-        "expected the readiness probe to have opened an audit in both runs"
+        first_round.0.is_some_and(|(_, games)| games > 0)
+            && first_round.1.is_some_and(|(_, games)| games > 0),
+        "expected the readiness probe to have opened a held-out round in both runs"
     );
     assert_ne!(
-        wins.champion_evidence(),
-        leads.champion_evidence(),
-        "audit evidence did not depend on the criterion"
+        first_round.0, first_round.1,
+        "held-out evidence did not depend on the criterion"
     );
 
-    // 5. What must NOT depend on it: the factual combat counters.
-    assert_eq!(
-        wins.combat_wins, leads.combat_wins,
-        "the factual combat-win count must not depend on the gate criterion"
-    );
-    assert_eq!(wins.unresolved, leads.unresolved);
-    assert_eq!(wins.episodes, leads.episodes);
+    // 5. What must NOT depend on it: the factual combat counters stay a
+    //    property of the fights themselves. The two runs stop playing the same
+    //    fights once a held-out round is abandoned, because a round is settled
+    //    under its OWN criterion, so what is checked here is that each run's
+    //    factual counts stay coherent with its own episodes. That a single
+    //    fight's victory flag is unaffected by the criterion is proved
+    //    directly in `the_two_criteria_really_disagree_about_real_fights`.
+    for run in [&wins, &leads] {
+        assert!(
+            run.combat_wins <= run.episodes - run.unresolved,
+            "more victories than resolved fights"
+        );
+    }
 
     // 6. And the checkpoint really does diverge, with the stored settings
     //    themselves removed from the comparison so the difference cannot be

@@ -40,7 +40,7 @@
 //! unresolved count and the factual combat-win count stay exactly as honest as
 //! they were before.
 
-use crate::curriculum::Cell;
+use crate::broad::Cell;
 use crate::graph::Network;
 use melee_core::units::Side;
 use melee_neat::eval::{self, Job};
@@ -293,9 +293,8 @@ impl Scoring {
     }
 }
 
-/// What a stage gate, an audit, a confirmation, a regression sweep, a
-/// readiness probe and the sampler's own weakness statistics all count as a
-/// SUCCESS. A per-run choice recorded in the run's configuration, exactly like
+/// What an audit round, a confirmation round, a readiness probe and the
+/// sampler's own weakness statistics all count as a SUCCESS. A per-run choice recorded in the run's configuration, exactly like
 /// the scorer and entirely independent of it: a run may rank its population on
 /// crew ratio while still gating on actual victories, or the reverse.
 ///
@@ -476,37 +475,28 @@ impl std::str::FromStr for Scoring {
     }
 }
 
-/// Who sits in the other seat. A model opponent is a frozen snapshot: its
-/// weights never change inside a generation or an audit.
-pub enum Rival<'a> {
+/// Who sits in the other seat. Always the graded cyborg: the aggregate this
+/// run is judged on is defined against the original opponents, so there is no
+/// other rival a fight could be counted against.
+pub enum Rival {
     Cyborg(CyborgRating),
-    Model(&'a Arc<Network>),
 }
 
-pub fn run(task: &Task, ours: &Arc<Network>, rival: Rival<'_>) -> Outcome {
+pub fn run(task: &Task, ours: &Arc<Network>, rival: Rival) -> Outcome {
+    let Rival::Cyborg(rating) = rival;
     let job = Job {
         seed: task.seed,
         ticks: task.ticks,
         swap: task.swap,
-        rating: match rival {
-            Rival::Cyborg(rating) => rating,
-            // Unused: with two model brains no cyborg ever pilots a seat.
-            Rival::Model(_) => CyborgRating::AwesomeCyborg,
-        },
+        rating,
         us: task.cell.our_ship(),
         them: task.cell.their_ship(),
-        self_play: matches!(rival, Rival::Model(_)),
+        // Nothing here ever flies both seats from a network, so the evaluator
+        // always puts a cyborg in the other one.
+        self_play: false,
     };
     let seat = task.our_seat();
-    let report = match rival {
-        Rival::Cyborg(_) => {
-            eval::run_with(&job, crate::brain::SeatPilot::new(seat, ours.clone()))
-        }
-        Rival::Model(theirs) => eval::run_with(
-            &job,
-            crate::brain::DuelPilot::new(seat, ours.clone(), theirs.clone()),
-        ),
-    };
+    let report = eval::run_with(&job, crate::brain::SeatPilot::new(seat, ours.clone()));
     let seat_name = if task.swap { "top" } else { "bottom" };
     Outcome {
         resolved: report.completed,

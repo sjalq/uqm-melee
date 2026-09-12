@@ -1,4 +1,4 @@
-//! Forking a staged run into any-versus-any, and training and gating in it.
+//! Training on the whole board, and the balanced aggregate gate over it.
 //!
 //! Like `restart_equivalence`, every unit of work here drives the REAL
 //! simulator through `melee_neat::eval`: real fights, a real population, real
@@ -7,14 +7,11 @@
 //!
 //! Run just this file with:
 //!
-//!   cargo test -j 2 -p melee-mario --test broad_transition -- --test-threads=2
+//!   cargo test -j 2 -p melee-mario --test broad_gate -- --test-threads=2
 
-use melee_mario::audit::AuditConfig;
-use melee_mario::broad::BroadConfig;
-use melee_mario::curriculum::{self, Opponent};
+use melee_mario::broad::{self, BroadConfig, Opponent};
 use melee_mario::neat::NeatConfig;
-use melee_mario::sampler::SamplerConfig;
-use melee_mario::trainer::{Config, Ladder, Trainer};
+use melee_mario::trainer::{Config, Trainer};
 use melee_sim::input::CyborgRating;
 use serde_json::Value;
 
@@ -22,8 +19,8 @@ fn config(run: &str) -> Config {
     Config {
         run_id: run.to_string(),
         salt: 0x5eed_1234,
-        // These tests are about scope, not about scoring, so they keep the
-        // default scorer every existing run was trained under.
+        // These tests are about the board and the gate, not about scoring, so
+        // they keep the default scorer every existing run was trained under.
         scoring: melee_mario::episode::ScoringConfig::default(),
         ticks: 420,
         rating: CyborgRating::AwesomeCyborg,
@@ -31,16 +28,6 @@ fn config(run: &str) -> Config {
             population: 8,
             stale_species: 3,
             ..NeatConfig::default()
-        },
-        sampler: SamplerConfig {
-            panel: 3,
-            ..SamplerConfig::default()
-        },
-        audit: AuditConfig {
-            panel: 6,
-            budget: 40,
-            max_failures: 1,
-            target: 0.80,
         },
         broad: BroadConfig {
             panel: 4,
@@ -52,7 +39,6 @@ fn config(run: &str) -> Config {
         readiness_games: 4,
         readiness_threshold: 0.0,
         readiness_period: 2,
-        regression_budget: 30,
     }
 }
 
@@ -71,173 +57,64 @@ fn trajectory(document: &Value) -> Value {
     stripped
 }
 
-/// Every genome in the population, in order, as its exact serialised form.
-/// Float weights go through the bit-exact round trip the genome schema uses.
-fn genomes(trainer: &Trainer) -> Vec<Value> {
-    trainer.population.to_json()["species"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .flat_map(|species| {
-            species["members"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|member| member["genome"].clone())
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
 fn run_units(trainer: &mut Trainer, units: usize) {
     for _ in 0..units {
         trainer.step();
     }
 }
 
-/// A staged run that has trained long enough to have a champion, gate evidence,
-/// scored genomes and a non-trivial RNG position.
-fn staged() -> Trainer {
-    let mut trainer = Trainer::fresh(config("staged-source"));
+/// A run that has trained long enough to have a champion, scored genomes and a
+/// non-trivial RNG position.
+fn trained(run: &str) -> Trainer {
+    let mut trainer = Trainer::fresh(config(run));
     run_units(&mut trainer, 60);
-    assert!(trainer.champion.is_some(), "the source needs a champion");
+    assert!(trainer.champion.is_some(), "the run needs a champion");
     assert!(trainer.population.generation >= 2);
     trainer
 }
 
-#[test]
-fn the_fork_carries_the_policy_across_and_leaves_the_measurements_behind() {
-    let before = staged();
-    let mut after = Trainer::from_json(&before.to_json()).expect("source decodes");
-    after.broaden("broad-target", "operator requested any-versus-any")
-        .expect("an Awesome source forks");
-
-    // CARRIED: every genome bit for bit, the species structure, the innovation
-    // counter, the champion and its drifted rates, both RNG streams, the
-    // sampler's decayed statistics, and the episode and timing totals.
-    assert_eq!(
-        genomes(&after),
-        genomes(&before),
-        "a genome changed across the fork"
-    );
-    assert_eq!(
-        after.population.innovations.to_json(),
-        before.population.innovations.to_json()
-    );
-    assert_eq!(after.population.generation, before.population.generation);
-    assert_eq!(after.population.species.len(), before.population.species.len());
-    assert_eq!(
-        after.champion.as_ref().map(|g| g.to_json()),
-        before.champion.as_ref().map(|g| g.to_json()),
-        "the champion's weights changed across the fork"
-    );
-    assert_eq!(
-        after.champion_rates.to_json(),
-        before.champion_rates.to_json()
-    );
-    // RNG state is compared as the exact serialised bit pattern.
-    assert_eq!(after.evolution.to_json(), before.evolution.to_json());
-    assert_eq!(after.sampling.to_json(), before.sampling.to_json());
-    assert_eq!(after.stats.issued, before.stats.issued);
-    assert_eq!(after.episodes, before.episodes);
-    assert_eq!(after.unresolved, before.unresolved);
-    assert_eq!(after.compute, before.compute);
-
-    // LEFT BEHIND: every measurement of the old distribution.
-    assert!(after.evidence.is_empty(), "gate evidence survived the fork");
-    assert!(after.priority.is_empty());
-    assert!(after.panel.is_none());
-    assert!(
-        after.population.members().all(|m| m.fitness.is_none()),
-        "a fitness from the abandoned panel survived"
-    );
-    assert_eq!(after.last_training_wins, None);
-    assert_eq!(after.mastered(), 0, "the fork claimed mastered matchups");
-
-    // SCOPE: the whole board, unlocked by the transition rather than earned.
-    assert_eq!(after.ladder, Ladder::Broad);
-    assert_eq!(after.stage, curriculum::FINAL_STAGE);
-    assert_eq!(after.cyborg_cells().len(), 625);
-    assert!(after.model_cells().is_empty(), "broad must not play models yet");
-    assert_eq!(after.config.run_id, "broad-target");
-
-    // PROVENANCE: where it came from, and what the fork gave up.
-    let origin = after.origin.as_ref().expect("the fork records its origin");
-    assert_eq!(origin.run_id, "staged-source");
-    assert_eq!(origin.generation, before.population.generation);
-    assert_eq!(origin.fingerprint, before.evaluator);
-    assert_eq!(origin.reason, "operator requested any-versus-any");
-    let transition = after
-        .events
-        .iter()
-        .find(|e| e.message.contains("scope changed to any-versus-any"))
-        .map(|e| e.message.clone())
-        .expect("the abandonment must be recorded, not performed quietly");
-    assert!(transition.contains("NOTHING is mastered"), "{transition}");
-    assert!(transition.contains("abandoned"), "{transition}");
-    assert!(transition.contains("staged-source"), "{transition}");
-
-    // HISTORY: the scope change is a visible step, not an unexplained jump.
-    let last = after.history.back().expect("a transition row");
-    assert_eq!(last.stage, curriculum::FINAL_STAGE);
-    assert_eq!(last.generation, before.population.generation);
-    assert!(
-        before.history.iter().all(|row| row.stage < curriculum::FINAL_STAGE),
-        "the source was already on the full board"
-    );
-}
-
-#[test]
-fn the_fork_takes_a_baseline_reading_before_the_first_broad_generation() {
-    let mut trainer = staged();
-    let generation = trainer.population.generation;
-    trainer
-        .broaden("baseline", "operator requested any-versus-any")
-        .expect("an Awesome source forks");
-
-    // The very first units of work are the probe, not a training panel.
-    assert_eq!(trainer.phase(), "training");
-    assert!(trainer.broad_ready.is_some(), "no baseline probe was armed");
-    let episodes = trainer.episodes;
-    for _ in 0..40 {
-        trainer.step();
-        if trainer.broad_ready.as_ref().is_some_and(|r| r.games > 0) {
-            break;
-        }
-    }
-    let reading = trainer.broad_ready.as_ref().expect("the probe ran");
-    assert!(reading.games > 0, "the baseline probe played nothing");
-    assert!(trainer.episodes > episodes, "the probe simulated no fights");
-    assert_eq!(
-        trainer.population.generation, generation,
-        "the baseline was taken after a generation had already been trained"
-    );
-    // It is a diagnostic, and says so: readiness is never gate evidence.
-    assert_eq!(reading.source.as_str(), "ready");
-    let status = trainer.status(
+fn status_of(trainer: &Trainer) -> Value {
+    trainer.status(
         melee_mario::status::Phase::Training,
         "test",
         "checkpoint.json",
         false,
-    );
-    assert_eq!(status["readiness"]["purpose"], "broad balanced readiness");
-    assert!(status["ship_performance"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|row| row["source"] == "ready"));
+    )
 }
 
 #[test]
-fn a_forked_run_resumes_exactly_through_training_probing_and_a_held_out_round() {
+fn a_fresh_run_opens_on_the_whole_board_and_claims_nothing() {
+    let trainer = Trainer::fresh(config("fresh"));
+    let status = status_of(&trainer);
+    assert_eq!(status["schema_version"], melee_mario::status::SCHEMA_VERSION);
+    assert_eq!(status["board"]["total_matchups"], 625);
+    assert_eq!(status["board"]["evaluation_scope"], "overall-balanced");
+    assert_eq!(status["readiness"]["purpose"], "balanced readiness");
+    // Every ordered matchup is listed, and not one of them has been seen.
+    let matchups = status["matchups"].as_array().unwrap();
+    assert_eq!(matchups.len(), 625);
+    assert!(matchups.iter().all(|row| row["status"] == "unseen"));
+    assert!(matchups.iter().all(|row| row["training_win_rate"].is_null()));
+    // Nothing is claimed: no aggregate has been measured yet.
+    assert_eq!(status["overall"]["games"], 0);
+    assert_eq!(status["overall"]["passed"], false);
+    assert!(status["overall"]["passed_by"].is_null());
+    assert_eq!(status["ship_performance"].as_array().unwrap().len(), 0);
+    // The seeding event says what the run actually is.
+    let seeded = trainer
+        .events
+        .iter()
+        .find(|e| e.message.contains("625 ordered matchups active"))
+        .expect("the run must record the board it opened on");
+    assert!(seeded.message.contains("balanced aggregate"), "{seeded:?}");
+}
+
+#[test]
+fn a_run_resumes_exactly_through_training_probing_and_a_held_out_round() {
     const UNITS: usize = 120;
 
-    let mut straight = staged();
-    straight
-        .broaden("resume-broad", "operator requested any-versus-any")
-        .expect("an Awesome source forks");
-    let forked_at = straight.population.generation;
-    let mut stitched = Trainer::from_json(&straight.to_json()).expect("the fork must decode");
+    let mut straight = Trainer::fresh(config("resume"));
+    let mut stitched = Trainer::fresh(config("resume"));
     run_units(&mut straight, UNITS);
 
     let mut restarts = 0;
@@ -257,10 +134,7 @@ fn a_forked_run_resumes_exactly_through_training_probing_and_a_held_out_round() 
     }
 
     assert!(restarts >= 15, "the test did not actually restart much");
-    assert!(
-        straight.population.generation > forked_at,
-        "no broad generation completed: still at the generation {forked_at} the fork inherited"
-    );
+    assert!(straight.population.generation >= 2, "no generation completed");
     let expected = trajectory(&straight.to_json());
     let actual = trajectory(&stitched.to_json());
     if expected != actual {
@@ -269,7 +143,7 @@ fn a_forked_run_resumes_exactly_through_training_probing_and_a_held_out_round() 
             .keys()
             .filter(|key| left.get(*key) != right.get(*key))
             .collect();
-        panic!("resumed broad trajectory diverged in fields: {differing:?}");
+        panic!("resumed trajectory diverged in fields: {differing:?}");
     }
     // The RNG bit states and the champion's float weights came through the
     // whole sequence of checkpoint round trips unchanged in value.
@@ -282,11 +156,8 @@ fn a_forked_run_resumes_exactly_through_training_probing_and_a_held_out_round() 
 }
 
 #[test]
-fn broad_training_spreads_over_the_whole_board_and_plays_both_seats() {
-    let mut trainer = staged();
-    trainer
-        .broaden("spread", "operator requested any-versus-any")
-        .expect("an Awesome source forks");
+fn training_spreads_over_the_whole_board_and_plays_both_seats() {
+    let mut trainer = Trainer::fresh(config("spread"));
     run_units(&mut trainer, 200);
 
     // Coverage walked, and every fight it drew was a real cyborg matchup.
@@ -299,25 +170,26 @@ fn broad_training_spreads_over_the_whole_board_and_plays_both_seats() {
         .collect();
     assert!(
         played.len() > 8,
-        "broad training stayed on {} cell(s)",
+        "training stayed on {} cell(s)",
         played.len()
     );
     assert!(
         played.iter().all(|(cell, _)| cell.foe == Opponent::Cyborg),
-        "broad training played a frozen model"
+        "training played something other than the graded opponent"
     );
     // Both our hulls and theirs moved around, rather than one pair repeating.
     let ours: std::collections::BTreeSet<u8> = played.iter().map(|(c, _)| c.us).collect();
     let theirs: std::collections::BTreeSet<u8> = played.iter().map(|(c, _)| c.them).collect();
     assert!(ours.len() > 4 && theirs.len() > 4, "the board barely moved");
+    // And a panel of a generation covers both seats.
+    let panel = trainer.panel.as_ref().expect("a panel is open");
+    assert!(panel.tasks.iter().any(|t| t.swap));
+    assert!(panel.tasks.iter().any(|t| !t.swap));
 }
 
 #[test]
-fn the_broad_gate_runs_for_real_and_the_status_document_stays_honest() {
-    let mut trainer = staged();
-    trainer
-        .broaden("gated", "operator requested any-versus-any")
-        .expect("an Awesome source forks");
+fn the_gate_runs_for_real_and_the_status_document_stays_honest() {
+    let mut trainer = Trainer::fresh(config("gated"));
     // A weak candidate on a fifty-game panel is settled arithmetically within a
     // couple of units, so the document is read at the first point the round has
     // actually played something rather than at some later fixed step.
@@ -340,16 +212,10 @@ fn the_broad_gate_runs_for_real_and_the_status_document_stays_honest() {
     }
     assert!(
         !status.is_null(),
-        "the readiness probe never opened an overall round that played anything"
+        "the readiness probe never opened a held-out round that played anything"
     );
-    assert_eq!(status["schema_version"], 1);
-    assert_eq!(status["curriculum"]["ladder"], "broad");
-    assert_eq!(status["curriculum"]["evaluation_scope"], "overall-balanced");
-    assert_eq!(status["curriculum"]["stage_unlocked_externally"], true);
-    assert_eq!(status["curriculum"]["origin_run_id"], "staged-source");
-    assert_eq!(status["curriculum"]["total_matchups"], 625);
-    // The board is active, but nothing on it is claimed as mastered.
-    assert_eq!(status["curriculum"]["mastered_matchups"], 0);
+    assert_eq!(status["schema_version"], melee_mario::status::SCHEMA_VERSION);
+    assert_eq!(status["board"]["total_matchups"], 625);
 
     let overall = &status["overall"];
     assert_eq!(overall["scope"], "balanced-any-any");
@@ -388,6 +254,12 @@ fn the_broad_gate_runs_for_real_and_the_status_document_stays_honest() {
 
     assert_eq!(status["sampler"]["panel"], 4);
     assert_eq!(status["sampler"]["coverage"], 0.5);
+    // No matchup is ever "mastered": nothing in this run gates per cell.
+    assert!(status["matchups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["status"] == "learning" || row["status"] == "unseen"));
 
     // Every number in the document is finite or explicitly absent.
     let mut stack = vec![&status];
@@ -399,54 +271,6 @@ fn the_broad_gate_runs_for_real_and_the_status_document_stays_honest() {
             _ => {}
         }
     }
-}
-
-#[test]
-fn a_staged_run_is_untouched_by_broad_mode_existing() {
-    let staged = staged();
-    let status = staged.status(
-        melee_mario::status::Phase::Training,
-        "test",
-        "checkpoint.json",
-        false,
-    );
-    assert_eq!(status["curriculum"]["ladder"], "climbing");
-    assert_eq!(status["curriculum"]["evaluation_scope"], "per-cell-ladder");
-    assert_eq!(status["curriculum"]["stage_unlocked_externally"], false);
-    assert!(status["curriculum"]["origin_run_id"].is_null());
-    assert!(status["overall"].is_null(), "a staged run has no aggregate");
-    assert!(status["sampler"].is_null());
-    assert_eq!(status["ship_performance"].as_array().unwrap().len(), 0);
-    assert_eq!(status["readiness"]["purpose"], "audit readiness");
-
-    // And a checkpoint written before broad mode existed still resumes: the
-    // new fields are all absent from it.
-    let mut legacy = staged.to_json();
-    let object = legacy.as_object_mut().unwrap();
-    for key in [
-        "origin",
-        "coverage_cursor",
-        "broad_ready",
-        "broad_audit",
-        "broad_confirm",
-        "broad_gate",
-        "broad_shown",
-    ] {
-        object.remove(key);
-    }
-    legacy["config"]
-        .as_object_mut()
-        .unwrap()
-        .remove("broad");
-    let restored = Trainer::from_json(&legacy).expect("an older checkpoint must still resume");
-    assert_eq!(restored.ladder, Ladder::Climbing);
-    assert_eq!(restored.stage, staged.stage);
-    assert!(restored.origin.is_none());
-    assert_eq!(restored.coverage_cursor, 0);
-    assert_eq!(
-        restored.champion.as_ref().map(|g| g.to_json()),
-        staged.champion.as_ref().map(|g| g.to_json())
-    );
 }
 
 /// A weak candidate never reaches the confirmation round on its own: the audit
@@ -461,15 +285,12 @@ fn a_confirmation_round_resumes_and_only_exists_behind_a_passed_audit() {
     use melee_mario::rng::StreamTag;
     use melee_mario::trainer::Mode;
 
-    let mut trainer = staged();
-    trainer
-        .broaden("confirming", "operator requested any-versus-any")
-        .expect("an Awesome source forks");
+    let mut trainer = trained("confirming");
     let champion = trainer
         .champion
         .as_ref()
         .map(|g| g.fingerprint())
-        .expect("the fork carried a champion");
+        .expect("the run has a champion");
     let config = trainer.config.broad;
     let attempt = trainer.audit_attempt;
     let salt = trainer.config.salt;
@@ -535,11 +356,12 @@ fn a_confirmation_round_resumes_and_only_exists_behind_a_passed_audit() {
     assert_eq!(confirm.source.as_str(), "confirm");
     assert_eq!(confirm.champion, champion);
     assert!(confirm.games > 0);
-    // This candidate is weak, so the gate must NOT have passed, the run must
-    // still be broad, and no frozen self-play opponent may have appeared.
-    assert!(resumed.broad_gate.is_none(), "a losing confirmation passed the gate");
-    assert_eq!(resumed.ladder, Ladder::Broad);
-    assert!(resumed.frozen_opponent.is_none());
+    // This candidate is weak, so the gate must NOT have passed.
+    assert!(
+        resumed.broad_gate.is_none(),
+        "a losing confirmation passed the gate"
+    );
+    assert!(!resumed.gate_passed());
 
     // Without the audit behind it, the same confirmation is refused: a
     // confirmation is the second half of a gate, never a gate on its own.
@@ -563,12 +385,13 @@ fn a_confirmation_round_resumes_and_only_exists_behind_a_passed_audit() {
     );
 }
 
-/// Passing the gate and then replacing the champion must still produce a
-/// resumable checkpoint.
+/// Passing the gate names ONE champion, keeps the run training, and does not
+/// let that champion be re-audited on fresh withheld evidence it has already
+/// earned.
 ///
 /// The gate proof outlives the champion that earned it, so by the first
-/// promotion afterwards the confirmation evidence beside it is already gone.
-/// A decoder that insisted the two travel together made every checkpoint from
+/// promotion afterwards the confirmation evidence beside it is already gone. A
+/// decoder that insisted the two travel together made every checkpoint from
 /// that moment on unresumable.
 #[test]
 fn the_gate_proof_outlives_the_champion_that_earned_it() {
@@ -577,15 +400,12 @@ fn the_gate_proof_outlives_the_champion_that_earned_it() {
     use melee_mario::rng::StreamTag;
     use melee_mario::trainer::Mode;
 
-    let mut trainer = staged();
-    trainer
-        .broaden("passing", "operator requested any-versus-any")
-        .expect("an Awesome source forks");
+    let mut trainer = trained("passing");
     let winner = trainer
         .champion
         .as_ref()
         .map(|g| g.fingerprint())
-        .expect("the fork carried a champion");
+        .expect("the run has a champion");
     let config = trainer.config.broad;
     let attempt = trainer.audit_attempt;
     let (salt, ticks) = (trainer.config.salt, trainer.config.ticks);
@@ -598,9 +418,9 @@ fn the_gate_proof_outlives_the_champion_that_earned_it() {
         for (at, task) in panel.iter().enumerate() {
             reading.record(task.cell, at >= 2);
         }
-        (panel, reading)
+        reading
     };
-    let (_, audit) = tallied(StreamTag::Audit, Source::Audit);
+    let audit = tallied(StreamTag::Audit, Source::Audit);
     assert!(audit.tally().lower_bound().unwrap() > config.target);
     trainer.broad_audit = Some(audit);
     trainer.broad_shown = Some(Source::Audit);
@@ -623,47 +443,59 @@ fn the_gate_proof_outlives_the_champion_that_earned_it() {
     trainer.mode = Mode::Overall { gate };
     trainer.step();
 
-    // The gate passed: the run keeps its broad provenance, enters the mixed
-    // phase with a frozen opponent, and still claims nothing per cell.
-    let proof = trainer.broad_gate.as_ref().expect("the gate recorded its pass");
+    // The gate passed for a NAMED champion, and the run went straight back to
+    // training rather than into some further phase.
+    let proof = trainer
+        .broad_gate
+        .as_ref()
+        .expect("the gate recorded its pass");
     assert_eq!(proof.champion, winner);
     assert_eq!(proof.source.as_str(), "confirm");
-    assert_eq!(trainer.ladder, Ladder::Mixed);
-    assert!(trainer.frozen_opponent.is_some());
-    assert_eq!(trainer.mastered(), 0, "the gate claimed per-cell mastery");
-    assert!(trainer.origin.is_some(), "the fork provenance was forgotten");
-    let status = trainer.status(
-        melee_mario::status::Phase::Training,
-        "test",
-        "checkpoint.json",
-        false,
-    );
-    assert_eq!(status["curriculum"]["ladder"], "mixed");
-    assert_eq!(status["curriculum"]["evaluation_scope"], "overall-balanced");
-    assert_eq!(status["curriculum"]["origin_run_id"], "staged-source");
-    assert_eq!(status["curriculum"]["mastered_matchups"], 0);
-    assert_eq!(status["curriculum"]["self_play_is_gated"], false);
+    assert!(trainer.gate_passed());
+    assert_eq!(trainer.phase(), "training");
+    assert_eq!(trainer.round(), None);
+    let status = status_of(&trainer);
     assert_eq!(status["overall"]["passed"], true);
     assert_eq!(status["overall"]["passed_by"], winner.as_str());
     assert!(Trainer::from_json(&trainer.to_json()).is_ok());
+
+    // A champion that has already cleared both rounds is not re-audited: doing
+    // so would spend withheld evidence re-answering a settled question.
+    let spent = trainer.audit_attempt;
+    for _ in 0..200 {
+        trainer.step();
+        if trainer.champion.as_ref().map(|g| g.fingerprint()).as_deref()
+            != Some(winner.as_str())
+        {
+            break;
+        }
+        assert_eq!(trainer.round(), None, "the passed champion was re-audited");
+    }
+    assert_eq!(trainer.audit_attempt, spent, "a held-out round was spent");
 
     // Now replace the champion, which is what discards the confirmation beside
     // the proof. Real generations, real fights.
     let mut replaced = false;
     for _ in 0..900 {
         trainer.step();
-        if trainer.champion.as_ref().map(|g| g.fingerprint()).as_deref() != Some(winner.as_str()) {
+        if trainer.champion.as_ref().map(|g| g.fingerprint()).as_deref()
+            != Some(winner.as_str())
+        {
             replaced = true;
             break;
         }
     }
-    assert!(replaced, "no champion replacement happened, so nothing was proved");
+    assert!(
+        replaced,
+        "no champion replacement happened, so nothing was proved"
+    );
     assert!(
         trainer.broad_confirm.is_none() && trainer.broad_audit.is_none(),
         "evidence for a replaced champion survived"
     );
     let proof = trainer.broad_gate.as_ref().expect("the proof was discarded");
     assert_eq!(proof.champion, winner, "the proof was reattributed");
+    assert!(!trainer.gate_passed(), "the pass was inherited");
 
     // THE REGRESSION: this checkpoint has a gate proof and no confirmation.
     let saved = trainer.to_json();
@@ -672,16 +504,10 @@ fn the_gate_proof_outlives_the_champion_that_earned_it() {
         resumed.broad_gate.as_ref().map(|e| e.champion.clone()),
         Some(winner.clone())
     );
-    assert_eq!(resumed.ladder, Ladder::Mixed);
 
     // And the pass is reported as a fact about a NAMED champion, not inherited
     // by whoever holds the title now.
-    let status = resumed.status(
-        melee_mario::status::Phase::Training,
-        "test",
-        "checkpoint.json",
-        false,
-    );
+    let status = status_of(&resumed);
     assert_eq!(status["overall"]["passed"], false);
     assert_eq!(status["overall"]["passed_by"], winner.as_str());
 
@@ -692,24 +518,29 @@ fn the_gate_proof_outlives_the_champion_that_earned_it() {
 }
 
 #[test]
-fn a_checkpoint_cannot_claim_broad_scope_on_a_narrower_board() {
-    let mut trainer = staged();
-    trainer
-        .broaden("narrowed", "operator requested any-versus-any")
-        .expect("an Awesome source forks");
+fn a_checkpoint_from_the_staged_schema_is_refused_rather_than_reinterpreted() {
+    let trainer = trained("schema");
     let saved = trainer.to_json();
     assert!(Trainer::from_json(&saved).is_ok());
+    assert_eq!(saved["schema_version"], melee_mario::checkpoint::SCHEMA_VERSION);
 
-    // Broad means the whole board. A document claiming otherwise would sample
-    // one distribution and gate another.
-    let mut tampered = saved.clone();
-    tampered["stage"] = serde_json::json!(3);
-    assert!(Trainer::from_json(&tampered).is_err());
+    // Schema 1 numbered cells by an expansion order this build does not have,
+    // so the same indices name different hulls. Reading one would resume a run
+    // about matchups that were never played.
+    let mut older = saved.clone();
+    older["schema_version"] = serde_json::json!(1);
+    assert!(Trainer::from_json(&older).is_err());
 
-    // Broad evidence belongs to the champion it measured.
+    // Held-out evidence belongs to the champion it measured.
     let mut tampered = saved.clone();
     if !tampered["broad_ready"].is_null() {
         tampered["broad_ready"]["champion"] = serde_json::json!("bsomeoneelse");
         assert!(Trainer::from_json(&tampered).is_err());
     }
+
+    // And a cell naming an opponent this build does not implement is refused
+    // rather than narrowed into the one it does.
+    let board = broad::board();
+    assert_eq!(board.len(), 625);
+    assert!(melee_mario::broad::Cell::decode(&serde_json::json!(["model", 0, 0])).is_none());
 }

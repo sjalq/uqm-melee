@@ -1,11 +1,11 @@
-//! Any-versus-any training and the overall balanced gate.
+//! The board, any-versus-any training on it, and the overall balanced gate.
 //!
-//! The staged ladder asks a separate question of every one of the 625 ordered
-//! matchups and promotes only when each one clears its own bound. This module
-//! asks ONE question instead: does the frozen champion win more than the target
-//! share of a balanced any-versus-any distribution against the Awesome cyborg?
-//! That is a different, weaker and much cheaper claim, and everything here is
-//! written so the difference stays visible:
+//! Every one of the 625 ordered matchups is active from the first generation,
+//! and the graded question is ONE question: does the frozen champion win more
+//! than the target share of a balanced any-versus-any distribution against the
+//! Awesome cyborg? That is an aggregate claim over a distribution, not a claim
+//! about any individual matchup, and everything here is written so the
+//! difference stays visible:
 //!
 //!   * The gate is an AGGREGATE over a balanced held-out panel. Per-hull
 //!     numbers are reported next to it as DIAGNOSTICS, with their sample
@@ -24,7 +24,6 @@
 //! guarantee, only a distinct logical namespace (see [`TRIAL_BASE`]).
 
 use crate::audit::{wilson_lower, Round, Tally};
-use crate::curriculum::{Cell, Opponent};
 use crate::episode::Task;
 use crate::rng::{episode_seed, Stream, StreamTag};
 use crate::sampler::{CellStat, SamplerStats};
@@ -34,26 +33,22 @@ use serde_json::{json, Value};
 /// Ordered pairs on the full board.
 pub const BOARD: usize = MELEE_SHIP_COUNT * MELEE_SHIP_COUNT;
 
-/// Base of the trial-index namespace broad held-out rounds use inside the
-/// shared AUDIT and CONFIRM seed partitions. Every broad trial index has the
-/// top bit set; the ladder's index is `attempt * 1_000_000 + stage * 1_000 +
-/// slot`, which stays below this for any attempt count a run could physically
-/// reach, since an attempt costs at least one simulated fight.
+/// Base of the trial-index namespace a held-out round uses inside the AUDIT and
+/// CONFIRM seed partitions. Every held-out trial index has the top bit set, so
+/// it can never collide with an index any other caller of [`episode_seed`]
+/// would form from a plain counter.
 ///
-/// This separates the two LOGICAL namespaces: a broad round and a ladder round
-/// never ask for the same `(stream, salt, cell, seat, index)` tuple. It is NOT
-/// a disjointness proof for the seeds themselves. `episode_seed` hashes into a
-/// finite partition of about 4.3e8 members, so two different indices inside one
-/// stream can collide and produce the same battle. Only distinct [`StreamTag`]s
-/// guarantee seeds cannot be equal, which is why training, readiness, audit and
-/// confirmation each have their own stream and broad rounds reuse them rather
-/// than inventing an index scheme that pretends to do the same job. A collision
-/// within a stream costs one repeated battle; it cannot leak a withheld fight
-/// into training.
+/// This separates logical NAMESPACES. It is NOT a disjointness proof for the
+/// seeds themselves: `episode_seed` hashes into a finite partition of about
+/// 5.4e8 members, so two different indices inside one stream can collide and
+/// produce the same battle. Only distinct [`StreamTag`]s guarantee seeds cannot
+/// be equal, which is why training, readiness, audit and confirmation each have
+/// their own stream rather than four index ranges of one. A collision within a
+/// stream costs one repeated battle; it cannot leak a withheld fight into
+/// training.
 pub const TRIAL_BASE: u64 = 1 << 63;
 
-/// Settings for broad mode. Separate from [`crate::sampler::SamplerConfig`] so
-/// that turning broad mode on cannot change how a staged run samples.
+/// How a generation's training panel is drawn, and what the gate demands.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct BroadConfig {
     /// Fights each population member plays per generation.
@@ -69,6 +64,10 @@ pub struct BroadConfig {
     pub potential: f64,
     /// Decayed games at which the uncertainty term has halved.
     pub evidence_scale: f64,
+    /// How fast older training evidence fades out of a cell's statistics. The
+    /// adaptive weight is computed over decayed counts, so this constant is
+    /// part of the sampler's memory rather than of the gate.
+    pub decay: f64,
     /// Ordered pairs in one held-out round. Each is played in BOTH seats, so
     /// the round is twice this many games. Must be a positive multiple of the
     /// roster size so every hull appears equally often on both sides.
@@ -81,15 +80,16 @@ impl Default for BroadConfig {
     fn default() -> Self {
         BroadConfig {
             // 32 fights per genome per generation against a population of 300
-            // is 9,600 fights a generation: the same order as the staged run,
-            // spread over 625 cells instead of two. Coverage is earned over
-            // generations, not bought every generation.
+            // is 9,600 fights a generation, spread over 625 cells. Coverage is
+            // earned over generations, not bought every generation: enumerating
+            // the board every generation would cost 625 fights per genome.
             panel: 32,
             coverage: 0.5,
             floor: 1.0,
             uncertainty: 3.0,
             potential: 4.0,
             evidence_scale: 24.0,
+            decay: 0.90,
             // 500 pairs is 1,000 games and exactly 20 appearances of every hull
             // on each side.
             pairs: 500,
@@ -111,8 +111,8 @@ impl BroadConfig {
     pub fn to_json(self) -> Value {
         json!({"panel": self.panel, "coverage": self.coverage, "floor": self.floor,
                "uncertainty": self.uncertainty, "potential": self.potential,
-               "evidence_scale": self.evidence_scale, "pairs": self.pairs,
-               "target": self.target})
+               "evidence_scale": self.evidence_scale, "decay": self.decay,
+               "pairs": self.pairs, "target": self.target})
     }
 
     /// Rejects settings the algorithm cannot honour rather than clamping into
@@ -137,6 +137,12 @@ impl BroadConfig {
             .get("target")?
             .as_f64()
             .filter(|t| (0.0..1.0).contains(t))?;
+        // A decay of one never forgets and a decay above one would amplify old
+        // evidence without bound, so neither is a memory this can honour.
+        let decay = value
+            .get("decay")?
+            .as_f64()
+            .filter(|d| (0.0..=1.0).contains(d))?;
         Some(BroadConfig {
             panel,
             coverage,
@@ -144,8 +150,83 @@ impl BroadConfig {
             uncertainty: number("uncertainty")?,
             potential: number("potential")?,
             evidence_scale: number("evidence_scale")?.max(1e-6),
+            decay,
             pairs,
             target,
+        })
+    }
+}
+
+/// Who sits in the other seat. One variant, and an enum rather than nothing at
+/// all, so a cell always says which opponent produced its evidence and a
+/// document naming an opponent this build does not implement is refused rather
+/// than read as the one it does.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum Opponent {
+    /// The original Awesome cyborg, which is what the run is graded on.
+    Cyborg,
+}
+
+impl Opponent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Opponent::Cyborg => "cyborg",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Opponent> {
+        match raw {
+            "cyborg" => Some(Opponent::Cyborg),
+            _ => None,
+        }
+    }
+}
+
+/// One ordered matchup. `us` and `them` index [`ALL_SHIPS`], which is the hull
+/// order the policy network's five-bit identifiers already use, so a cell index
+/// means the same hull everywhere in the workspace.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub struct Cell {
+    pub foe: Opponent,
+    pub us: u8,
+    pub them: u8,
+}
+
+impl Cell {
+    pub fn our_ship(self) -> ShipKind {
+        ALL_SHIPS[self.us as usize]
+    }
+
+    pub fn their_ship(self) -> ShipKind {
+        ALL_SHIPS[self.them as usize]
+    }
+
+    /// Stable identity used to derive episode seeds.
+    pub fn key(self) -> u64 {
+        (self.foe as u64) * 1_000_000 + self.us as u64 * 100 + self.them as u64
+    }
+
+    pub fn encode(self) -> Value {
+        json!([self.foe.as_str(), self.us, self.them])
+    }
+
+    /// Strict inverse of [`Cell::encode`]. The shape must be exactly a triple
+    /// and both indices must name a hull that exists, so a malformed or
+    /// foreign checkpoint is rejected instead of narrowing into a wrong
+    /// matchup or panicking later on a roster lookup.
+    pub fn decode(value: &Value) -> Option<Cell> {
+        let triple = value.as_array()?;
+        if triple.len() != 3 {
+            return None;
+        }
+        let index = |at: usize| -> Option<u8> {
+            let raw = triple.get(at)?.as_u64()?;
+            (raw < MELEE_SHIP_COUNT as u64).then_some(raw as u8)
+        };
+        Some(Cell {
+            foe: Opponent::parse(triple.first()?.as_str()?)?,
+            us: index(1)?,
+            them: index(2)?,
         })
     }
 }
@@ -325,11 +406,10 @@ impl Source {
         }
     }
 
-    pub fn of_round(round: Round) -> Option<Source> {
+    pub fn of_round(round: Round) -> Source {
         match round {
-            Round::Audit => Some(Source::Audit),
-            Round::Confirm => Some(Source::Confirm),
-            Round::Regression => None,
+            Round::Audit => Source::Audit,
+            Round::Confirm => Source::Confirm,
         }
     }
 }
@@ -561,13 +641,12 @@ impl Overall {
         champion: String,
         tasks: Vec<Task>,
     ) -> Overall {
-        let source = Source::of_round(round).unwrap_or(Source::Audit);
         Overall {
             attempt,
             round,
             target,
             cursor: 0,
-            evaluation: Evaluation::open(source, champion),
+            evaluation: Evaluation::open(Source::of_round(round), champion),
             tasks,
         }
     }
@@ -614,8 +693,8 @@ impl Overall {
     /// The stream partition this round's seeds are withheld in.
     pub fn stream(round: Round) -> StreamTag {
         match round {
+            Round::Audit => StreamTag::Audit,
             Round::Confirm => StreamTag::Confirm,
-            _ => StreamTag::Audit,
         }
     }
 
@@ -631,9 +710,7 @@ impl Overall {
     }
 
     pub fn from_json(value: &Value, salt: u64, ticks: i64) -> Option<Overall> {
-        // Only a promoting round can be a broad gate; a regression sweep is a
-        // different measurement entirely.
-        let round = Round::parse(value.get("round")?.as_str()?).filter(|r| r.promotes())?;
+        let round = Round::parse(value.get("round")?.as_str()?)?;
         let attempt = value.get("attempt")?.as_u64()?;
         let pairs = value
             .get("pairs")?
@@ -642,7 +719,7 @@ impl Overall {
         let evaluation = Evaluation::from_json(value.get("evaluation")?)?;
         // The source is part of what the numbers mean, so it has to be the
         // source this round actually is, not whatever the file says.
-        if Some(evaluation.source) != Source::of_round(round) {
+        if evaluation.source != Source::of_round(round) {
             return None;
         }
         let tasks = balanced_panel(Overall::stream(round), salt, attempt, pairs, ticks);
@@ -713,11 +790,7 @@ mod tests {
     }
 
     fn stat(wins: f64, games: f64) -> CellStat {
-        CellStat {
-            wins,
-            games,
-            added: 0,
-        }
+        CellStat { wins, games }
     }
 
     #[test]
@@ -873,12 +946,11 @@ mod tests {
     }
 
     #[test]
-    fn the_broad_trial_namespace_is_separate_from_the_ladder_one() {
-        // The ladder's index formula, for any attempt a run could reach: an
-        // attempt costs at least one fight, so this bounds it generously.
-        for attempt in [0u64, 1, 1_000, 1_000_000, 1_000_000_000_000] {
-            let ladder = attempt * 1_000_000 + 48 * 1_000 + 999;
-            assert!(ladder < TRIAL_BASE, "a ladder trial reached the broad space");
+    fn the_held_out_trial_namespace_is_separate_from_every_plain_counter() {
+        // `stats.issued`, the only other index any caller forms, is a count of
+        // fights actually played. It cannot reach the top bit.
+        for issued in [0u64, 1, 1_000, 1_000_000, 1_000_000_000_000] {
+            assert!(issued < TRIAL_BASE, "a training index reached the gate space");
         }
         for attempt in [0u64, 1, 9_999, u64::MAX] {
             for slot in [0usize, 1, 999] {
@@ -1026,7 +1098,7 @@ mod tests {
         tampered["cursor"] = json!(3);
         assert!(Overall::from_json(&tampered, 1, 3600).is_none());
         let mut tampered = saved.clone();
-        tampered["round"] = json!("regression");
+        tampered["round"] = json!("sweep");
         assert!(Overall::from_json(&tampered, 1, 3600).is_none());
         // Round and source must describe the same measurement.
         let mut tampered = saved.clone();
@@ -1055,5 +1127,49 @@ mod tests {
         let mut bad = config.to_json();
         bad["target"] = json!(1.0);
         assert!(BroadConfig::from_json(&bad).is_none());
+        // A memory that never forgets, or one that grows without bound, is not
+        // a decay this can honour.
+        for impossible in [json!(1.5), json!(-0.1)] {
+            let mut bad = config.to_json();
+            bad["decay"] = impossible;
+            assert!(BroadConfig::from_json(&bad).is_none());
+        }
+    }
+
+    #[test]
+    fn the_board_is_every_ordered_pair_and_a_cell_round_trips() {
+        let board = board();
+        assert_eq!(board.len(), BOARD);
+        let mut keys = BTreeSet::new();
+        for cell in &board {
+            assert!(keys.insert(cell.key()), "key collision at {cell:?}");
+            assert_eq!(Cell::decode(&cell.encode()), Some(*cell));
+        }
+        assert_eq!(keys.len(), BOARD);
+        // Cell indices are ALL_SHIPS indices, which is the same five-bit hull
+        // identifier the policy network reads.
+        assert_eq!(board[0].our_ship(), ALL_SHIPS[0]);
+        assert_eq!(board[0].our_ship().index(), 0);
+        assert_eq!(board[BOARD - 1].their_ship(), ALL_SHIPS[MELEE_SHIP_COUNT - 1]);
+    }
+
+    #[test]
+    fn decoding_rejects_shapes_that_could_resume_the_wrong_matchup() {
+        let first = Cell {
+            foe: Opponent::Cyborg,
+            us: 0,
+            them: 0,
+        };
+        assert_eq!(Cell::decode(&json!(["cyborg", 0, 0])), Some(first));
+        // Out of range, so `ALL_SHIPS[index]` can never be reached with it.
+        assert_eq!(Cell::decode(&json!(["cyborg", 25, 0])), None);
+        assert_eq!(Cell::decode(&json!(["cyborg", 0, 25])), None);
+        // 256 must not wrap to hull zero.
+        assert_eq!(Cell::decode(&json!(["cyborg", 256, 0])), None);
+        assert_eq!(Cell::decode(&json!(["cyborg", -1, 0])), None);
+        assert_eq!(Cell::decode(&json!(["cyborg", 0])), None);
+        assert_eq!(Cell::decode(&json!(["cyborg", 0, 0, 0])), None);
+        assert_eq!(Cell::decode(&json!(["model", 0, 0])), None);
+        assert_eq!(Cell::decode(&json!({"us": 0})), None);
     }
 }

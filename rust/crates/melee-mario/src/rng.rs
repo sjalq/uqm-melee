@@ -33,19 +33,15 @@ pub enum StreamTag {
     Ready,
     /// The gate's first fixed panel.
     Audit,
-    /// The disjoint panel that must also pass before a promotion.
+    /// The disjoint panel that must also pass before the gate is cleared.
     Confirm,
-    /// Mixed-phase regression sweeps against the original cyborgs. Separate so
-    /// a sweep can never reuse, or be mistaken for, gate evidence.
-    Regression,
 }
 
-pub const ALL_STREAMS: [StreamTag; 5] = [
+pub const ALL_STREAMS: [StreamTag; 4] = [
     StreamTag::Train,
     StreamTag::Ready,
     StreamTag::Audit,
     StreamTag::Confirm,
-    StreamTag::Regression,
 ];
 
 impl StreamTag {
@@ -57,7 +53,6 @@ impl StreamTag {
             StreamTag::Ready => 1,
             StreamTag::Audit => 2,
             StreamTag::Confirm => 3,
-            StreamTag::Regression => 4,
         }
     }
 
@@ -67,7 +62,6 @@ impl StreamTag {
             StreamTag::Ready => "ready",
             StreamTag::Audit => "audit",
             StreamTag::Confirm => "confirm",
-            StreamTag::Regression => "regression",
         }
     }
 }

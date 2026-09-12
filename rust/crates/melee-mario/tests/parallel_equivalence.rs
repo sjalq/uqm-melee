@@ -23,11 +23,9 @@
 //!
 //!   cargo test -j 2 -p melee-mario --test parallel_equivalence -- --test-threads=2
 
-use melee_mario::audit::AuditConfig;
 use melee_mario::broad::BroadConfig;
 use melee_mario::episode::{GateCriterion, Scoring, ScoringConfig};
 use melee_mario::neat::NeatConfig;
-use melee_mario::sampler::SamplerConfig;
 use melee_mario::trainer::{Config, Trainer};
 use melee_sim::input::CyborgRating;
 use serde_json::Value;
@@ -51,18 +49,9 @@ fn config(run: &str, scoring: ScoringConfig) -> Config {
             stale_species: 3,
             ..NeatConfig::default()
         },
-        sampler: SamplerConfig {
-            panel: 3,
-            ..SamplerConfig::default()
-        },
-        audit: AuditConfig {
-            panel: 6,
-            budget: 40,
-            max_failures: 1,
-            target: 0.80,
-        },
         broad: BroadConfig {
-            panel: 4,
+            panel: 3,
+            // One matching per round, so a held-out round is fifty games.
             pairs: 25,
             ..BroadConfig::default()
         },
@@ -71,7 +60,6 @@ fn config(run: &str, scoring: ScoringConfig) -> Config {
         // Deliberately reachable, so the probe and the gate really run.
         readiness_threshold: 0.0,
         readiness_period: 2,
-        regression_budget: 30,
     }
 }
 
