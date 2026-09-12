@@ -138,9 +138,22 @@ pub fn write_atomic(path: &Path, value: &Value) -> io::Result<()> {
         path.file_name().and_then(|n| n.to_str()).unwrap_or("out")
     ));
     {
-        let mut file = File::create(&temporary)?;
-        serde_json::to_writer(&mut file, value)?;
-        file.write_all(b"\n")?;
+        // `serde_json::to_writer` emits a document as a stream of very small
+        // writes, one per token and per separator. Handed a `File` those are
+        // syscalls, so a twenty megabyte checkpoint costs millions of them and
+        // the trainer's main thread spends a whole generation in the kernel
+        // while its workers sit idle. A modest fixed buffer turns them into
+        // whole-block writes without changing a single byte of the output.
+        let mut writer = io::BufWriter::with_capacity(1 << 16, File::create(&temporary)?);
+        serde_json::to_writer(&mut writer, value)?;
+        writer.write_all(b"\n")?;
+        // Flushed EXPLICITLY, never by `Drop`: a dropped `BufWriter` discards
+        // the error from its final write, which would turn a full disk into a
+        // checkpoint that looks written and then gets renamed over the last
+        // good one. Only once every byte is in the file does durability, and
+        // then the atomic replacement, mean anything.
+        writer.flush()?;
+        let file = writer.into_inner().map_err(|e| e.into_error())?;
         file.sync_all()?;
     }
     fs::rename(&temporary, path)
@@ -204,6 +217,106 @@ mod tests {
         write_atomic(&path, &json!({"generation": 2})).unwrap();
         assert_eq!(read_json(&path).unwrap(), json!({"generation": 2}));
         assert!(!dir.join("checkpoint.json.tmp").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A checkpoint-sized document, big enough that the difference between a
+    /// syscall per token and a syscall per block is the difference between a
+    /// stalled generation and an unnoticed one.
+    fn bulky() -> Value {
+        let genomes: Vec<Value> = (0..4000)
+            .map(|g| {
+                json!({
+                    "id": g,
+                    "fitness": g as f64 * 1.5,
+                    "species": g % 37,
+                    "name": format!("genome-{g}"),
+                    "connections": (0..40)
+                        .map(|c| json!({
+                            "from": c,
+                            "to": c + 1,
+                            "weight": (g * c) as f64 / 7.0,
+                            "enabled": c % 3 != 0,
+                        }))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        json!({"generation": 12345, "population": genomes})
+    }
+
+    #[test]
+    fn a_large_checkpoint_lands_byte_for_byte() {
+        // Buffering may not alter one byte of the document: a checkpoint has
+        // to read back as the same run it was saved from.
+        let dir = scratch("bytes");
+        let path = dir.join("checkpoint.json");
+        let value = bulky();
+        write_atomic(&path, &value).unwrap();
+
+        let mut expected = serde_json::to_vec(&value).unwrap();
+        expected.push(b'\n');
+        let written = fs::read(&path).unwrap();
+        assert!(
+            written.len() > 1_000_000,
+            "the case is only interesting at checkpoint scale, got {} bytes",
+            written.len()
+        );
+        assert_eq!(written, expected, "the written bytes differ from the document");
+        assert_eq!(read_json(&path).unwrap(), value);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn repeated_large_writes_replace_the_whole_document() {
+        // The real cadence: the same path overwritten generation after
+        // generation, never leaving a temporary behind or a shortened tail
+        // from a previous, longer save.
+        let dir = scratch("repeat");
+        let path = dir.join("checkpoint.json");
+        for generation in 0..3 {
+            let mut value = bulky();
+            value["generation"] = json!(generation);
+            // Shrinking, so a stale tail from the previous write would show.
+            value["population"] = json!(value["population"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .take(4000 - generation * 1200)
+                .cloned()
+                .collect::<Vec<_>>());
+            write_atomic(&path, &value).unwrap();
+
+            let mut expected = serde_json::to_vec(&value).unwrap();
+            expected.push(b'\n');
+            assert_eq!(fs::read(&path).unwrap(), expected);
+            assert_eq!(read_json(&path).unwrap(), value);
+            assert!(!dir.join("checkpoint.json.tmp").exists());
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_write_leaves_the_last_good_checkpoint_in_place() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch("failed");
+        let path = dir.join("checkpoint.json");
+        let good = json!({"generation": 7, "population": ["kept"]});
+        write_atomic(&path, &good).unwrap();
+
+        // A directory that cannot be written to is the honest version of a
+        // failing save: no mock, the real syscall refuses.
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let outcome = write_atomic(&path, &json!({"generation": 8}));
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(outcome.is_err(), "a save that cannot be written must say so");
+        assert_eq!(
+            read_json(&path).unwrap(),
+            good,
+            "a failed save destroyed the checkpoint it was replacing"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
