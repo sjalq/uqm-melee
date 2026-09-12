@@ -458,7 +458,19 @@ fn the_two_criteria_really_disagree_about_real_fights() {
     // disagreement count would be zero and this fails.
     let mut trainer = Trainer::fresh(scored_config("disagree", staged()));
     run_units(&mut trainer, 60);
-    let found = disagreement(&trainer, &trainer.cyborg_cells());
+    // Stage 0 is now the Arilou mirror, and a fresh network flying Arilou
+    // against the Awesome cyborg flying Arilou is wiped out without landing a
+    // hit: it ends every fight at nought crew against six, so it never leads
+    // and the two criteria have nothing to disagree about, at any tick budget.
+    // The cell the curriculum unlocks next is a fight it survives, so the
+    // batch replays the stage's own cells AND that one.
+    let mut cells = trainer.cyborg_cells();
+    cells.push(melee_mario::curriculum::Cell {
+        foe: melee_mario::curriculum::Opponent::Cyborg,
+        us: 0,
+        them: 1,
+    });
+    let found = disagreement(&trainer, &cells);
 
     assert!(found.fights > 0, "expected real fights");
     let disagreed = found.lead_not_win + found.win_not_lead;
@@ -493,8 +505,29 @@ fn the_gate_criterion_really_changes_which_fights_count_as_successes() {
         gate: GateCriterion::CrewLead,
         ..gated_on_wins
     };
-    let mut wins = Trainer::fresh(scored_config("criterion", gated_on_wins));
-    let mut leads = Trainer::fresh(scored_config("criterion", gated_on_leads));
+    // Every stage's board contains the Arilou mirror, which a fresh network
+    // always loses under both criteria, and an audit that gives up after one
+    // failure therefore stops on that game with a single counted game in hand,
+    // identically in both runs. Letting the panel play on is what gives the
+    // audit fights the criteria can disagree about; it is the same allowance
+    // in both runs, so the comparison below is still like for like.
+    let patient = |scoring| Config {
+        audit: AuditConfig {
+            max_failures: 6,
+            ..scored_config("criterion", scoring).audit
+        },
+        ..scored_config("criterion", scoring)
+    };
+    let mut wins = Trainer::fresh(patient(gated_on_wins));
+    let mut leads = Trainer::fresh(patient(gated_on_leads));
+    // Both runs start one stage in, identically. On stage 0, the Arilou
+    // mirror, a fresh network never lands a hit on the Awesome cyborg, so
+    // every fight is a loss under BOTH criteria and the two runs would count
+    // the same successes however long they ran: the mirror also never promotes
+    // itself off stage 0, because a gate needs successes to pass. Stage 1 adds
+    // the Androsynth opponent, which is a fight the criteria disagree about.
+    wins.stage = 1;
+    leads.stage = 1;
     run_units(&mut wins, 60);
     run_units(&mut leads, 60);
     assert!(wins.episodes > 100, "expected real fights");
