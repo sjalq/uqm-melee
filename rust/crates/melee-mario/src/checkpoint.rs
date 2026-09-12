@@ -387,6 +387,7 @@ fn decode(value: &Value) -> Option<Trainer> {
         phases: crate::phases::Phases::default(),
         work: crate::phases::Work::default(),
         session_compute: 0.0,
+        session_cpu: 0.0,
         audit_attempt: value.get("audit_attempt")?.as_u64()?,
         last_validation: match value.get("last_validation") {
             None | Some(Value::Null) => None,

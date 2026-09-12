@@ -11,6 +11,7 @@ pub mod benchmark;
 pub mod broad;
 pub mod checkpoint;
 pub mod cli;
+pub mod cpu;
 pub mod episode;
 pub mod genome;
 pub mod graph;

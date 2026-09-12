@@ -259,6 +259,13 @@ pub struct Trainer {
     /// The compute seconds `phases` and `work` are measured against. Separate
     /// from `compute`, which is the run's all-time total across every resume.
     pub session_compute: f64,
+    /// CPU seconds, summed over every thread, across exactly the span
+    /// `session_compute` covers. THIS is what a per-unit-of-work rate is
+    /// divided by: the phase buckets and the work counters are thread totals,
+    /// so a wall denominator would deflate every rate by however many workers
+    /// the pool was running. A session figure like the two above, and never
+    /// checkpointed. See [`crate::cpu`].
+    pub session_cpu: f64,
     pub audit_attempt: u64,
     pub last_validation: Option<f64>,
     /// The champion's SUCCESS rate on the panel currently being evaluated,
@@ -366,6 +373,7 @@ impl Trainer {
             phases: Phases::default(),
             work: Work::default(),
             session_compute: 0.0,
+            session_cpu: 0.0,
             audit_attempt: 0,
             last_validation: None,
             last_training_wins: None,

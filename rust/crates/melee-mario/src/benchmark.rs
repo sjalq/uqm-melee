@@ -38,10 +38,11 @@
 //! different work is not a measurement of anything.
 
 use crate::broad::{Cell, Opponent};
+use crate::cpu;
 use crate::episode::{self, Rival, Task};
 use crate::genome::Genome;
 use crate::graph::Network;
-use crate::phases::{Phases, Work};
+use crate::phases::{Phases, Spent, Work};
 use crate::trainer::{self, rating_name, ENGINE_VERSION};
 use melee_core::counters;
 use melee_sim::catalog::{ShipKind, ALL_SHIPS};
@@ -234,9 +235,23 @@ impl Definition {
 /// One replay of the whole task list.
 #[derive(Clone, Copy, Debug)]
 pub struct Replay {
+    /// Wall seconds the replay took. The figure the best-of-N is taken over,
+    /// because wall time is what unrelated load corrupts and what a minimum
+    /// therefore rescues.
     pub seconds: f64,
+    /// CPU seconds it burned. Single threaded, so this tracks the wall figure
+    /// closely; it is measured rather than assumed so that the benchmark's
+    /// nanoseconds-per-tick is the SAME quantity the trainer's status document
+    /// reports, and the two can be compared directly.
+    pub cpu: Option<f64>,
     pub work: Work,
     pub phases: Phases,
+}
+
+impl Replay {
+    fn spent(&self) -> Spent {
+        Spent::new(self.seconds, self.cpu)
+    }
 }
 
 /// Every repetition, plus the definition they all played.
@@ -250,6 +265,7 @@ fn replay(definition: &Definition, network: &Arc<Network>) -> Replay {
     let mut work = Work::default();
     let mut phases = Phases::default();
     let began = Instant::now();
+    let began_cpu = cpu::seconds();
     for task in &definition.tasks {
         let (outcome, sample) = counters::measure(|| {
             let started = Instant::now();
@@ -263,6 +279,7 @@ fn replay(definition: &Definition, network: &Arc<Network>) -> Replay {
     }
     Replay {
         seconds: began.elapsed().as_secs_f64(),
+        cpu: cpu::since(began_cpu),
         work,
         phases,
     }
@@ -350,14 +367,18 @@ impl Report {
             "build": trainer::build_fingerprint(),
             "definition": self.definition.to_json(),
             "best_seconds": best.seconds,
+            "best_cpu_seconds": match best.cpu {
+                Some(cpu) => json!(cpu),
+                None => Value::Null,
+            },
             "median_seconds": self.median(),
             "mean_seconds": self.mean(),
             "worst_seconds": self.seconds().last().copied().unwrap_or(0.0),
             "seconds": self.seconds(),
             // Counted over the best repetition, and identical to every other
             // repetition's unless `divergent` is non-empty.
-            "work": best.work.to_json(best.seconds),
-            "phases": best.phases.to_json(best.seconds),
+            "work": best.work.to_json(best.spent()),
+            "phases": best.phases.to_json(best.spent()),
             "divergent_repetitions": self.divergent()
         })
     }
@@ -369,9 +390,14 @@ impl Report {
         let best = self.best();
         let work = best.work;
         let counts = work.counts;
+        // Per unit of work, over CPU nanoseconds rather than wall ones, so
+        // this figure is the same quantity the trainer's status document
+        // reports and the two can be read against each other. Single threaded
+        // here, so the two clocks nearly agree; the trainer's do not.
+        let cpu_nanos = best.cpu.unwrap_or(f64::NAN) * 1e9;
         let per = |total: u64| match total {
             0 => f64::NAN,
-            total => best.seconds * 1e9 / total as f64,
+            total => cpu_nanos / total as f64,
         };
         let share = |seconds: f64| {
             let accounted = best.phases.accounted();
@@ -404,6 +430,10 @@ impl Report {
             self.seconds().last().copied().unwrap_or(0.0)
         ));
         out.push_str(&format!(
+            "cpu         {:.3}s over the best repetition, which is what the rates divide by\n",
+            best.cpu.unwrap_or(f64::NAN)
+        ));
+        out.push_str(&format!(
             "work        {} episodes, {} display ticks, {} decisions, {} link activations\n",
             work.episodes, work.display_ticks, counts.decisions, counts.link_activations
         ));
@@ -412,7 +442,8 @@ impl Report {
             counts.element_scans, counts.elements_visited, counts.networks_compiled
         ));
         out.push_str(&format!(
-            "rates       {:.1} ns/display tick | {:.2} ns/link activation | {:.1} ticks/episode\n",
+            "rates       {:.1} cpu-ns/display tick | {:.2} cpu-ns/link activation | \
+             {:.1} ticks/episode\n",
             per(work.display_ticks),
             per(counts.link_activations),
             work.display_ticks as f64 / work.episodes.max(1) as f64
@@ -426,11 +457,15 @@ impl Report {
             best.phases.think,
             share(best.phases.think)
         ));
+        // Against CPU seconds, because the buckets are thread totals. Single
+        // threaded here so the remainder is small, but the comparison has to
+        // be in the same units as the one the trainer makes at nine workers.
+        let cpu = best.cpu.unwrap_or(f64::NAN);
         out.push_str(&format!(
-            "            accounted {:.3}s of {:.3}s wall, {:.3}s unaccounted\n",
+            "            accounted {:.3}s of {:.3}s cpu, {:+.3}s unaccounted\n",
             best.phases.accounted(),
-            best.seconds,
-            (best.seconds - best.phases.accounted()).max(0.0)
+            cpu,
+            cpu - best.phases.accounted()
         ));
         let divergent = self.divergent();
         if divergent.is_empty() {

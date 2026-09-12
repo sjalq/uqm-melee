@@ -16,6 +16,7 @@
 
 use crate::benchmark;
 use crate::broad::BroadConfig;
+use crate::cpu;
 use crate::episode::{GateCriterion, Scoring, ScoringConfig, DEFAULT_TICKS};
 use crate::neat::NeatConfig;
 use crate::pool;
@@ -887,6 +888,11 @@ fn supervise(options: Options) -> Result<(), String> {
         // the simulation would let a fast panel with an expensive publish blow
         // straight through the cap.
         let began = Instant::now();
+        // Both clocks start together and are banked together. The CPU one is
+        // what every per-unit-of-work rate is divided by, because the work
+        // counters and the phase buckets are thread totals and the pool may
+        // have been running nine of them.
+        let began_cpu = cpu::seconds();
         let unit = trainer.step();
         // The unit's own seconds are banked BEFORE anything is published, so a
         // status document rendered below divides this unit's phase buckets by
@@ -894,7 +900,9 @@ fn supervise(options: Options) -> Result<(), String> {
         // iteration at the bottom instead would publish buckets whose sum
         // briefly exceeded the compute they are a share of.
         let simulated = began.elapsed();
+        let simulated_cpu = cpu::since(began_cpu).unwrap_or(0.0);
         trainer.session_compute += simulated.as_secs_f64();
+        trainer.session_cpu += simulated_cpu;
 
         let phase = match trainer.phase() {
             "auditing" => Phase::Auditing,
@@ -940,6 +948,10 @@ fn supervise(options: Options) -> Result<(), String> {
         // counters by it would understate the rate by however long the run has
         // been alive.
         trainer.session_compute += worked.saturating_sub(simulated).as_secs_f64();
+        // The same remainder on the CPU clock: what publishing and
+        // checkpointing burned, on top of what the unit already banked.
+        let worked_cpu = cpu::since(began_cpu).unwrap_or(0.0);
+        trainer.session_cpu += (worked_cpu - simulated_cpu).max(0.0);
 
         // The governor. Resting for `worked * (1 - duty) / duty` holds the
         // long-run scheduler-active wall fraction at `duty`, whatever the pool

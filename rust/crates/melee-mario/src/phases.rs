@@ -17,16 +17,57 @@
 //! session's and starts at zero on every resume.
 //!
 //! HONESTY RULE. The buckets are measured independently and their sum is
-//! [`Phases::accounted`], which is NOT the same as the session's compute time:
+//! [`Phases::accounted`], which is NOT the same as the time the session spent:
 //! the supervisor's own loop, the pool's job dispatch, allocation and anything
 //! else nobody put a clock around falls outside all seven. That remainder is
 //! reported as `unaccounted`, with its own share, rather than being folded into
 //! a bucket or silently rescaling the others. A share here is a share of
-//! ACCOUNTED time and says so; the share of the session's compute that is
-//! accounted for at all is reported next to it.
+//! ACCOUNTED time and says so; the share of the session that is accounted for
+//! at all is reported next to it.
+//!
+//! WHY THE DENOMINATOR IS CPU SECONDS. Every bucket here and every count in
+//! [`Work`] is a THREAD total: nine workers simulating for one wall second
+//! contribute nine seconds of `simulate`. Dividing those by a WALL second
+//! compares nine threads' output against one thread's worth of time, and does
+//! it differently at every worker count. Measured at six workers, that is not
+//! a rounding error: the document claimed 552% of compute accounted for, zero
+//! seconds unaccounted, and a nanoseconds-per-display-tick figure a fifth of
+//! the single-threaded benchmark's, so raising `--workers` read as a speedup.
+//! [`Spent::cpu`] comes from `getrusage(RUSAGE_SELF)`, which sums every
+//! thread, so numerator and denominator are in the same units and every rate
+//! below is invariant to the worker count. See [`crate::cpu`].
 
 use melee_core::counters::{Counts, Sample};
 use serde_json::{json, Value};
+
+/// What one session spent, on the two clocks that measure it differently.
+///
+/// Carried as a pair rather than as a bare `f64` so that a caller cannot hand
+/// a per-thread total a wall-clock denominator by accident, which is exactly
+/// the mistake this type was introduced to make unrepresentable.
+#[derive(Copy, Clone, Default, PartialEq, Debug)]
+pub struct Spent {
+    /// Wall seconds the supervisor spent working, governor rest excluded.
+    /// What the duty cycle is a share of, and never a denominator for work.
+    pub wall: f64,
+    /// CPU seconds across every thread over that same span. `None` when the
+    /// kernel would not say, which makes the rates null rather than wrong.
+    pub cpu: Option<f64>,
+}
+
+impl Spent {
+    /// A span measured on both clocks at once.
+    pub fn new(wall: f64, cpu: Option<f64>) -> Spent {
+        Spent { wall, cpu }
+    }
+
+    /// Whether anything was measured at all. A session that has not computed
+    /// reports null documents rather than a page of zeroes, because zero
+    /// claims a measurement of no work rather than no measurement.
+    pub fn measured(&self) -> bool {
+        self.wall > 0.0 || self.cpu.is_some_and(|cpu| cpu > 0.0)
+    }
+}
 
 /// A measurement that has not been made, or a rate with nothing underneath it,
 /// is null rather than zero. Zero means "measured, and it was zero".
@@ -85,27 +126,56 @@ impl Phases {
         self.think += nanos.think as f64 / 1e9;
     }
 
-    /// The buckets as seconds, each with its share of ACCOUNTED time, plus
-    /// what is left of `compute` that no bucket claims.
-    pub fn to_json(&self, compute: f64) -> Value {
+    /// The buckets as seconds, each with its share of ACCOUNTED time, plus the
+    /// CPU seconds no bucket claims.
+    pub fn to_json(&self, spent: Spent) -> Value {
         let accounted = self.accounted();
-        let unaccounted = (compute - accounted).max(0.0);
+        // Against CPU seconds, because every bucket is a thread total, and
+        // SIGNED, because clamping it at zero is how the old wall-clock
+        // version managed to claim 552% accounted and nothing unaccounted in
+        // the same breath. Both signs mean something an operator wants:
+        //
+        //   positive  CPU nobody put a clock around. The supervisor loop, the
+        //             pool's dispatch, allocation, the server thread.
+        //   negative  the in-fight clocks are per-thread WALL clocks, so a
+        //             worker preempted mid-fight keeps accruing fight time
+        //             while it is off-core and the buckets come to slightly
+        //             more than the CPU actually burned. Its size against
+        //             `accounted` is a contention signal: on an idle machine
+        //             it is a fraction of a percent, and it grows with
+        //             whatever else the laptop is doing.
+        //
+        // The clocks stay wall clocks deliberately. A per-thread CPU clock is
+        // a syscall on macOS and these are read three times per decision, so
+        // buying that last fraction of a percent would mean perturbing the
+        // inner loop the whole module exists to measure.
+        let unaccounted = spent.cpu.map(|cpu| cpu - accounted);
         let share = |seconds: f64| number(ratio(seconds, accounted));
         let bucket = |seconds: f64| json!({"seconds": seconds, "share": share(seconds)});
         json!({
             // Named so a reader cannot mistake a share of accounted time for a
             // share of the session, and given both denominators to check it
             // against.
-            "basis": "share is of accounted seconds, not of session compute",
-            "session_compute_seconds": compute,
+            "basis": "bucket seconds are per-thread wall totals; share is of \
+                      accounted seconds, not of wall time. unaccounted_seconds \
+                      is signed: positive is CPU nobody clocked, negative is \
+                      worker threads preempted mid-fight",
+            "session_cpu_seconds": number(spent.cpu),
+            // Reported beside it because the duty cycle is a share of WALL
+            // time and nothing here replaces that. Their ratio is roughly how
+            // many cores the pool actually kept busy.
+            "session_wall_seconds": spent.wall,
+            "threads_busy": number(spent.cpu.and_then(|cpu| ratio(cpu, spent.wall))),
             "accounted_seconds": accounted,
-            "accounted_share_of_compute": number(ratio(accounted, compute)),
-            // The supervisor loop, pool dispatch, allocation and everything
-            // else nobody put a clock around. Reported rather than folded into
-            // a bucket: a phase split that always summed to exactly 100% would
-            // be hiding its own error term.
-            "unaccounted_seconds": unaccounted,
-            "unaccounted_share_of_compute": number(ratio(unaccounted, compute)),
+            "accounted_share_of_cpu": number(spent.cpu.and_then(|cpu| ratio(accounted, cpu))),
+            // The supervisor loop, pool dispatch, allocation, the server
+            // thread and everything else nobody put a clock around. Reported
+            // rather than folded into a bucket: a phase split that always
+            // summed to exactly 100% would be hiding its own error term.
+            "unaccounted_seconds": number(unaccounted),
+            "unaccounted_share_of_cpu": number(
+                unaccounted.zip(spent.cpu).and_then(|(left, cpu)| ratio(left, cpu))
+            ),
             "simulate": bucket(self.simulate),
             "think": bucket(self.think),
             "encode": bucket(self.encode),
@@ -142,11 +212,16 @@ impl Work {
         self.display_ticks += display_ticks.max(0) as u64;
     }
 
-    /// The counts, plus the rates that are comparable across machines and
-    /// across load. Every rate is null until it has something underneath it.
-    pub fn to_json(&self, compute: f64) -> Value {
-        let nanos = compute * 1e9;
+    /// The counts, plus the rates that are comparable across machines, across
+    /// load and across worker counts. Every rate is null until it has
+    /// something underneath it.
+    pub fn to_json(&self, spent: Spent) -> Value {
+        let nanos = spent.cpu.map(|cpu| cpu * 1e9);
         let counts = self.counts;
+        // A rate over CPU nanoseconds, or null when the CPU clock was
+        // unreadable. Never silently over wall nanoseconds: that is the same
+        // number in the same unit meaning something else entirely.
+        let per = |total: u64| number(nanos.and_then(|nanos| ratio(nanos, total as f64)));
         json!({
             "basis": "this process, not the whole run: counters start at zero on every resume",
             "episodes": self.episodes,
@@ -157,12 +232,16 @@ impl Work {
             "element_scans": counts.element_scans,
             "elements_visited": counts.elements_visited,
             "networks_compiled": counts.networks_compiled,
-            // The three headline figures. All of them are work per second of
-            // COMPUTE rather than of wall clock, so the duty governor's rest
-            // is already out of them; unrelated machine load still inflates
-            // them, which is why the benchmark takes the best of several runs.
-            "nanoseconds_per_display_tick": number(ratio(nanos, self.display_ticks as f64)),
-            "nanoseconds_per_link_activation": number(ratio(nanos, counts.link_activations as f64)),
+            // The three headline figures, and the reason this module exists.
+            // The first two are CPU nanoseconds per unit of work: the duty
+            // governor's rest is out of them because a sleeping thread burns
+            // no CPU, and the worker count is out of them because the
+            // denominator sums threads exactly as the numerator does. What is
+            // left moves only when the BUILD changes, or when unrelated load
+            // steals cache and memory bandwidth, which is why the benchmark
+            // still takes the best of several repetitions.
+            "cpu_nanoseconds_per_display_tick": per(self.display_ticks),
+            "cpu_nanoseconds_per_link_activation": per(counts.link_activations),
             "display_ticks_per_episode": number(
                 ratio(self.display_ticks as f64, self.episodes as f64)
             ),
@@ -209,39 +288,167 @@ mod tests {
         assert!((phases.accounted() - 1.0).abs() < 1e-9);
     }
 
+    /// Four CPU seconds of clocked work inside six CPU seconds spent.
+    fn six_cpu_seconds() -> Spent {
+        Spent::new(1.0, Some(6.0))
+    }
+
     #[test]
-    fn the_remainder_of_compute_is_reported_rather_than_hidden() {
+    fn the_remainder_of_cpu_is_reported_rather_than_hidden() {
         let phases = Phases {
             simulate: 3.0,
             think: 1.0,
             ..Phases::default()
         };
-        // Six seconds of compute, four of which any bucket claims.
-        let document = phases.to_json(6.0);
+        let document = phases.to_json(six_cpu_seconds());
         assert_eq!(at(&document, &["accounted_seconds"]), json!(4.0));
         assert_eq!(at(&document, &["unaccounted_seconds"]), json!(2.0));
         // Shares are of accounted time, so simulate is three quarters of four
         // and not a half of six.
         assert_eq!(at(&document, &["simulate", "share"]), json!(0.75));
         assert_eq!(
-            at(&document, &["accounted_share_of_compute"]),
+            at(&document, &["accounted_share_of_cpu"]),
             json!(4.0 / 6.0)
+        );
+    }
+
+    /// The regression this whole denominator exists for.
+    ///
+    /// The buckets and the counters are thread totals, so six workers produce
+    /// six times the seconds and six times the work in one sixth of the wall
+    /// time. Divided by WALL seconds the document claimed 552% of compute
+    /// accounted for, zero unaccounted, and a per-tick cost a fifth of the
+    /// single-threaded truth, so raising `--workers` read as an optimisation.
+    /// Divided by CPU seconds, every figure below is identical at one worker
+    /// and at six.
+    #[test]
+    fn the_shares_and_rates_do_not_move_with_the_worker_count() {
+        let phases = Phases {
+            simulate: 9.0,
+            think: 2.0,
+            encode: 1.0,
+            ..Phases::default()
+        };
+        let mut work = Work::default();
+        for _ in 0..12 {
+            work.episode(900);
+        }
+        work.absorb(Sample {
+            counts: Counts {
+                link_activations: 120_000,
+                decisions: 1_200,
+                ..Counts::default()
+            },
+            nanos: Nanos::default(),
+        });
+        // Twelve CPU seconds either way: one worker for twelve wall seconds,
+        // or six workers for two.
+        let alone = Spent::new(12.0, Some(12.0));
+        let pooled = Spent::new(2.0, Some(12.0));
+        for key in [
+            "accounted_seconds",
+            "accounted_share_of_cpu",
+            "unaccounted_seconds",
+            "unaccounted_share_of_cpu",
+        ] {
+            assert_eq!(
+                at(&phases.to_json(alone), &[key]),
+                at(&phases.to_json(pooled), &[key]),
+                "{key} moved with the worker count"
+            );
+        }
+        for key in [
+            "cpu_nanoseconds_per_display_tick",
+            "cpu_nanoseconds_per_link_activation",
+        ] {
+            assert_eq!(
+                at(&work.to_json(alone), &[key]),
+                at(&work.to_json(pooled), &[key]),
+                "{key} moved with the worker count"
+            );
+        }
+        // And the share is a share: twelve seconds of buckets inside twelve
+        // CPU seconds is all of it, never more.
+        assert_eq!(
+            at(&phases.to_json(pooled), &["accounted_share_of_cpu"]),
+            json!(1.0)
+        );
+        assert_eq!(at(&phases.to_json(pooled), &["unaccounted_seconds"]), json!(0.0));
+        // The wall figure is still reported, and still differs: it is what the
+        // duty cycle is a share of, and it says how many threads were busy.
+        assert_eq!(at(&phases.to_json(pooled), &["threads_busy"]), json!(6.0));
+        assert_eq!(at(&phases.to_json(alone), &["threads_busy"]), json!(1.0));
+    }
+
+    /// Buckets that come to more than the CPU burned are reported as such
+    /// rather than clamped to a tidy zero.
+    ///
+    /// The in-fight clocks are per-thread wall clocks, so a worker preempted
+    /// mid-fight accrues bucket time it did not spend on a core. Clamping is
+    /// exactly how the wall-clock version managed to report 552% accounted and
+    /// nothing unaccounted at once, so the sign is kept and the magnitude is a
+    /// contention signal.
+    #[test]
+    fn buckets_exceeding_the_cpu_burned_show_as_a_negative_remainder() {
+        let phases = Phases {
+            simulate: 6.5,
+            ..Phases::default()
+        };
+        // Six CPU seconds, against six and a half seconds of bucket.
+        let document = phases.to_json(Spent::new(1.0, Some(6.0)));
+        assert_eq!(at(&document, &["unaccounted_seconds"]), json!(-0.5));
+        assert_eq!(
+            at(&document, &["unaccounted_share_of_cpu"]),
+            json!(-0.5 / 6.0)
+        );
+        // And the overshoot is visible in the share too, rather than hidden by
+        // rescaling the buckets to fit.
+        assert_eq!(
+            at(&document, &["accounted_share_of_cpu"]),
+            json!(6.5 / 6.0)
         );
     }
 
     #[test]
     fn nothing_measured_reads_as_null_rather_than_zero() {
-        let document = Phases::default().to_json(0.0);
+        let nothing = Spent::default();
+        assert!(!nothing.measured());
+        let document = Phases::default().to_json(nothing);
         assert_eq!(at(&document, &["simulate", "share"]), Value::Null);
-        assert_eq!(at(&document, &["accounted_share_of_compute"]), Value::Null);
-        let work = Work::default().to_json(0.0);
-        assert_eq!(at(&work, &["nanoseconds_per_display_tick"]), Value::Null);
+        assert_eq!(at(&document, &["accounted_share_of_cpu"]), Value::Null);
+        let work = Work::default().to_json(nothing);
+        assert_eq!(at(&work, &["cpu_nanoseconds_per_display_tick"]), Value::Null);
         assert_eq!(at(&work, &["display_ticks_per_episode"]), Value::Null);
         assert_eq!(at(&work, &["episodes"]), json!(0));
     }
 
+    /// A wall clock that ran while the CPU clock could not be read is not a
+    /// substitute for it: the rate would be the same number in the same unit
+    /// meaning something else, so it is null instead.
     #[test]
-    fn the_rates_are_per_compute_second_and_per_unit_of_work() {
+    fn a_missing_cpu_clock_nulls_the_rates_rather_than_falling_back_to_wall() {
+        let mut work = Work::default();
+        work.episode(900);
+        let blind = Spent::new(5.0, None);
+        assert!(blind.measured());
+        let document = work.to_json(blind);
+        assert_eq!(
+            at(&document, &["cpu_nanoseconds_per_display_tick"]),
+            Value::Null
+        );
+        // The counts themselves are still facts and are still reported.
+        assert_eq!(at(&document, &["display_ticks"]), json!(900));
+        let phases = Phases {
+            simulate: 1.0,
+            ..Phases::default()
+        }
+        .to_json(blind);
+        assert_eq!(at(&phases, &["unaccounted_seconds"]), Value::Null);
+        assert_eq!(at(&phases, &["accounted_seconds"]), json!(1.0));
+    }
+
+    #[test]
+    fn the_rates_are_per_cpu_second_and_per_unit_of_work() {
         let mut work = Work::default();
         for _ in 0..4 {
             work.episode(900);
@@ -257,16 +464,16 @@ mod tests {
             },
             nanos: Nanos::default(),
         });
-        // Two seconds of compute against 3,600 display ticks and 100,000 link
+        // Two CPU seconds against 3,600 display ticks and 100,000 link
         // activations.
-        let document = work.to_json(2.0);
+        let document = work.to_json(Spent::new(2.0, Some(2.0)));
         assert_eq!(at(&document, &["display_ticks"]), json!(3_600));
         assert_eq!(
-            at(&document, &["nanoseconds_per_display_tick"]),
+            at(&document, &["cpu_nanoseconds_per_display_tick"]),
             json!(2e9 / 3_600.0)
         );
         assert_eq!(
-            at(&document, &["nanoseconds_per_link_activation"]),
+            at(&document, &["cpu_nanoseconds_per_link_activation"]),
             json!(2e9 / 100_000.0)
         );
         assert_eq!(at(&document, &["display_ticks_per_episode"]), json!(900.0));

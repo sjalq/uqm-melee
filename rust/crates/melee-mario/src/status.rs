@@ -11,6 +11,7 @@
 
 use crate::broad::{self, Cell, Evaluation, Source};
 use crate::genome::{Genome, N_MEMORY};
+use crate::phases::Spent;
 use crate::trainer::{iso8601, Mode, Trainer};
 use serde_json::{json, Value};
 
@@ -131,6 +132,14 @@ impl Trainer {
         } else {
             0.0
         };
+        // What this session spent, on both clocks. A process that has burned
+        // no CPU has not measured zero nanoseconds per tick, it has measured
+        // nothing, so an unmeasured CPU total is None and every rate built on
+        // it comes out null.
+        let session = Spent::new(
+            self.session_compute,
+            (self.session_cpu > 0.0).then_some(self.session_cpu),
+        );
 
         json!({
             "schema_version": SCHEMA_VERSION,
@@ -233,12 +242,12 @@ impl Trainer {
             // reading a checkpoint from disk is such a process, and a document
             // full of zeroes would claim a measurement of no work rather than
             // no measurement.
-            "work": match self.session_compute > 0.0 {
-                true => self.work.to_json(self.session_compute),
+            "work": match session.measured() {
+                true => self.work.to_json(session),
                 false => Value::Null,
             },
-            "phases": match self.session_compute > 0.0 {
-                true => self.phases.to_json(self.session_compute),
+            "phases": match session.measured() {
+                true => self.phases.to_json(session),
                 false => Value::Null,
             },
             // The round in flight is `overall.round`, and how far it has got is
