@@ -15,11 +15,10 @@ the caller's discipline.
 1.  A gap is a gap. A `Nothing` sample is never drawn as zero and never
     bridged; the polyline simply stops and restarts.
 
-2.  Incomparable spans are never joined. Each slot carries a `segment`
-    key (the curriculum stage). When the key changes between adjacent
-    slots the line breaks and a divider is drawn, because a win rate
-    measured against a 1x1 roster and one measured against a 6x6 roster
-    are not points on the same curve.
+2.  Every slot is comparable with every other. The trainer trains on the
+    whole board from generation one, so consecutive history points
+    measure the same question and there is no scope change for the
+    geometry to break the line at. The only break left is rule 1's.
 
 The crosshair is driven by one invisible hit rectangle per slot, so it
 needs no pointer coordinate arithmetic and behaves identically under
@@ -72,7 +71,6 @@ type alias Config msg =
     { height : Float
     , userWidth : Float
     , xLabels : List String
-    , segments : List Int
     , yMin : Float
     , yMax : Float
     , yTicks : List ( Float, String )
@@ -283,7 +281,6 @@ viewGrid config total =
                 config.yTicks
     in
     ticks
-        ++ segmentDividers config total
         ++ [ Svg.line
                 [ SA.x1 (String.fromFloat plotLeft)
                 , SA.x2 (String.fromFloat (config.userWidth - plotRight))
@@ -331,46 +328,6 @@ xAxisLabels config total =
             )
 
 
-{-| A vertical rule wherever the curriculum stage changes. Everything to
-the left of it was measured against a smaller roster.
--}
-segmentDividers : Config msg -> Int -> List (Svg msg)
-segmentDividers config total =
-    let
-        pairs =
-            List.map2 Tuple.pair config.segments (List.drop 1 config.segments)
-    in
-    pairs
-        |> List.indexedMap (\i ( a, b ) -> ( i, a, b ))
-        |> List.filter (\( _, a, b ) -> a /= b)
-        |> List.concatMap
-            (\( i, _, b ) ->
-                let
-                    x =
-                        (slotX config total i + slotX config total (i + 1)) / 2
-                in
-                [ Svg.line
-                    [ SA.x1 (String.fromFloat x)
-                    , SA.x2 (String.fromFloat x)
-                    , SA.y1 (String.fromFloat plotTop)
-                    , SA.y2 (String.fromFloat (config.height - plotBottom))
-                    , SA.stroke "#8a5f1d"
-                    , SA.strokeWidth "1"
-                    , SA.strokeDasharray "3 3"
-                    ]
-                    []
-                , Svg.text_
-                    [ SA.x (String.fromFloat (x + 3))
-                    , SA.y (String.fromFloat (plotTop + 9))
-                    , SA.fontSize "9"
-                    , SA.fill "#8a5f1d"
-                    , SA.fontFamily "ui-monospace, Menlo, Consolas, monospace"
-                    ]
-                    [ Svg.text ("stage " ++ String.fromInt b) ]
-                ]
-            )
-
-
 viewGuides : Config msg -> List (Svg msg)
 viewGuides config =
     List.concatMap
@@ -407,37 +364,34 @@ viewGuides config =
 -- SERIES
 
 
-{-| Contiguous runs of measured samples that also share a segment key.
+{-| Contiguous runs of measured samples.
+
+A `Nothing` ends the current run and starts the next one, which is what
+keeps an unmeasured generation from being bridged as if it had been
+measured. Nothing else breaks a run: every history point answers the
+same question as every other.
+
 -}
-runs : List Int -> List (Maybe Float) -> List (List ( Int, Float ))
-runs segments values =
+runs : List (Maybe Float) -> List (List ( Int, Float ))
+runs values =
     let
         indexed =
-            List.indexedMap (\i v -> ( i, v, segmentAt segments i )) values
+            List.indexedMap Tuple.pair values
 
-        step ( i, value, segment ) ( current, done ) =
+        step ( i, value ) ( current, done ) =
             case value of
                 Nothing ->
                     ( [], flush current done )
 
                 Just v ->
-                    case current of
-                        [] ->
-                            ( [ ( i, v, segment ) ], done )
-
-                        ( _, _, prevSegment ) :: _ ->
-                            if prevSegment == segment then
-                                ( ( i, v, segment ) :: current, done )
-
-                            else
-                                ( [ ( i, v, segment ) ], flush current done )
+                    ( ( i, v ) :: current, done )
 
         flush current done =
-            if List.length current >= 1 then
-                List.reverse (List.map (\( i, v, _ ) -> ( i, v )) current) :: done
+            if List.isEmpty current then
+                done
 
             else
-                done
+                List.reverse current :: done
 
         ( leftover, collected ) =
             List.foldl step ( [], [] ) indexed
@@ -445,16 +399,11 @@ runs segments values =
     List.reverse (flush leftover collected)
 
 
-segmentAt : List Int -> Int -> Int
-segmentAt segments index =
-    segments |> List.drop index |> List.head |> Maybe.withDefault 0
-
-
 viewSeries : Config msg -> Int -> Series -> List (Svg msg)
 viewSeries config total s =
     let
-        segmentRuns =
-            runs config.segments s.values
+        measuredRuns =
+            runs s.values
 
         toPoint ( i, v ) =
             String.fromFloat (slotX config total i) ++ "," ++ String.fromFloat (valueY config v)
@@ -499,7 +448,7 @@ viewSeries config total s =
             else
                 []
     in
-    List.concatMap (\run -> lineOf run ++ dotsOf run) segmentRuns
+    List.concatMap (\run -> lineOf run ++ dotsOf run) measuredRuns
 
 
 
@@ -635,13 +584,9 @@ viewReadout config total =
 
                 label =
                     config.xLabels |> List.drop index |> List.head |> Maybe.withDefault ""
-
-                stage =
-                    segmentAt config.segments index
             in
             div [ Attr.class "chart-readout", Attr.id config.describedBy ]
                 (readoutItem "Sample" label
-                    :: readoutItem "Stage" (String.fromInt stage)
                     :: List.map
                         (\s ->
                             readoutItem s.label

@@ -755,6 +755,9 @@ fn supervise(options: Options) -> Result<(), String> {
     };
 
     trainer.nice = options.nice;
+    // Read once, here, rather than on every status publish: the file changes
+    // only when `bench` is run, which is never while this process is training.
+    trainer.benchmark = benchmark::reference(&bench_history(&options));
     // Applied AFTER the fingerprint guard above, and deliberately not subject
     // to it: the worker count is a resource knob like `nice`, not part of the
     // trajectory, so a run started on one worker may be resumed on nine and

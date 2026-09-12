@@ -28,5 +28,7 @@ artifacts/
 __pycache__/
 *.pyc
 
-# MarI/O dashboard build output (compiled Elm, never committed)
-scripts/mario/dashboard.js
+# The MarI/O dashboard bundle (scripts/mario/dashboard.js) is NOT ignored: the
+# trainer serves that exact file at /dashboard.js, so a checkout has to carry a
+# build that matches the sources beside it. Rebuild it with scripts/mario/build.sh
+# whenever tests/Mario/Dashboard*.elm changes, and commit the result.

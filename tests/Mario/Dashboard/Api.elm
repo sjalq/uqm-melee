@@ -1,32 +1,28 @@
 module Mario.Dashboard.Api exposing
-    ( Audit
+    ( Benchmark
+    , Board
+    , Bucket
     , Champion
     , Checkpoint
-    , CombatVictories(..)
-    , Curriculum
-    , EvaluationScope(..)
-    , EvidenceSource(..)
     , Event
+    , EvidenceSource(..)
     , Fitness(..)
     , GateCriterion(..)
     , Gene
     , Genome
     , HistoryPoint
-    , Ladder(..)
     , Matchup
-    , MatchupStatus(..)
     , Network
-    , Node
     , NoDamagePenalty(..)
+    , Node
     , NodeKind(..)
-    , NextSide(..)
     , OpponentType(..)
     , Overall
     , OverallRound(..)
     , Phase(..)
+    , PhaseSplit
     , Population
     , Readiness
-    , Regression
     , Resources
     , RoundResult
     , Sampler
@@ -34,21 +30,17 @@ module Mario.Dashboard.Api exposing
     , Seat(..)
     , ShipPerformance
     , Status
+    , Work
     , decodeNetwork
     , decodeStatus
     , empty
     , emptyGenome
-    , evaluationScopeLabel
     , evidenceIsGate
     , evidenceSourceLabel
     , fitnessLabel
     , gateCriterionLabel
     , gateSuccessNoun
     , gateSuccessPlural
-    , isBroad
-    , ladderLabel
-    , matchupStatusLabel
-    , nextSideLabel
     , nodeKindFromString
     , opponentTypeLabel
     , overallRoundLabel
@@ -57,10 +49,9 @@ module Mario.Dashboard.Api exposing
     , phaseLabel
     , seatLabel
     , seatPhrase
-    , statusFromString
     )
 
-{-| Decoders for the melee-mario trainer HTTP API (schema_version 1).
+{-| Decoders for the melee-mario trainer HTTP API (schema_version 4).
 
 Two rules run through every decoder here.
 
@@ -74,9 +65,15 @@ Two rules run through every decoder here.
     and a conservative default so a newer engine that adds fields, or an
     older engine that has not filled one in yet, still renders. Unknown
     enum strings are preserved verbatim in an `Other` constructor rather
-    than collapsing into a known state, so a future `phase` or matchup
-    `status` shows up honestly instead of masquerading as something the
-    dashboard already understands.
+    than collapsing into a known state, so a future `phase` shows up
+    honestly instead of masquerading as something the dashboard already
+    understands.
+
+The staged curriculum is gone from the engine and therefore from here:
+there is no `curriculum` object, no per-cell mastery vocabulary, no
+predeclared per-champion audit block and no regression rehearsal. The
+run trains on the whole board from generation one and is graded on one
+aggregate, which is `overall`.
 
 -}
 
@@ -88,13 +85,21 @@ import Json.Decode.Pipeline exposing (custom, optional, required)
 -- PHASE
 
 
+{-| Every phase the engine can publish, plus the two the dashboard has to
+represent on its own behalf.
+
+There is no error phase. A start that fails exits with the reason on
+stderr rather than publishing a document, so an "error" string is
+something no build produces and it arrives here as `UnknownPhase` like
+any other stranger.
+
+-}
 type Phase
     = Initializing
     | Training
     | Auditing
     | Paused
     | Stopped
-    | Errored
     | UnknownPhase String
 
 
@@ -115,9 +120,6 @@ phaseFromString raw =
 
         "stopped" ->
             Stopped
-
-        "error" ->
-            Errored
 
         other ->
             UnknownPhase other
@@ -140,9 +142,6 @@ phaseLabel phase =
 
         Stopped ->
             "Stopped"
-
-        Errored ->
-            "Error"
 
         UnknownPhase other ->
             other
@@ -167,9 +166,6 @@ phaseIsLive phase =
             False
 
         Stopped ->
-            False
-
-        Errored ->
             False
 
         UnknownPhase _ ->
@@ -213,226 +209,7 @@ opponentTypeLabel kind =
 
 
 
--- NEXT SIDE
-
-
-type NextSide
-    = AddOpponent
-    | AddOurs
-    | AddModel
-    | Complete
-    | UnknownSide String
-
-
-nextSideFromString : String -> NextSide
-nextSideFromString raw =
-    case raw of
-        "opponent" ->
-            AddOpponent
-
-        "ours" ->
-            AddOurs
-
-        "model" ->
-            AddModel
-
-        "complete" ->
-            Complete
-
-        other ->
-            UnknownSide other
-
-
-nextSideLabel : NextSide -> String
-nextSideLabel side =
-    case side of
-        AddOpponent ->
-            "add an opponent ship"
-
-        AddOurs ->
-            "add one of our ships"
-
-        AddModel ->
-            "add a frozen model opponent"
-
-        Complete ->
-            "curriculum complete"
-
-        UnknownSide other ->
-            other
-
-
-
--- MATCHUP STATUS
-
-
-type MatchupStatus
-    = Unseen
-    | Learning
-    | AuditingCell
-    | Mastered
-    | UnknownStatus String
-
-
-statusFromString : String -> MatchupStatus
-statusFromString raw =
-    case raw of
-        "unseen" ->
-            Unseen
-
-        "learning" ->
-            Learning
-
-        "auditing" ->
-            AuditingCell
-
-        "mastered" ->
-            Mastered
-
-        other ->
-            UnknownStatus other
-
-
-matchupStatusLabel : MatchupStatus -> String
-matchupStatusLabel status =
-    case status of
-        Unseen ->
-            "Unseen"
-
-        Learning ->
-            "Learning"
-
-        AuditingCell ->
-            "Auditing"
-
-        Mastered ->
-            "Mastered"
-
-        UnknownStatus other ->
-            other
-
-
-
--- RECORDS
-
-
-{-| How the curriculum is currently expanding. "Climbing" adds ships one
-side at a time up the frozen order; "mixed" plays an assembled roster;
-"broad" abandons staged expansion entirely and samples any ship against
-any ship, gated on one overall balanced result rather than per cell.
--}
-type Ladder
-    = Climbing
-    | Mixed
-    | Broad
-    | UnknownLadder String
-
-
-ladderFromString : String -> Ladder
-ladderFromString raw =
-    case raw of
-        "climbing" ->
-            Climbing
-
-        "mixed" ->
-            Mixed
-
-        "broad" ->
-            Broad
-
-        other ->
-            UnknownLadder other
-
-
-ladderLabel : Ladder -> String
-ladderLabel ladder =
-    case ladder of
-        Climbing ->
-            "climbing"
-
-        Mixed ->
-            "mixed"
-
-        Broad ->
-            "broad, any ship versus any ship"
-
-        UnknownLadder other ->
-            other
-
-
-{-| What the run is actually being judged on.
-
-Per-cell gating and overall balanced gating are different claims, and
-the dashboard must never present one as the other. The scope is read
-from `evaluation_scope` where the engine publishes it, and falls back to
-the ladder when it does not, because a broad ladder that has not yet
-grown the field is still not being gated per cell.
-
--}
-type EvaluationScope
-    = PerCellScope
-    | OverallBalancedScope
-    | UnknownScope String
-
-
-evaluationScopeFromString : String -> EvaluationScope
-evaluationScopeFromString raw =
-    case raw of
-        "per-cell-ladder" ->
-            PerCellScope
-
-        "overall-balanced" ->
-            OverallBalancedScope
-
-        other ->
-            UnknownScope other
-
-
-evaluationScopeLabel : EvaluationScope -> String
-evaluationScopeLabel scope =
-    case scope of
-        PerCellScope ->
-            "per ordered matchup"
-
-        OverallBalancedScope ->
-            "overall, balanced any-versus-any"
-
-        UnknownScope other ->
-            other
-
-
-{-| True when this run is judged on one aggregate balanced result rather
-than cell by cell. Either signal is enough on its own: an engine that
-declares the scope is believed, and a broad ladder is broad whether or
-not the scope field arrived.
--}
-isBroad : Curriculum -> Bool
-isBroad curriculum =
-    (curriculum.evaluationScope == OverallBalancedScope)
-        || (curriculum.ladder == Broad)
-
-
-type alias Curriculum =
-    { stage : Int
-    , ourRoster : List String
-    , opponentRoster : List String
-    , opponentTypes : List OpponentType
-    , nextSide : NextSide
-    , nextShip : Maybe String
-    , target : Float
-    , masteredMatchups : Int
-    , totalMatchups : Int
-    , ladder : Ladder
-    , opponentRevision : Int
-    , opponentFingerprint : Maybe String
-    , selfPlayIsGated : Bool
-    , evaluationScope : EvaluationScope
-    , stageUnlockedExternally : Bool
-    , transitionReason : Maybe String
-    , originRunId : Maybe String
-    , originGeneration : Maybe Int
-    , originFingerprint : Maybe String
-    }
+-- SEATS AND EVIDENCE
 
 
 {-| Which hull a per-ship row groups by.
@@ -443,10 +220,6 @@ very same wins by the hull it was flying against. `opponent` is not the
 enemy's win count and is not the inverse of anything, so a low figure
 there means our champion struggles against that hull, not that the hull
 is losing.
-
-Keeping the two apart matters because they answer different questions,
-and pooling them or inverting one would silently reverse the meaning of
-half the table.
 
 -}
 type Seat
@@ -496,113 +269,6 @@ seatPhrase seat =
 
         UnknownSeat other ->
             other
-
-
-{-| Which round of the overall gate the reported figures belong to. The
-audit round and the independent confirm round are separate panels with
-separate trial counters, so their evidence is never added together.
--}
-type OverallRound
-    = AuditRound
-    | ConfirmRound
-    | UnknownRound String
-
-
-overallRoundFromString : String -> OverallRound
-overallRoundFromString raw =
-    case raw of
-        "audit" ->
-            AuditRound
-
-        "confirm" ->
-            ConfirmRound
-
-        other ->
-            UnknownRound other
-
-
-overallRoundLabel : OverallRound -> String
-overallRoundLabel round =
-    case round of
-        AuditRound ->
-            "audit"
-
-        ConfirmRound ->
-            "confirm"
-
-        UnknownRound other ->
-            other
-
-
-{-| One round's record on the balanced panel. Audit and confirm are kept
-as separate values with separate counters, because adding them together
-would turn two independent rounds into one larger sample and destroy the
-whole point of confirming.
--}
-type alias RoundResult =
-    { wins : Int
-    , games : Int
-    , winRate : Maybe Float
-    , lowerBound : Maybe Float
-    , passed : Bool
-    }
-
-
-{-| The aggregate gate for a broad run: one frozen champion's record on a
-fixed held-out balanced panel in which all 25 of our hulls and all 25
-opponent hulls are equally represented, each pair played in both seats.
-
-This is an aggregate over a distribution whose paired-seat outcomes are
-correlated. It is an operational confidence check, not a formal global
-guarantee, and it is deliberately not a per-matchup claim. The view must
-never label it as either. `passed` is the engine's own verdict, true
-only once both rounds have cleared; the dashboard shows it beside the
-published bound rather than recomputing a pass of its own.
-
--}
-type alias Overall =
-    { scope : String
-    , target : Float
-    , panel : Int
-    , pairs : Int
-    , round : Maybe OverallRound
-    , wins : Int
-    , games : Int
-    , winRate : Maybe Float
-    , lowerBound : Maybe Float
-    , championId : String
-    , passed : Bool
-    , audit : RoundResult
-    , confirm : RoundResult
-    , attempt : Int
-    }
-
-
-{-| Per-hull diagnostics from the same evidence, one entry per ship per
-seat.
-
-`wins` is always our champion's wins, in both seats. A `side = OurSeat`
-row is that record grouped by the hull our champion flew; a
-`side = OpponentSeat` row is the same record grouped by the hull it flew
-against. Neither row ever reports the enemy's wins.
-
-Every figure here comes from the current frozen policy's balanced
-evaluation evidence only. Results from an earlier champion, and plays
-from the adaptive training pool, are never mixed in.
-
-These expose blind spots; they do not gate anything, and a hull with no
-games carries `Nothing`, never a zero win rate.
-
--}
-type alias ShipPerformance =
-    { side : Seat
-    , ship : String
-    , wins : Int
-    , games : Int
-    , winRate : Maybe Float
-    , lowerBound : Maybe Float
-    , source : EvidenceSource
-    }
 
 
 {-| Which stream produced a per-hull row.
@@ -673,15 +339,136 @@ evidenceIsGate source =
             False
 
 
+
+-- THE GRADED QUESTION
+
+
+{-| Which round of the overall gate the reported figures belong to. The
+audit round and the independent confirm round are separate panels with
+separate trial counters, so their evidence is never added together.
+-}
+type OverallRound
+    = AuditRound
+    | ConfirmRound
+    | UnknownRound String
+
+
+overallRoundFromString : String -> OverallRound
+overallRoundFromString raw =
+    case raw of
+        "audit" ->
+            AuditRound
+
+        "confirm" ->
+            ConfirmRound
+
+        other ->
+            UnknownRound other
+
+
+overallRoundLabel : OverallRound -> String
+overallRoundLabel round =
+    case round of
+        AuditRound ->
+            "audit"
+
+        ConfirmRound ->
+            "confirm"
+
+        UnknownRound other ->
+            other
+
+
+{-| One round's record on the balanced panel. Audit and confirm are kept
+as separate values with separate counters, because adding them together
+would turn two independent rounds into one larger sample and destroy the
+whole point of confirming.
+-}
+type alias RoundResult =
+    { wins : Int
+    , games : Int
+    , winRate : Maybe Float
+    , lowerBound : Maybe Float
+    , passed : Bool
+    }
+
+
+{-| The aggregate gate: one frozen champion's record on a fixed held-out
+balanced panel in which all 25 of our hulls and all 25 opponent hulls
+are equally represented, each pair played in both seats.
+
+This is an aggregate over a distribution whose paired-seat outcomes are
+correlated. It is an operational confidence check, not a formal global
+guarantee, and it is deliberately not a per-matchup claim. The view must
+never label it as either. `passed` is the engine's own verdict, true
+only once both rounds have cleared AND the champion that cleared them is
+still the champion; `passedBy` names whoever did clear it, so a gate
+opened by an earlier policy is reported rather than inherited.
+
+-}
+type alias Overall =
+    { scope : String
+    , target : Float
+    , panel : Int
+    , pairs : Int
+    , round : Maybe OverallRound
+    , wins : Int
+    , games : Int
+    , winRate : Maybe Float
+    , lowerBound : Maybe Float
+    , championId : Maybe String
+    , passed : Bool
+    , passedBy : Maybe String
+    , audit : RoundResult
+    , confirm : RoundResult
+    , attempt : Int
+    }
+
+
+{-| Per-hull diagnostics from the same evidence, one entry per ship per
+seat.
+
+`wins` is always our champion's wins, in both seats. A `side = OurSeat`
+row is that record grouped by the hull our champion flew; a
+`side = OpponentSeat` row is the same record grouped by the hull it flew
+against. Neither row ever reports the enemy's wins.
+
+These expose blind spots; they do not gate anything, and a hull with no
+games carries `Nothing`, never a zero win rate.
+
+-}
+type alias ShipPerformance =
+    { side : Seat
+    , ship : String
+    , wins : Int
+    , games : Int
+    , winRate : Maybe Float
+    , lowerBound : Maybe Float
+    , source : EvidenceSource
+    }
+
+
+
+-- WHAT IT IS PLAYING
+
+
+{-| The board every generation trains on, in full, from generation one.
+
+`totalMatchups` is what is ACTIVE. Nothing here is earned and nothing is
+mastered: there is no schedule, so a count of cells is a statement about
+the size of the problem rather than about progress through it.
+
+-}
+type alias Board =
+    { totalMatchups : Int }
+
+
 {-| What the adaptive training sampler is currently drawing from.
 
 `balancedShare` is the share of each training panel reserved for the
 balanced rotation. It is a property of how the panel is built, not a
 measurement of how much of the 625-cell board has been seen, and the
 view must not present it as coverage of the board.
-
-Every field is optional, and the block is absent entirely outside broad
-mode, so the view shows nothing rather than inventing a figure.
 
 -}
 type alias Sampler =
@@ -692,58 +479,38 @@ type alias Sampler =
     }
 
 
-{-| The predeclared audit panel for the frozen candidate. `panel` is the
-fixed number of games, `maxLosses` the number of losses the attempt can
-absorb and still reach the target (so the cap is survivable and the next
-loss after it ends the attempt), `spent` how much of the overall audit
-budget has gone.
--}
-type alias Audit =
-    { panel : Int
-    , maxLosses : Int
-    , budget : Int
-    , spent : Int
-    , round : Maybe Int
-    }
-
-
-{-| Rehearsal of already-mastered cells, so a later stage cannot quietly
-break an earlier one. Absent entirely on an engine that does not run it,
-which is why the status carries a `Maybe`.
--}
-type alias Regression =
-    { active : Bool
-    , sweeping : Bool
-    , rehearsing : Int
-    , lastSwept : Int
-    , lastFailed : Int
-    , budget : Int
-    }
-
-
 {-| The cheap screening test that decides when a candidate is worth
 spending an expensive audit panel on.
 -}
 type alias Readiness =
-    { games : Int
-    , period : Int
-    , threshold : Float
+    { threshold : Float
+    , games : Int
     , lastRate : Maybe Float
-    , purpose : Maybe String
+    , period : Int
     }
 
 
-type alias Champion =
-    { id : String
-    , validatedWins : Int
-    , validatedGames : Int
-    , winRate : Maybe Float
-    , lowerBound : Maybe Float
-    , nodes : Int
-    , connections : Int
-    , hiddenNodes : Int
-    , worstCellLowerBound : Maybe Float
+{-| One row of training exposure for one ordered matchup.
+
+Every number here is training exposure: how much of the next panel the
+cell attracts, how many decayed games it has and how they went. None of
+it is held-out evidence and none of it gates anything, which is why no
+row carries a verdict. `trainingGames` is a decayed count and therefore
+fractional; a cell with none has a `Nothing` rate rather than a zero.
+
+-}
+type alias Matchup =
+    { us : String
+    , them : String
+    , opponentType : OpponentType
+    , sampleWeight : Float
+    , trainingGames : Float
+    , trainingWinRate : Maybe Float
     }
+
+
+
+-- COST AND HEALTH
 
 
 type alias Population =
@@ -766,19 +533,139 @@ type alias Resources =
     { workers : Int
     , dutyCycle : Float
 
-    -- The measured fraction of wall time the evaluator pool spends working
+    -- The measured fraction of WALL time the evaluator pool spends working
     -- rather than resting, averaged over its workers. It is a property of the
     -- pool, not of the machine: eight workers at 0.5 and one worker at 0.5
     -- report the same number while occupying very different amounts of the
     -- box. Absent when the engine has not measured it yet.
     , measuredDuty : Maybe Float
 
+    -- All-time wall seconds actually spent computing, across every resume.
+    , computeSeconds : Float
+
     -- How long one fight is allowed to last, in simulation ticks. The
     -- crew ratio is read at this deadline, so the figure is part of what
     -- the score means rather than a scheduling detail. Absent when the
     -- engine does not report it; never guessed at.
     , episodeTicks : Maybe Int
+
+    -- The scheduling penalty this invocation runs under.
+    , nice : Int
     }
+
+
+{-| Machine independent work THIS process has done, and the rates that
+make two builds comparable.
+
+Every count is an event count: not one of them moves when the machine
+gets busy, when the duty governor rests or when a fight happens to end
+early. The two headline rates divide CPU nanoseconds summed over every
+thread by those counts, so they are invariant to the worker count as
+well, which is exactly what a wall-clock rate is not.
+
+The whole block is absent on a process that has not computed. That is
+not a measurement of no work; it is no measurement, so it decodes to
+`Nothing` rather than to a page of zeroes.
+
+-}
+type alias Work =
+    { episodes : Int
+    , displayTicks : Int
+    , decisions : Int
+    , nodeActivations : Int
+    , linkActivations : Int
+    , elementScans : Int
+    , elementsVisited : Int
+    , networksCompiled : Int
+    , cpuNanosPerDisplayTick : Maybe Float
+    , cpuNanosPerLinkActivation : Maybe Float
+    , displayTicksPerEpisode : Maybe Float
+    , linkActivationsPerDecision : Maybe Float
+    , elementsPerScan : Maybe Float
+    }
+
+
+{-| One named phase's seconds, and its share of ACCOUNTED time.
+
+The share denominator is accounted seconds rather than the session, so
+the buckets always sum to one. What is left over is reported separately
+and signed, which is the only honest way to show a split whose error
+term is real.
+
+-}
+type alias Bucket =
+    { name : String
+    , seconds : Float
+    , share : Maybe Float
+    }
+
+
+{-| Where this session's CPU seconds went.
+
+`unaccountedSeconds` is SIGNED and both signs mean something. Positive
+is CPU nobody put a clock around: the supervisor loop, pool dispatch,
+allocation, the server thread. Negative is worker threads preempted
+mid-fight, because the in-fight clocks are per-thread wall clocks, so
+its size against the accounted total is a contention signal rather than
+an error.
+
+-}
+type alias PhaseSplit =
+    { sessionCpuSeconds : Maybe Float
+    , sessionWallSeconds : Float
+    , threadsBusy : Maybe Float
+    , accountedSeconds : Float
+    , accountedShareOfCpu : Maybe Float
+    , unaccountedSeconds : Maybe Float
+    , unaccountedShareOfCpu : Maybe Float
+    , buckets : List Bucket
+    }
+
+
+{-| What this BUILD costs with the machine to itself, as the fixed-work
+benchmark last measured it.
+
+It is a reference figure, not a session figure: it does not move while
+the trainer runs, and it is only ever quoted for a recorded run of this
+exact binary on this exact workload definition. `comparableRows` is how
+many recorded results the best was taken over, so a best-of-one cannot
+be read as a settled number.
+
+-}
+type alias Benchmark =
+    { at : Maybe String
+    , build : Maybe String
+    , definition : Maybe String
+    , repetitions : Maybe Int
+    , fights : Maybe Int
+    , bestSeconds : Maybe Float
+    , cpuNanosPerDisplayTick : Maybe Float
+    , cpuNanosPerLinkActivation : Maybe Float
+    , comparableRows : Int
+    }
+
+
+
+-- THE CHAMPION
+
+
+{-| What the champion IS. What it has been shown to do is `overall`, and
+nothing here restates it.
+
+No champion means no topology, so every figure is `Nothing` rather than
+zero: a zero here would read as a graph with no nodes.
+
+-}
+type alias Champion =
+    { id : Maybe String
+    , nodes : Maybe Int
+    , connections : Maybe Int
+    , hiddenNodes : Maybe Int
+    }
+
+
+
+-- SCORING
 
 
 {-| How a genome's score was computed, as the engine reports it.
@@ -970,56 +857,17 @@ type alias Scoring =
     }
 
 
-{-| Actual resolved combat victories across the run's episodes, counted
-regardless of what the run is gated on.
 
-This exists because under a crew-lead gate every other tally on the page
-counts leads, and a lead is not a victory. It is the one figure that can
-still honestly say "won". It is a population-wide total over episodes,
-never a champion rate, and the two are never placed where one could be
-read as the other.
-
-The engine can only count from the point the counter existed, so the two
-cases are separate values rather than one number with a footnote:
-
-  - `VictoriesAllTime` is exact for the whole run, and the engine
-    publishes it only when the counting window starts at episode zero.
-  - `VictoriesSince` is a partial count on a run that was already under
-    way, and must always be shown with the episode baseline it started
-    from, because the run's true total is unknown.
-
-`Nothing` on the status means the engine reports no such counter at all,
-in which case the page shows none.
-
--}
-type CombatVictories
-    = VictoriesAllTime Int
-    | VictoriesSince { victories : Int, sinceEpisodes : Int }
+-- HISTORY AND EVENTS
 
 
 type alias HistoryPoint =
     { generation : Int
-    , stage : Int
     , trainingWinRate : Maybe Float
     , validationWinRate : Maybe Float
     , species : Int
     , nodes : Int
     , episodes : Int
-    }
-
-
-type alias Matchup =
-    { us : String
-    , them : String
-    , opponentType : OpponentType
-    , wins : Int
-    , games : Int
-    , winRate : Maybe Float
-    , lowerBound : Maybe Float
-    , status : MatchupStatus
-    , sampleWeight : Float
-    , trainingGames : Float
-    , trainingWinRate : Maybe Float
     }
 
 
@@ -1029,6 +877,10 @@ type alias Event =
     }
 
 
+
+-- THE WHOLE DOCUMENT
+
+
 type alias Status =
     { schemaVersion : Int
     , runId : String
@@ -1036,34 +888,34 @@ type alias Status =
     , message : String
     , generation : Int
     , episodes : Int
+    , episodesUnresolved : Int
+
+    -- Factual combat victories over the whole run, whatever the gate
+    -- counts. `Nothing` when the engine publishes no such counter.
+    , episodesCombatWins : Maybe Int
     , elapsedSeconds : Float
     , episodesPerSecond : Float
     , updatedAt : String
-    , curriculum : Curriculum
+    , stale : Bool
+
+    -- Absent on every run that predates the scoring selector. Absence is
+    -- not "unknown rule" and it is certainly not the crew ratio.
+    , scoring : Maybe Scoring
+    , board : Board
     , champion : Champion
     , population : Population
     , checkpoint : Checkpoint
     , resources : Resources
-    , history : List HistoryPoint
-    , matchups : List Matchup
-    , events : List Event
-    , audit : Audit
+    , work : Maybe Work
+    , phases : Maybe PhaseSplit
+    , benchmark : Maybe Benchmark
     , readiness : Readiness
-    , stale : Bool
-    , episodesUnresolved : Int
-
-    -- Factual combat outcomes, kept apart from every gate tally above.
-    -- `Nothing` when the engine publishes no such counter.
-    , combatVictories : Maybe CombatVictories
-    , regression : Maybe Regression
+    , history : List HistoryPoint
     , overall : Maybe Overall
     , shipPerformance : List ShipPerformance
     , sampler : Maybe Sampler
-
-    -- Absent on every run that predates the scoring selector. Absence is
-    -- not "unknown rule" and it is certainly not the crew ratio; see
-    -- `Scoring` below.
-    , scoring : Maybe Scoring
+    , matchups : List Matchup
+    , events : List Event
     }
 
 
@@ -1103,36 +955,56 @@ safeFloat fallback =
             )
 
 
+{-| A string field the engine nulls when there is nothing to name. An
+empty string means the same thing and is folded into `Nothing`, so no
+caller has to test for both.
+-}
+namedOrNothing : Decoder (Maybe String)
+namedOrNothing =
+    Decode.nullable Decode.string
+        |> Decode.map
+            (Maybe.andThen
+                (\text ->
+                    if String.isEmpty text then
+                        Nothing
+
+                    else
+                        Just text
+                )
+            )
+
+
 decodeStatus : Decoder Status
 decodeStatus =
     Decode.succeed Status
-        |> optional "schema_version" Decode.int 1
+        |> optional "schema_version" Decode.int 0
         |> optional "run_id" Decode.string ""
         |> optional "phase" (Decode.map phaseFromString Decode.string) (UnknownPhase "unreported")
         |> optional "message" Decode.string ""
         |> optional "generation" Decode.int 0
         |> optional "episodes" Decode.int 0
+        |> optional "episodes_unresolved" Decode.int 0
+        |> optional "episodes_combat_wins" (Decode.nullable Decode.int) Nothing
         |> optional "elapsed_seconds" (safeFloat 0) 0
         |> optional "episodes_per_second" (safeFloat 0) 0
         |> optional "updated_at" Decode.string ""
-        |> optional "curriculum" decodeCurriculum emptyCurriculum
+        |> optional "stale" Decode.bool False
+        |> optional "scoring" (Decode.nullable decodeScoring) Nothing
+        |> optional "board" decodeBoard emptyBoard
         |> optional "champion" decodeChampion emptyChampion
         |> optional "population" decodePopulation emptyPopulation
         |> optional "checkpoint" decodeCheckpoint emptyCheckpoint
         |> optional "resources" decodeResources emptyResources
-        |> optional "history" (Decode.list decodeHistoryPoint) []
-        |> optional "matchups" (Decode.list decodeMatchup) []
-        |> optional "events" (Decode.list decodeEvent) []
-        |> optional "audit" decodeAudit emptyAudit
+        |> optional "work" (Decode.nullable decodeWork) Nothing
+        |> optional "phases" (Decode.nullable decodePhaseSplit) Nothing
+        |> optional "benchmark" (Decode.nullable decodeBenchmark) Nothing
         |> optional "readiness" decodeReadiness emptyReadiness
-        |> optional "stale" Decode.bool False
-        |> optional "episodes_unresolved" Decode.int 0
-        |> custom decodeCombatVictories
-        |> optional "regression" (Decode.map Just decodeRegression) Nothing
+        |> optional "history" (Decode.list decodeHistoryPoint) []
         |> optional "overall" (Decode.nullable decodeOverall) Nothing
         |> optional "ship_performance" (Decode.list decodeShipPerformance) []
         |> optional "sampler" (Decode.nullable decodeSampler) Nothing
-        |> optional "scoring" (Decode.nullable decodeScoring) Nothing
+        |> optional "matchups" (Decode.list decodeMatchup) []
+        |> optional "events" (Decode.list decodeEvent) []
 
 
 emptyRoundResult : RoundResult
@@ -1162,8 +1034,9 @@ decodeOverall =
         |> optional "games" Decode.int 0
         |> optional "win_rate" finiteFloat Nothing
         |> optional "lower_bound" finiteFloat Nothing
-        |> optional "champion_id" Decode.string ""
+        |> optional "champion_id" namedOrNothing Nothing
         |> optional "passed" Decode.bool False
+        |> optional "passed_by" namedOrNothing Nothing
         |> optional "audit" decodeRoundResult emptyRoundResult
         |> optional "confirm" decodeRoundResult emptyRoundResult
         |> optional "attempt" Decode.int 0
@@ -1190,45 +1063,29 @@ decodeSampler =
         |> optional "tour" (Decode.nullable Decode.int) Nothing
 
 
-decodeRegression : Decoder Regression
-decodeRegression =
-    Decode.succeed Regression
-        |> optional "active" Decode.bool False
-        |> optional "sweeping" Decode.bool False
-        |> optional "rehearsing" Decode.int 0
-        |> optional "last_swept" Decode.int 0
-        |> optional "last_failed" Decode.int 0
-        |> optional "budget" Decode.int 0
+emptyBoard : Board
+emptyBoard =
+    { totalMatchups = 0 }
 
 
-emptyAudit : Audit
-emptyAudit =
-    { panel = 0, maxLosses = 0, budget = 0, spent = 0, round = Nothing }
-
-
-decodeAudit : Decoder Audit
-decodeAudit =
-    Decode.succeed Audit
-        |> optional "panel" Decode.int 0
-        |> optional "max_losses" Decode.int 0
-        |> optional "budget" Decode.int 0
-        |> optional "spent" Decode.int 0
-        |> optional "round" (Decode.nullable Decode.int) Nothing
+decodeBoard : Decoder Board
+decodeBoard =
+    Decode.succeed Board
+        |> optional "total_matchups" Decode.int 0
 
 
 emptyReadiness : Readiness
 emptyReadiness =
-    { games = 0, period = 0, threshold = 0, lastRate = Nothing, purpose = Nothing }
+    { threshold = 0, games = 0, lastRate = Nothing, period = 0 }
 
 
 decodeReadiness : Decoder Readiness
 decodeReadiness =
     Decode.succeed Readiness
-        |> optional "games" Decode.int 0
-        |> optional "period" Decode.int 0
         |> optional "threshold" (safeFloat 0) 0
+        |> optional "games" Decode.int 0
         |> optional "last_rate" finiteFloat Nothing
-        |> optional "purpose" (Decode.nullable Decode.string) Nothing
+        |> optional "period" Decode.int 0
 
 
 {-| The "nothing has been reported yet" status. Decoding `{}` produces
@@ -1236,110 +1093,49 @@ exactly this, so the view's empty states and this value cannot drift.
 -}
 empty : Status
 empty =
-    { schemaVersion = 1
+    { schemaVersion = 0
     , runId = ""
     , phase = UnknownPhase "unreported"
     , message = ""
     , generation = 0
     , episodes = 0
+    , episodesUnresolved = 0
+    , episodesCombatWins = Nothing
     , elapsedSeconds = 0
     , episodesPerSecond = 0
     , updatedAt = ""
-    , curriculum = emptyCurriculum
+    , stale = False
+    , scoring = Nothing
+    , board = emptyBoard
     , champion = emptyChampion
     , population = emptyPopulation
     , checkpoint = emptyCheckpoint
     , resources = emptyResources
-    , history = []
-    , matchups = []
-    , events = []
-    , audit = emptyAudit
+    , work = Nothing
+    , phases = Nothing
+    , benchmark = Nothing
     , readiness = emptyReadiness
-    , stale = False
-    , episodesUnresolved = 0
-    , combatVictories = Nothing
-    , regression = Nothing
+    , history = []
     , overall = Nothing
     , shipPerformance = []
     , sampler = Nothing
-    , scoring = Nothing
+    , matchups = []
+    , events = []
     }
-
-
-emptyCurriculum : Curriculum
-emptyCurriculum =
-    { stage = 0
-    , ourRoster = []
-    , opponentRoster = []
-    , opponentTypes = []
-    , nextSide = UnknownSide "unreported"
-    , nextShip = Nothing
-    , target = 0.8
-    , masteredMatchups = 0
-    , totalMatchups = 0
-    , ladder = UnknownLadder "unreported"
-    , opponentRevision = 0
-    , opponentFingerprint = Nothing
-    , selfPlayIsGated = False
-    , evaluationScope = UnknownScope "unreported"
-    , stageUnlockedExternally = False
-    , transitionReason = Nothing
-    , originRunId = Nothing
-    , originGeneration = Nothing
-    , originFingerprint = Nothing
-    }
-
-
-decodeCurriculum : Decoder Curriculum
-decodeCurriculum =
-    Decode.succeed Curriculum
-        |> optional "stage" Decode.int 0
-        |> optional "our_roster" (Decode.list Decode.string) []
-        |> optional "opponent_roster" (Decode.list Decode.string) []
-        |> optional "opponent_types" (Decode.list (Decode.map opponentTypeFromString Decode.string)) []
-        |> optional "next_side" (Decode.map nextSideFromString Decode.string) (UnknownSide "unreported")
-        |> optional "next_ship" (Decode.nullable Decode.string) Nothing
-        |> optional "target" (safeFloat 0.8) 0.8
-        |> optional "mastered_matchups" Decode.int 0
-        |> optional "total_matchups" Decode.int 0
-        |> optional "ladder" (Decode.map ladderFromString Decode.string) (UnknownLadder "unreported")
-        |> optional "opponent_revision" Decode.int 0
-        |> optional "opponent_fingerprint" (Decode.nullable Decode.string) Nothing
-        |> optional "self_play_is_gated" Decode.bool False
-        |> optional "evaluation_scope" (Decode.map evaluationScopeFromString Decode.string) (UnknownScope "unreported")
-        |> optional "stage_unlocked_externally" Decode.bool False
-        |> optional "transition_reason" (Decode.nullable Decode.string) Nothing
-        |> optional "origin_run_id" (Decode.nullable Decode.string) Nothing
-        |> optional "origin_generation" (Decode.nullable Decode.int) Nothing
-        |> optional "origin_fingerprint" (Decode.nullable Decode.string) Nothing
 
 
 emptyChampion : Champion
 emptyChampion =
-    { id = ""
-    , validatedWins = 0
-    , validatedGames = 0
-    , winRate = Nothing
-    , lowerBound = Nothing
-    , nodes = 0
-    , connections = 0
-    , hiddenNodes = 0
-    , worstCellLowerBound = Nothing
-    }
+    { id = Nothing, nodes = Nothing, connections = Nothing, hiddenNodes = Nothing }
 
 
 decodeChampion : Decoder Champion
 decodeChampion =
     Decode.succeed Champion
-        |> optional "id" Decode.string ""
-        |> optional "validated_wins" Decode.int 0
-        |> optional "validated_games" Decode.int 0
-        |> optional "win_rate" finiteFloat Nothing
-        |> optional "lower_bound" finiteFloat Nothing
-        |> optional "nodes" Decode.int 0
-        |> optional "connections" Decode.int 0
-        |> optional "hidden_nodes" Decode.int 0
-        |> optional "worst_cell_lower_bound" finiteFloat Nothing
+        |> optional "id" namedOrNothing Nothing
+        |> optional "nodes" (Decode.nullable Decode.int) Nothing
+        |> optional "connections" (Decode.nullable Decode.int) Nothing
+        |> optional "hidden_nodes" (Decode.nullable Decode.int) Nothing
 
 
 emptyPopulation : Population
@@ -1372,7 +1168,13 @@ decodeCheckpoint =
 
 emptyResources : Resources
 emptyResources =
-    { workers = 0, dutyCycle = 0, measuredDuty = Nothing, episodeTicks = Nothing }
+    { workers = 0
+    , dutyCycle = 0
+    , measuredDuty = Nothing
+    , computeSeconds = 0
+    , episodeTicks = Nothing
+    , nice = 0
+    }
 
 
 decodeResources : Decoder Resources
@@ -1381,7 +1183,78 @@ decodeResources =
         |> optional "workers" Decode.int 0
         |> optional "duty_cycle" (safeFloat 0) 0
         |> optional "measured_duty" finiteFloat Nothing
+        |> optional "compute_seconds" (safeFloat 0) 0
         |> optional "episode_ticks" (Decode.nullable Decode.int) Nothing
+        |> optional "nice" Decode.int 0
+
+
+decodeWork : Decoder Work
+decodeWork =
+    Decode.succeed Work
+        |> optional "episodes" Decode.int 0
+        |> optional "display_ticks" Decode.int 0
+        |> optional "decisions" Decode.int 0
+        |> optional "node_activations" Decode.int 0
+        |> optional "link_activations" Decode.int 0
+        |> optional "element_scans" Decode.int 0
+        |> optional "elements_visited" Decode.int 0
+        |> optional "networks_compiled" Decode.int 0
+        |> optional "cpu_nanoseconds_per_display_tick" finiteFloat Nothing
+        |> optional "cpu_nanoseconds_per_link_activation" finiteFloat Nothing
+        |> optional "display_ticks_per_episode" finiteFloat Nothing
+        |> optional "link_activations_per_decision" finiteFloat Nothing
+        |> optional "elements_per_scan" finiteFloat Nothing
+
+
+{-| The seven buckets, in the order the page shows them: the three paid
+inside a fight first, since between them they are almost all of it.
+-}
+phaseBucketNames : List String
+phaseBucketNames =
+    [ "simulate", "think", "encode", "compile", "evolve", "checkpoint", "serve" ]
+
+
+decodeBucket : String -> Decoder Bucket
+decodeBucket name =
+    Decode.oneOf
+        [ Decode.field name
+            (Decode.succeed (Bucket name)
+                |> optional "seconds" (safeFloat 0) 0
+                |> optional "share" finiteFloat Nothing
+            )
+        , Decode.succeed { name = name, seconds = 0, share = Nothing }
+        ]
+
+
+decodePhaseSplit : Decoder PhaseSplit
+decodePhaseSplit =
+    Decode.succeed PhaseSplit
+        |> optional "session_cpu_seconds" finiteFloat Nothing
+        |> optional "session_wall_seconds" (safeFloat 0) 0
+        |> optional "threads_busy" finiteFloat Nothing
+        |> optional "accounted_seconds" (safeFloat 0) 0
+        |> optional "accounted_share_of_cpu" finiteFloat Nothing
+        |> optional "unaccounted_seconds" finiteFloat Nothing
+        |> optional "unaccounted_share_of_cpu" finiteFloat Nothing
+        |> custom
+            (phaseBucketNames
+                |> List.map decodeBucket
+                |> List.foldr (Decode.map2 (::)) (Decode.succeed [])
+            )
+
+
+decodeBenchmark : Decoder Benchmark
+decodeBenchmark =
+    Decode.succeed Benchmark
+        |> optional "at" namedOrNothing Nothing
+        |> optional "build" namedOrNothing Nothing
+        |> optional "definition" namedOrNothing Nothing
+        |> optional "repetitions" (Decode.nullable Decode.int) Nothing
+        |> optional "fights" (Decode.nullable Decode.int) Nothing
+        |> optional "best_seconds" finiteFloat Nothing
+        |> optional "cpu_nanoseconds_per_display_tick" finiteFloat Nothing
+        |> optional "cpu_nanoseconds_per_link_activation" finiteFloat Nothing
+        |> optional "comparable_rows" Decode.int 0
 
 
 decodeScoring : Decoder Scoring
@@ -1405,46 +1278,10 @@ decodeScoring =
         |> optional "no_damage_penalty" finiteFloat Nothing
 
 
-{-| The factual combat-victory counter, assembled from the three
-top-level fields the engine publishes together.
-
-`episodes_combat_wins_all_time` is the only field that may be read as
-the run's total, and the engine nulls it whenever the counting window
-began part-way through a run. So a null there is not a missing number to
-fall back from: it is the statement that the total is unknown, and the
-partial count is then kept with its baseline attached so it can only be
-shown as the partial count it is.
-
--}
-decodeCombatVictories : Decoder (Maybe CombatVictories)
-decodeCombatVictories =
-    Decode.map3
-        (\counted baseline allTime ->
-            case ( counted, allTime ) of
-                ( _, Just total ) ->
-                    Just (VictoriesAllTime total)
-
-                ( Just victories, Nothing ) ->
-                    Just
-                        (VictoriesSince
-                            { victories = victories
-                            , sinceEpisodes = Maybe.withDefault 0 baseline
-                            }
-                        )
-
-                ( Nothing, Nothing ) ->
-                    Nothing
-        )
-        (Decode.maybe (Decode.field "episodes_combat_wins" Decode.int))
-        (Decode.maybe (Decode.field "episodes_combat_counted_since" Decode.int))
-        (Decode.maybe (Decode.field "episodes_combat_wins_all_time" Decode.int))
-
-
 decodeHistoryPoint : Decoder HistoryPoint
 decodeHistoryPoint =
     Decode.succeed HistoryPoint
         |> optional "generation" Decode.int 0
-        |> optional "stage" Decode.int 0
         |> optional "training_win_rate" finiteFloat Nothing
         |> optional "validation_win_rate" finiteFloat Nothing
         |> optional "species" Decode.int 0
@@ -1458,11 +1295,6 @@ decodeMatchup =
         |> optional "us" Decode.string ""
         |> optional "them" Decode.string ""
         |> optional "opponent_type" (Decode.map opponentTypeFromString Decode.string) Cyborg
-        |> optional "wins" Decode.int 0
-        |> optional "games" Decode.int 0
-        |> optional "win_rate" finiteFloat Nothing
-        |> optional "lower_bound" finiteFloat Nothing
-        |> optional "status" (Decode.map statusFromString Decode.string) Unseen
         |> optional "sample_weight" (safeFloat 0) 0
         |> optional "training_games" (safeFloat 0) 0
         |> optional "training_win_rate" finiteFloat Nothing
@@ -1526,7 +1358,7 @@ type alias Genome =
 
 type alias Network =
     { schemaVersion : Int
-    , championId : String
+    , championId : Maybe String
     , genome : Genome
     }
 
@@ -1561,9 +1393,15 @@ decodeGenome =
         |> optional "genes" (Decode.list decodeGene) []
 
 
+{-| With no champion the engine publishes a null genome rather than an
+empty object, so the null is folded into the same empty value the view
+already renders as "nothing evolved yet".
+-}
 decodeNetwork : Decoder Network
 decodeNetwork =
     Decode.succeed Network
-        |> optional "schema_version" Decode.int 1
-        |> optional "champion_id" Decode.string ""
-        |> optional "genome" decodeGenome emptyGenome
+        |> optional "schema_version" Decode.int 0
+        |> optional "champion_id" namedOrNothing Nothing
+        |> optional "genome"
+            (Decode.nullable decodeGenome |> Decode.map (Maybe.withDefault emptyGenome))
+            emptyGenome

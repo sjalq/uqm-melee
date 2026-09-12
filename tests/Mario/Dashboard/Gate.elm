@@ -1,38 +1,31 @@
 module Mario.Dashboard.Gate exposing
-    ( Blockers
-    , Verdict(..)
-    , analyse
+    ( Verdict(..)
     , blindSpots
-    , championVerdict
-    , explain
-    , explainBroad
-    , explainBroadBoard
-    , explainBroadCells
-    , missingReverseSeats
+    , explainOverall
+    , nextGateSteps
     , overallVerdict
     , seatCoverage
-    , weakestFirst
     , wilsonLower
     , winsNeeded
     , z95
     )
 
-{-| Why the curriculum is or is not expanding.
+{-| What the one graded question says, and what it would take to answer
+it.
 
-The rule the trainer enforces is per cell: every active ordered matchup
-at the current stage must clear the target on fresh audit evidence, in
-both seat orientations. An aggregate win rate cannot stand in for that,
-because a strong average hides a weak cell. This module derives the
-blocking picture straight from the per-cell evidence so the dashboard
-can say exactly what is holding a promotion up, rather than showing a
-reassuring mean.
+The run trains on the whole 625-cell board from generation one and is
+judged on a single aggregate: the frozen champion's success rate over a
+fixed held-out balanced panel, first as an audit round and then again on
+an independent confirm round. There is no per-cell gate, no stage and no
+promotion ladder, so nothing here derives a verdict from the per-matchup
+rows: those carry training exposure only.
 
-Everything here is a pure function of the reported matchups, which makes
-it directly testable and keeps the view free of judgement calls.
+Everything is a pure function of the reported status, which makes it
+directly testable and keeps the view free of judgement calls.
 
 -}
 
-import Mario.Dashboard.Api as Api exposing (Champion, Matchup, MatchupStatus(..), Overall, Seat(..), ShipPerformance)
+import Mario.Dashboard.Api as Api exposing (Overall, Readiness, Seat(..), ShipPerformance)
 import Mario.Dashboard.Format as Format
 import Mario.Dashboard.Scoring as Scoring
 
@@ -119,142 +112,6 @@ winsNeeded z target games =
             |> List.head
 
 
-type alias Blockers =
-    { total : Int
-    , mastered : Int
-    , unseen : Int
-    , learning : Int
-    , auditing : Int
-    , short : Int
-    , missingReverse : Int
-    }
-
-
-{-| A cell counts as short when it has been audited, has a bound to
-judge, and that bound sits under the target. A cell with games but no
-published bound is not called short; it is simply not yet decided.
--}
-analyse : Float -> List Matchup -> Blockers
-analyse target matchups =
-    let
-        isShort m =
-            case m.lowerBound of
-                Just bound ->
-                    m.games > 0 && bound < target
-
-                Nothing ->
-                    False
-
-        countWhere predicate =
-            matchups |> List.filter predicate |> List.length
-    in
-    { total = List.length matchups
-    , mastered = countWhere (\m -> m.status == Mastered)
-    , unseen = countWhere (\m -> m.status == Unseen || m.games <= 0)
-    , learning = countWhere (\m -> m.status == Learning)
-    , auditing = countWhere (\m -> m.status == AuditingCell)
-    , short = countWhere isShort
-    , missingReverse = List.length (missingReverseSeats matchups)
-    }
-
-
-{-| Ordered pairs whose mirror image is missing even though the mirror
-is a shape this stage could hold. Evidence gathered in one seat says
-nothing about the other, so a missing mirror is a real hole in the gate.
-
-A pair is only counted when both ships already appear on both sides. At
-a stage where our roster and the opponent roster do not overlap, the
-mirror of a cell is simply not part of the curriculum yet, and reporting
-it would invent a blocker that does not exist.
-
--}
-missingReverseSeats : List Matchup -> List ( String, String )
-missingReverseSeats matchups =
-    let
-        present =
-            List.map (\m -> ( m.us, m.them, m.opponentType )) matchups
-
-        ourShips =
-            List.map .us matchups
-
-        theirShips =
-            List.map .them matchups
-
-        has cell =
-            List.member cell present
-
-        mirrorIsInScope m =
-            List.member m.them ourShips && List.member m.us theirShips
-    in
-    matchups
-        |> List.filter (\m -> m.us /= m.them)
-        |> List.filter mirrorIsInScope
-        |> List.filter (\m -> not (has ( m.them, m.us, m.opponentType )))
-        |> List.map (\m -> ( m.them, m.us ))
-
-
-{-| Cells ordered by how badly they block the gate: audited and short
-first, weakest bound leading, then cells mid-audit, then cells still
-learning, then cells with no audit games.
-
-"No audit games" never means "no play". A cell can carry tens of
-thousands of training episodes and still have nothing here, because only
-fresh audit episodes count toward the gate. Saying "never played" would
-misdescribe that.
--}
-weakestFirst : Float -> List Matchup -> List Matchup
-weakestFirst target matchups =
-    let
-        evidence m =
-            case m.lowerBound of
-                Just bound ->
-                    Just bound
-
-                Nothing ->
-                    m.winRate
-
-        rank m =
-            case ( m.status, evidence m ) of
-                ( Mastered, _ ) ->
-                    ( 4, 0 )
-
-                ( _, Just bound ) ->
-                    if bound < target then
-                        ( 0, bound )
-
-                    else
-                        ( 3, bound )
-
-                ( AuditingCell, Nothing ) ->
-                    ( 1, 0 )
-
-                ( Learning, Nothing ) ->
-                    ( 2, 0 )
-
-                ( _, Nothing ) ->
-                    ( 3, 0 )
-    in
-    matchups
-        |> List.sortWith
-            (\a b ->
-                let
-                    ( ra, va ) =
-                        rank a
-
-                    ( rb, vb ) =
-                        rank b
-                in
-                if ra /= rb then
-                    compare ra rb
-
-                else if va /= vb then
-                    compare va vb
-
-                else
-                    compare ( a.us, a.them ) ( b.us, b.them )
-            )
-
-
 type Verdict
     = NoEvidence
     | Short Float
@@ -262,126 +119,10 @@ type Verdict
     | RateOnly Float
 
 
-{-| What the champion's own audit evidence says. A raw rate over the
-target without a published bound is reported as exactly that, never as a
-pass, because promotion is gated on the bound.
--}
-championVerdict : Float -> Champion -> Verdict
-championVerdict target champion =
-    if champion.validatedGames <= 0 then
-        NoEvidence
-
-    else
-        case champion.lowerBound of
-            Just bound ->
-                if bound >= target then
-                    Passing bound
-
-                else
-                    Short bound
-
-            Nothing ->
-                case champion.winRate of
-                    Just rate ->
-                        RateOnly rate
-
-                    Nothing ->
-                        NoEvidence
-
-
-{-| Plain sentences for the panel. Ordered so the first one is always
-the actual answer to "why has the roster not grown".
--}
-explain : Float -> Api.Curriculum -> List Matchup -> List String
-explain target curriculum matchups =
-    let
-        b =
-            analyse target matchups
-
-        nextText =
-            case curriculum.nextSide of
-                Api.Complete ->
-                    "Both rosters already hold every ship, so there is nothing left to add."
-
-                side ->
-                    "Next promotion would " ++ Api.nextSideLabel side ++ shipSuffix curriculum.nextShip ++ "."
-
-        shipSuffix ship =
-            case ship of
-                Just name ->
-                    ", specifically " ++ name
-
-                Nothing ->
-                    ""
-
-        blocking =
-            b.total - b.mastered
-
-        breakdown =
-            [ ( b.short, "audited and short of the target" )
-            , ( b.auditing, "mid-audit with the panel not yet spent" )
-            , ( b.learning, "still in training" )
-            , ( b.unseen, "with no audit games yet" )
-            ]
-                |> List.filter (\( n, _ ) -> n > 0)
-                |> List.map (\( n, label ) -> String.fromInt n ++ " " ++ label)
-
-        seatNote =
-            if b.missingReverse > 0 then
-                [ String.fromInt b.missingReverse
-                    ++ " ordered pairs have no mirror cell, so one seat is unrepresented. Evidence from one seat does not transfer to the other."
-                ]
-
-            else
-                []
-    in
-    if b.total == 0 then
-        [ "No ordered matchups have been published for this stage yet, so there is nothing to gate on."
-        , nextText
-        ]
-
-    else if blocking == 0 && b.missingReverse == 0 then
-        [ "All "
-            ++ String.fromInt b.total
-            ++ " active ordered matchups have cleared "
-            ++ Format.percent target
-            ++ " on fresh audit evidence, in both seats."
-        , nextText
-        ]
-
-    else
-        [ String.fromInt blocking
-            ++ " of "
-            ++ String.fromInt b.total
-            ++ " active ordered matchups have not cleared "
-            ++ Format.percent target
-            ++ " on fresh audit evidence, so the roster stays as it is."
-        , if List.isEmpty breakdown then
-            "The remaining cells are awaiting evidence."
-
-          else
-            "Of those: " ++ String.join ", " breakdown ++ "."
-        ]
-            ++ seatNote
-            ++ [ nextText ]
-
-
-
--- BROAD MODE
---
--- A broad run is judged on one aggregate figure: the frozen champion's
--- record on a fixed held-out balanced panel, first as an audit round and
--- then again on an independent confirm round. That is a different claim
--- from the per-cell gate above, and the two must never be worded alike.
--- The per-cell evidence stays on the page, but as a diagnostic that
--- exposes blind spots, not as something the run is gated on.
-
-
 {-| What the overall balanced panel says about the frozen champion.
 
-The same rule as the per-cell verdict applies: a raw rate over the
-target with no published bound is reported as exactly that, never as a
-pass, because the gate is a floor on the bound.
+A raw rate over the target with no published bound is reported as
+exactly that, never as a pass, because the gate is a floor on the bound.
 
 -}
 overallVerdict : Overall -> Verdict
@@ -485,16 +226,17 @@ blindSpots rows =
             )
 
 
-{-| Plain sentences for the broad gate panel.
+{-| Plain sentences for the gate panel.
 
-Three things have to come across, and each has its own sentence so none
+Four things have to come across, and each has its own sentence so none
 can be lost in a clause: the distribution the figure was measured on,
 that the figure is an aggregate rather than a promise about every
-matchup, and that a pass needs two independent rounds.
+matchup, that the paired seats make it a confidence check rather than a
+guarantee, and that a pass needs two independent rounds.
 
 -}
-explainBroad : Maybe Api.Scoring -> Api.Curriculum -> Maybe Overall -> List ShipPerformance -> List String
-explainBroad scoring curriculum maybeOverall ships =
+explainOverall : Maybe Api.Scoring -> Api.Board -> Maybe Overall -> List ShipPerformance -> List String
+explainOverall scoring board maybeOverall ships =
     let
         rate =
             Scoring.rateLabel scoring
@@ -505,7 +247,7 @@ explainBroad scoring curriculum maybeOverall ships =
                     overall.target
 
                 Nothing ->
-                    curriculum.target
+                    0.8
 
         scopeLine =
             "The run is judged on one number: the frozen champion's "
@@ -514,10 +256,15 @@ explainBroad scoring curriculum maybeOverall ships =
                 ++ Format.percent target
                 ++ " overall."
 
+        boardLine =
+            "All "
+                ++ Format.count board.totalMatchups
+                ++ " ordered matchups are trained on from generation one. Nothing is unlocked a few ships at a time, so no cell has a gate of its own and none is waiting its turn."
+
         aggregateLine =
             "That is an aggregate over the whole distribution. It is not a claim that the champion clears "
                 ++ Format.percent target
-                ++ " in every matchup, and the per-hull and per-cell figures below exist precisely to show where it does not."
+                ++ " in every matchup, and the per-hull figures below exist precisely to show where it does not."
 
         correlationLine =
             "Each pair is played in both seats, so the outcomes on the panel are correlated rather than independent. Treat the bound as an operational confidence check on this distribution, not as a formal guarantee over every matchup."
@@ -583,109 +330,110 @@ explainBroad scoring curriculum maybeOverall ships =
                 _ ->
                     "Every game on the panel counts, including games that time out. Those are counted as non-wins, so the figure cannot be flattered by dropping unresolved fights."
 
-        originLine =
-            case curriculum.originRunId of
-                Just origin ->
-                    [ "The population, weights and RNG state were carried over from "
-                        ++ origin
-                        ++ (case curriculum.originGeneration of
-                                Just generation ->
-                                    " at generation " ++ String.fromInt generation
+        inheritedLine =
+            case maybeOverall of
+                Just overall ->
+                    case ( overall.passed, overall.passedBy, overall.championId ) of
+                        ( False, Just cleared, Just current ) ->
+                            if cleared /= current then
+                                [ "The target was cleared by champion "
+                                    ++ Format.shortId cleared
+                                    ++ ", which is no longer the champion. That result belongs to that policy and is not inherited by "
+                                    ++ Format.shortId current
+                                    ++ "."
+                                ]
 
-                                Nothing ->
-                                    ""
-                           )
-                        ++ ". No validation evidence came with them: the in-flight panel was abandoned on transition and all gate evidence restarted from nothing."
-                    ]
+                            else
+                                []
+
+                        _ ->
+                            []
 
                 Nothing ->
                     []
-
-        ladderLine =
-            case curriculum.ladder of
-                Api.Broad ->
-                    []
-
-                other ->
-                    [ "The ladder now reads \""
-                        ++ Api.ladderLabel other
-                        ++ "\", but the run is still judged on the overall balanced result and still carries its broad provenance. It did not revert to per-matchup gating."
-                    ]
     in
-    [ scopeLine, aggregateLine, correlationLine, roundLine ]
+    [ scopeLine, boardLine, aggregateLine, correlationLine, roundLine ]
         ++ coverageLine
         ++ [ sourceLine ]
         ++ readinessSourceLine
         ++ [ timeoutLine ]
-        ++ originLine
-        ++ ladderLine
+        ++ inheritedLine
 
 
-{-| What the board is, for the panel whose subject is the board.
+{-| What has to happen for the next gate round to open and to pass, in
+order.
 
-Kept out of `explainBroad` on purpose. Three panels on this page could
-each reasonably say "all 25 ships are active", and when all three did,
-the reader got the same eleven paragraphs twice and stopped reading any
-of them. Each fact is now stated once, in the panel it belongs to: the
-gate panel explains the gate, this explains the board, and the
-curriculum panel explains the cells.
-
--}
-explainBroadBoard : Api.Curriculum -> List String
-explainBroadBoard curriculum =
-    let
-        rosterLine =
-            "All "
-                ++ String.fromInt (List.length curriculum.ourRoster)
-                ++ " of our hulls and all "
-                ++ String.fromInt (List.length curriculum.opponentRoster)
-                ++ " opponent hulls are active at once. Nothing is being unlocked stage by stage, so there is no per-matchup gate to pass and no cell is waiting its turn."
-
-        unlockedLine =
-            if curriculum.stageUnlockedExternally then
-                [ "Stage "
-                    ++ String.fromInt curriculum.stage
-                    ++ " was opened by the operator transition, not earned cell by cell. The "
-                    ++ String.fromInt curriculum.totalMatchups
-                    ++ " cells are active, not mastered, and the mastered count is a diagnostic that gates nothing."
-                ]
-
-            else
-                []
-    in
-    rosterLine :: unlockedLine
-
-
-{-| What the per-cell evidence is for, now that it gates nothing.
-
-The grid and the mastered count are the same numbers a staged run gates
-on, so in broad mode they need saying plainly: they are diagnostics, a
-weak cell blocks nothing, and an unplayed cell is a hole in what is
-known rather than a loss.
+This is the "what opens the next gate" answer, and it is deliberately
+sequential: a candidate has to clear the cheap screening probe before an
+expensive panel is spent on it, then post a count on the audit panel,
+then post it again on an independent confirm panel. Stating only the
+target percentage hides the first and third steps entirely.
 
 -}
-explainBroadCells : Api.Curriculum -> List Matchup -> List String
-explainBroadCells curriculum matchups =
+nextGateSteps : Maybe Api.Scoring -> Readiness -> Maybe Overall -> List String
+nextGateSteps scoring readiness maybeOverall =
     let
-        b =
-            analyse curriculum.target matchups
+        successes =
+            Scoring.successPlural scoring
 
-        counted =
-            if b.total == 0 then
-                [ "No per-cell evidence has been published for this board yet." ]
+        probeLine =
+            (case readiness.lastRate of
+                Just rate ->
+                    "The last readiness probe scored " ++ Format.percent1 rate ++ ", "
 
-            else
-                [ String.fromInt b.mastered
-                    ++ " of "
-                    ++ String.fromInt b.total
-                    ++ " cells have cleared "
-                    ++ Format.percent curriculum.target
-                    ++ " on their own evidence, and "
-                    ++ String.fromInt b.unseen
-                    ++ " have no gate games at all. In this mode neither number gates anything."
-                ]
+                Nothing ->
+                    "No readiness probe has been scored yet, "
+            )
+                ++ "against a "
+                ++ Format.percent readiness.threshold
+                ++ " threshold over "
+                ++ String.fromInt readiness.games
+                ++ " balanced games"
+                ++ (if readiness.period > 0 then
+                        ", run every " ++ String.fromInt readiness.period ++ " generations."
+
+                    else
+                        "."
+                   )
+
+        demandLine overall =
+            case winsNeeded z95 overall.target overall.panel of
+                Just wins ->
+                    "An audit panel is "
+                        ++ String.fromInt overall.panel
+                        ++ " games, and clearing the "
+                        ++ Format.percent overall.target
+                        ++ " Wilson lower bound on it takes "
+                        ++ String.fromInt wins
+                        ++ " observed "
+                        ++ successes
+                        ++ " ("
+                        ++ Format.percent1 (toFloat wins / toFloat overall.panel)
+                        ++ "), not "
+                        ++ String.fromInt (ceiling (overall.target * toFloat overall.panel))
+                        ++ "."
+
+                Nothing ->
+                    "No panel size has been published yet, so the observed count the gate demands cannot be stated."
+
+        roundsLine overall =
+            case overall.round of
+                Just Api.AuditRound ->
+                    "The audit round is in flight. Clearing it opens the confirm round, which has to post the same count again on its own panel and its own seeds."
+
+                Just Api.ConfirmRound ->
+                    "The confirm round is in flight. It is the last step: clearing it clears the gate for this champion."
+
+                _ ->
+                    "Nothing is in flight. The next probe that clears the threshold starts an audit round, and this would be attempt "
+                        ++ String.fromInt (overall.attempt + 1)
+                        ++ "."
     in
-    counted
-        ++ [ "These cells are diagnostics. The run is judged on one overall balanced result, explained in full on the gate panel above, and no cell here can block or unblock it."
-           , "A cell with no games is unmeasured, not lost. Its absence says where the aggregate has the least evidence behind it, which is exactly what an overall figure cannot show."
-           ]
+    case maybeOverall of
+        Nothing ->
+            [ probeLine
+            , "The trainer has published no balanced panel yet, so neither the panel size nor the count it demands is known."
+            ]
+
+        Just overall ->
+            [ probeLine, demandLine overall, roundsLine overall ]

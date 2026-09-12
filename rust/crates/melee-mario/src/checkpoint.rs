@@ -394,6 +394,10 @@ fn decode(value: &Value) -> Option<Trainer> {
             Some(other) => Some(other.as_f64().filter(|n| n.is_finite())?),
         },
         nice: 0,
+        // A property of the binary and of this invocation, exactly like `nice`
+        // and the pool, so a decoded run carries none and the supervisor
+        // supplies it.
+        benchmark: None,
         pool: crate::pool::Pool::new(1),
         last_training_wins: match value.get("last_training_wins") {
             None | Some(Value::Null) => None,

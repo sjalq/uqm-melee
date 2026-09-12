@@ -1,69 +1,52 @@
 module Mario.Dashboard.Copy exposing
     ( allTips
-    , championGames
+    , benchmark
+    , board
     , championId
-    , championLowerBound
-    , championRate
-    , championStructure
     , checkpointGeneration
     , checkpointPath
     , checkpointResumable
     , checkpointSaved
+    , combatVictories
     , controls
     , elapsed
     , episodes
     , episodesPerSecond
-    , expansionBlocked
     , fightLimit
-    , combatVictories
     , fitnessRule
     , freshness
     , gateCriterion
     , generation
-    , auditPanel
     , heatmap
-    , ladder
-    , ladderPhase
-    , machine
-    , observedNeeded
-    , opponentRevision
-    , readiness
-    , regression
-    , broadMode
-    , matchupCoverage
     , meanConnections
     , meanNodes
-    , nextExpansion
+    , nextGate
     , noDamagePenalty
-    , originRun
+    , nodesChart
+    , nowPlaying
+    , observedNeeded
     , overallGate
     , overallPanel
     , overallRound
-    , samplerCoverage
-    , shipPerformance
-    , nodesChart
-    , opponentTypes
     , phase
+    , phaseSplit
+    , populationPanel
     , populationSize
+    , readiness
     , resourcesBudget
     , resourcesDuty
     , resourcesWorkers
-    , rosterOurs
-    , rosterTheirs
     , runId
     , sampleAllocation
+    , samplerCoverage
+    , shipPerformance
     , species
-    , stage
     , structureChart
-    , target
-    , throughputChart
     , timeline
     , topology
-    , unevaluated
     , unresolved
-    , vitals
     , winRateChart
-    , worstCell
+    , workRates
     )
 
 {-| The explanation attached to every number on the dashboard.
@@ -111,69 +94,51 @@ allTips scoring =
     [ phase
     , runId
     , freshness
-    , vitals
-    , machine
-    , unevaluated
-    , nodesChart
-    , ladderPhase
-    , opponentRevision
-    , auditPanel scoring
-    , observedNeeded scoring
-    , readiness
-    , regression scoring
-    , worstCell
-    , unresolved scoring
-    , generation
-    , episodes
-    , episodesPerSecond
-    , elapsed
-    , championId
-    , championRate scoring
-    , championLowerBound scoring
-    , championGames scoring
-    , championStructure
-    , target scoring
-    , stage
-    , rosterOurs
-    , rosterTheirs
-    , opponentTypes
-    , nextExpansion
-    , expansionBlocked
-    , matchupCoverage
-    , ladder
-    , heatmap
-    , sampleAllocation
-    , populationSize
-    , species
-    , meanNodes
-    , meanConnections
-    , checkpointSaved
-    , checkpointGeneration
-    , checkpointResumable
-    , checkpointPath
-    , resourcesWorkers
-    , resourcesDuty
-    , resourcesBudget
-    , winRateChart scoring
-    , structureChart
-    , throughputChart
-    , topology
-    , timeline
     , controls
     , overallGate scoring
     , overallPanel
     , overallRound
-    , shipPerformance scoring
-    , broadMode scoring
+    , championId
+    , observedNeeded scoring
+    , gateCriterion
+    , winRateChart scoring
+    , nowPlaying
+    , board
     , samplerCoverage
-    , originRun
     , fitnessRule
     , fightLimit
-    , gateCriterion
     , noDamagePenalty
+    , nextGate
+    , readiness
+    , sampleAllocation
+    , populationPanel
+    , populationSize
+    , species
+    , meanNodes
+    , meanConnections
+    , structureChart
+    , nodesChart
+    , shipPerformance scoring
+    , heatmap
+    , topology
+    , workRates
+    , phaseSplit
+    , benchmark
+    , episodesPerSecond
+    , elapsed
+    , episodes
+    , generation
+    , unresolved scoring
     , combatVictories
+    , resourcesWorkers
+    , resourcesDuty
+    , resourcesBudget
+    , checkpointSaved
+    , checkpointGeneration
+    , checkpointResumable
+    , checkpointPath
+    , timeline
     ]
-
 
 
 
@@ -239,6 +204,7 @@ gateCriterion =
         ]
 
 
+
 -- RUN HEADER
 
 
@@ -272,39 +238,6 @@ freshness =
         [ ( "Denominator", "None; an age in seconds." )
         , ( "Window", "Now minus the reported updated_at." )
         , ( "Source", "Trainer clock, compared against this browser's clock." )
-        ]
-
-
-vitals : Tip
-vitals =
-    t "vitals"
-        "Run vitals"
-        "Throughput and progress counters for the run as a whole, plus the rule that work is scored by and the deadline each fight is scored at. None of these say anything about how good the champion is; they say how much work has been done, how fast, and what it was ranked on. The gate figures at the top of the page are the ones that speak to quality."
-        [ ( "Denominator", "Varies per tile; each states its own." )
-        , ( "Window", "Cumulative for the run unless a tile says otherwise." )
-        , ( "Source", "Trainer counters, training and audit work combined." )
-        ]
-
-
-machine : Tip
-machine =
-    t "machine"
-        "Population, checkpoint and resources"
-        "The state of the evolutionary machinery and the machine it runs on: how many genomes and species exist, how recently the run was made durable, and how much of this computer the trainer is allowed to take."
-        [ ( "Denominator", "Varies per row; each states its own." )
-        , ( "Window", "Current generation for population, most recent save for checkpoint." )
-        , ( "Source", "Evolution loop, checkpoint writer and evaluator scheduling." )
-        ]
-
-
-unevaluated : Tip
-unevaluated =
-    t "unevaluated"
-        "Unevaluated cells"
-        "How many active ordered matchups at this stage have no audit games at all. These are not failures and not zeroes; they are holes in the evidence. The gate cannot pass while any of them remain, because an unplayed cell has not been shown to be won."
-        [ ( "Denominator", "Active ordered matchups at the current stage." )
-        , ( "Window", "Current stage, current champion." )
-        , ( "Source", "Audit evidence. A cell with training play but no audit games still counts as unevaluated here." )
         ]
 
 
@@ -345,7 +278,7 @@ episodesPerSecond : Tip
 episodesPerSecond =
     t "throughput"
         "Throughput"
-        "Episodes resolved per wall-clock second. This is throughput under the configured duty cycle, so it already reflects the deliberate rest periods that keep the machine usable, not the trainer's peak speed."
+        "Episodes resolved per WALL-CLOCK second, which makes it load dependent: it falls when something else uses the machine, rises with more workers, and already reflects the duty governor's deliberate rest. It is a measure of how fast this session happens to be going, never of what the build costs. The nanoseconds-per-unit-of-work figures beside it are the ones that hold still."
         [ ( "Denominator", "Wall-clock seconds, including rest periods." )
         , ( "Window", "As reported by the trainer for its recent batches." )
         , ( "Source", "Evaluator scheduling." )
@@ -378,113 +311,6 @@ championId =
         ]
 
 
-championRate : Maybe Api.Scoring -> Tip
-championRate scoring =
-    t "champion-rate"
-        ("Champion fresh audit " ++ rateOf scoring)
-        ("Counted "
-            ++ successes scoring
-            ++ " divided by games on the champion's predeclared audit panel. These are fresh gate episodes on gate seeds, played after the candidate was frozen. They are not training episodes and they are not pooled across the population, so this is the number that actually speaks to whether the champion is any good."
-        )
-        [ ( "Denominator", "Audit games played by this champion at the current stage." )
-        , ( "Window", "The current champion's audit panel only. Reset when the champion changes." )
-        , ( "Source", "Audit, on gate seeds separate from the training seeds." )
-        ]
-
-
-championLowerBound : Maybe Api.Scoring -> Tip
-championLowerBound scoring =
-    t "champion-bound"
-        "Wilson lower bound"
-        ("The lower end of a Wilson confidence interval on the champion's audit "
-            ++ rateOf scoring
-            ++ ". Promotion is gated on this bound clearing the target, not on the raw rate, because a raw rate over the target on a handful of games is mostly luck. A small panel produces a low bound even when every game counted."
-        )
-        [ ( "Denominator", "The same audit games as the rate above." )
-        , ( "Window", "Current champion, current stage." )
-        , ( "Source", "Audit. Computed by the trainer, displayed here unchanged." )
-        ]
-
-
-championGames : Maybe Api.Scoring -> Tip
-championGames scoring =
-    t "champion-games"
-        "Audit sample size"
-        ("Counted "
-            ++ successes scoring
-            ++ " over games on the champion's audit panel. Panels are predeclared and finite, and audit and confirmation panels do not overlap, so this number rises in fixed steps rather than being extended until the result looks good. Repeated peeking at an arbitrary panel size is exactly how a lucky candidate gets promoted."
-        )
-        [ ( "Denominator", "Games on the predeclared audit panel." )
-        , ( "Window", "Current champion, current stage." )
-        , ( "Source", "Audit." )
-        ]
-
-
-championStructure : Tip
-championStructure =
-    t "champion-structure"
-        "Champion topology size"
-        "Nodes and enabled connections in the champion genome. Topology is evolved, not fixed: there is no preset hidden layer, so both numbers grow only when a structural mutation survives selection."
-        [ ( "Denominator", "None; counts of graph elements." )
-        , ( "Window", "Current champion genome." )
-        , ( "Source", "Genome served by the network endpoint." )
-        ]
-
-
-target : Maybe Api.Scoring -> Tip
-target scoring =
-    t "target"
-        "Gate target"
-        ("The "
-            ++ rateOf scoring
-            ++ " every active ordered matchup must clear before the curriculum expands. The gate is per cell, not pooled: an overall average above the target means nothing if one matchup is still short, because the average can hide a weak cell behind many strong ones."
-        )
-        [ ( "Denominator", "Applied to each ordered matchup separately." )
-        , ( "Window", "Current stage." )
-        , ( "Source", "Run configuration, immutable for the run." )
-        ]
-
-
-
--- CURRICULUM
-
-
-ladderPhase : Tip
-ladderPhase =
-    t "ladder-phase"
-        "Ladder phase"
-        "How the curriculum is currently growing. Climbing walks the frozen expansion order one ship at a time, alternating the opponent side and our side. Mixed plays an assembled roster rather than extending it. The phase decides what a promotion means, so a rate measured in one phase is not interchangeable with one measured in the other."
-        [ ( "Denominator", "None; a mode." )
-        , ( "Window", "Current." )
-        , ( "Source", "Curriculum state, checkpointed." )
-        ]
-
-
-opponentRevision : Tip
-opponentRevision =
-    t "opponent-revision"
-        "Frozen opponent revision"
-        "Which generation of frozen opponent this evidence was gathered against, with its fingerprint. A challenger never faces changing opponent weights inside a generation or an audit, and evidence is versioned by this fingerprint. When the revision moves, results collected against the previous one no longer describe the current gate and are not pooled with it."
-        [ ( "Denominator", "None; a revision counter and a fingerprint." )
-        , ( "Window", "Current. Revision 0 with no fingerprint means no frozen model opponent is in play yet, only the original game's cyborg." )
-        , ( "Source", "Curriculum state. All audit evidence on this page belongs to this revision." )
-        ]
-
-
-auditPanel : Maybe Api.Scoring -> Tip
-auditPanel scoring =
-    t "audit-panel"
-        "Audit panel"
-        ("The predeclared, fixed-size panel a frozen candidate is judged on, and the number of games it can fail to count and still reach the target. Those are survivable: on a panel of 100 needing 88 counted "
-            ++ successes scoring
-            ++ ", 12 uncounted games still leave exactly 88 reachable, and it is the next one after the cap that makes the target arithmetically unreachable and ends the attempt. The panel size is fixed before the audit starts and does not overlap the confirmation panel, so evidence cannot be extended until it happens to look good."
-        )
-        [ ( "Denominator", "Games in the predeclared panel." )
-        , ( "Window", "Per audit attempt, for the current frozen candidate." )
-        , ( "Source", "Run configuration, fixed for the run. Budget is the total audit spend allowed." )
-        ]
-
-
 observedNeeded : Maybe Api.Scoring -> Tip
 observedNeeded scoring =
     t "observed-needed"
@@ -496,20 +322,6 @@ observedNeeded scoring =
         [ ( "Denominator", "The predeclared audit panel size." )
         , ( "Window", "Per audit attempt." )
         , ( "Source", "Computed by the dashboard as the inverse of the Wilson bound at 95% confidence, z = 1.96. The trainer publishes the bound itself; this is the smallest count that reaches it." )
-        ]
-
-
-regression : Maybe Api.Scoring -> Tip
-regression scoring =
-    t "regression"
-        "Regression rehearsal"
-        ("Periodic re-checking of cells that already passed the gate, so that progress at a later stage cannot quietly break an earlier one. A sweep is judged on the same criterion as the gate itself. A sweep that finds failed cells means mastery was lost and those cells are back in contention, which is exactly the kind of silent backsliding an aggregate "
-            ++ rateOf scoring
-            ++ " would hide."
-        )
-        [ ( "Denominator", "Previously mastered cells re-checked in the last sweep." )
-        , ( "Window", "The most recent sweep, not the whole run." )
-        , ( "Source", "Audit-style rehearsal play, separate from the current stage's gate evidence." )
         ]
 
 
@@ -530,17 +342,6 @@ unresolved scoring =
         ]
 
 
-worstCell : Tip
-worstCell =
-    t "worst-cell"
-        "Weakest cell's bound"
-        "The lowest Wilson lower bound across the champion's active ordered matchups. This is the number the per-cell gate actually turns on, because every cell must clear the target individually. It is always at or below the overall bound, and the gap between the two is exactly the weakness an aggregate figure would hide."
-        [ ( "Denominator", "The audit games of whichever single cell is weakest." )
-        , ( "Window", "Current stage, current champion." )
-        , ( "Source", "Audit. A minimum across cells, never an average of them." )
-        ]
-
-
 readiness : Tip
 readiness =
     t "readiness"
@@ -552,102 +353,14 @@ readiness =
         ]
 
 
-stage : Tip
-stage =
-    t "stage"
-        "Curriculum stage"
-        "How far the roster expansion has progressed. Stage 0 is a single ordered pair, our Pkunk against the opponent Umgah. Each promotion adds one ship, alternating opponent side then our side, until both rosters hold all 25 ships."
-        [ ( "Denominator", "None; a stage index." )
-        , ( "Window", "Current." )
-        , ( "Source", "Curriculum state, checkpointed." )
-        ]
-
-
-rosterOurs : Tip
-rosterOurs =
-    t "roster-ours"
-        "Our roster"
-        "The ships the learner may be assigned to fly at this stage, in the frozen expansion order. Pkunk is the fixed seed. The order is fixed up front so the curriculum cannot be quietly reshuffled to make a stuck stage easier."
-        [ ( "Denominator", "None; a list." )
-        , ( "Window", "Current stage." )
-        , ( "Source", "Frozen curriculum order." )
-        ]
-
-
-rosterTheirs : Tip
-rosterTheirs =
-    t "roster-theirs"
-        "Opponent roster"
-        "The ships the opponent may fly at this stage, in the frozen expansion order. Umgah is the fixed seed."
-        [ ( "Denominator", "None; a list." )
-        , ( "Window", "Current stage." )
-        , ( "Source", "Frozen curriculum order." )
-        ]
-
-
-opponentTypes : Tip
-opponentTypes =
-    t "opponent-types"
-        "Opponent types in play"
-        "Cyborg means the original game's Awesome-rated computer pilot. Frozen model means an immutable snapshot of an earlier champion. Model opponents only join after the full 25 by 25 cyborg gate is passed, and cyborg sampling continues alongside them. A frozen opponent's weights never change during a generation or an audit."
-        [ ( "Denominator", "None; a list." )
-        , ( "Window", "Current stage." )
-        , ( "Source", "Curriculum state. Evidence is versioned by opponent fingerprint." )
-        ]
-
-
-nextExpansion : Tip
-nextExpansion =
-    t "next-expansion"
-        "Next expansion"
-        "Which side gains a ship, and which ship, once every active ordered matchup at this stage passes the gate. Expansion alternates opponent side then our side."
-        [ ( "Denominator", "None." )
-        , ( "Window", "The next promotion." )
-        , ( "Source", "Frozen curriculum order." )
-        ]
-
-
-expansionBlocked : Tip
-expansionBlocked =
-    t "expansion-blocked"
-        "Why the roster is not expanding"
-        "Expansion requires every active ordered matchup at this stage to clear the gate on fresh audit evidence, in both seat orientations. This lists the cells still holding it back, split by whether they have never been played, are still being trained, are mid-audit, or have been audited and fallen short."
-        [ ( "Denominator", "Active ordered matchups at the current stage." )
-        , ( "Window", "Current stage, current champion." )
-        , ( "Source", "Per-cell audit evidence, not pooled population training results." )
-        ]
-
-
-matchupCoverage : Tip
-matchupCoverage =
-    t "coverage"
-        "Mastered matchups"
-        "How many of the active ordered matchups at this stage have cleared the gate on fresh audit evidence. Ordered means our ship against their ship in a specific seat; the reverse pairing is a separate cell that must pass on its own."
-        [ ( "Denominator", "All active ordered matchups at the current stage." )
-        , ( "Window", "Current stage, current champion." )
-        , ( "Source", "Audit. Not an average over cells, but a count of cells that individually passed." )
-        ]
-
-
-ladder : Tip
-ladder =
-    t "ladder"
-        "Curriculum ladder"
-        "The roster expansion from the seeded single pair up to the full 25 by 25 grid. The highlighted rung is where the run is now. Every earlier rung was left behind only by passing its gate; rungs above have not been attempted."
-        [ ( "Denominator", "Ordered matchups implied by each roster size." )
-        , ( "Window", "Whole run." )
-        , ( "Source", "Frozen curriculum order plus the current stage." )
-        ]
-
-
 heatmap : Tip
 heatmap =
     t "heatmap"
-        "Matchup evidence grid"
-        "One cell per ordered matchup: our ship in the row, the opponent in the column. Colour follows the Wilson lower bound where one exists, so a cell is only bright when the evidence is genuinely strong. Cells with no games are drawn as unmeasured rather than as zero, because never played and always lost are very different things."
-        [ ( "Denominator", "Per cell, the audit games played for that exact ordered pair." )
-        , ( "Window", "Current stage and current champion only. Earlier stages and earlier champions are not shown or mixed in." )
-        , ( "Source", "Audit evidence for the current champion. This is not population training win rate." )
+        "Matchup training exposure"
+        "One cell per ordered matchup: our ship in the row, the opponent in the column. Colour follows the sampler's own decayed training rate for that cell, and a cell with no training games is drawn as unmeasured rather than as zero, because never practised and always beaten are very different things. Nothing here is held-out evidence and no cell has a gate of its own; the aggregate target is drawn on the same scale only so the spread can be read against the one number the run is graded on."
+        [ ( "Denominator", "Per cell, that cell's decayed training games. The count is fractional because older games decay rather than being dropped." )
+        , ( "Window", "Cumulative training play, decayed toward recent generations." )
+        , ( "Source", "The training sampler's own tallies. Not audit evidence, and it gates nothing." )
         ]
 
 
@@ -655,8 +368,8 @@ sampleAllocation : Tip
 sampleAllocation =
     t "allocation"
         "Training sample allocation"
-        "How the next generation's training panel is weighted across cells. The mixture deliberately favours weak and uncertain cells and newly added ones, while a coverage floor keeps every active cell rehearsed so old matchups are not forgotten. Both seat orientations are represented. Every population member is scored on the same sampled panel in a generation, and when the panel changes, elites are rescored rather than keeping a stale fitness."
-        [ ( "Denominator", "Share of total sampling weight across active cells." )
+        "How the next generation's training panel is weighted across the 625 cells. The mixture deliberately favours cells with little evidence and cells whose outcome is still close, while a coverage floor keeps every cell rehearsed so none is forgotten. Both seat orientations are represented. Every population member is scored on the same sampled panel in a generation, and when the panel changes, elites are rescored rather than keeping a stale fitness."
+        [ ( "Denominator", "Share of total sampling weight across all 625 cells." )
         , ( "Window", "The upcoming generation's panel." )
         , ( "Source", "Training sampler. Training seeds are separate from gate seeds, and these weights do not feed the gate." )
         ]
@@ -780,7 +493,6 @@ resourcesDuty =
         ]
 
 
-
 resourcesBudget : Tip
 resourcesBudget =
     t "res-budget"
@@ -792,6 +504,7 @@ resourcesBudget =
         ]
 
 
+
 -- CHARTS
 
 
@@ -801,10 +514,10 @@ winRateChart scoring =
         (Scoring.successHeading scoring ++ " over generations")
         ("Two screening measurements, drawn so they cannot be mistaken for each other, and neither of them is gate evidence. The training line is the champion's own "
             ++ rateOf scoring
-            ++ " on that generation's sampled training panel, recorded for the champion's member alone rather than averaged over the population. The markers are the recurring readiness probe: the trainer publishes them as the run's validation figure, but the probe only decides when an audit is worth spending, so a marker is never a passed gate. Both ask the same question the gate asks, on the run's own criterion. The line breaks at every stage change because a rate measured against a small roster is not comparable with one measured against a larger one."
+            ++ " on that generation's sampled training panel, recorded for the champion's member alone rather than averaged over the population. The markers are the recurring readiness probe: the trainer publishes them as the run's validation figure, but the probe only decides when an audit is worth spending, so a marker is never a passed gate. Both ask the same question the gate asks, on the run's own criterion. Every point measures the same whole board, so the only break in either line is an unmeasured generation."
         )
         [ ( "Denominator", "Training: episodes on that generation's sampled panel for the champion's own member. Readiness: games in the probe's own batch." )
-        , ( "Window", "Per generation, whole run, split at stage boundaries." )
+        , ( "Window", "Per generation, whole run." )
         , ( "Source", "Training play and the readiness probe, never averaged together. Neither is audit evidence; the gate panel above is. Unmeasured generations leave a gap rather than a zero." )
         ]
 
@@ -817,17 +530,6 @@ structureChart =
         [ ( "Denominator", "None; a count per generation." )
         , ( "Window", "Per generation, whole run." )
         , ( "Source", "Speciation step. Deliberately kept off the win rate chart so structure is never read as performance." )
-        ]
-
-
-throughputChart : Tip
-throughputChart =
-    t "chart-throughput"
-        "Cumulative episodes"
-        "The running total of episodes the run has resolved, plotted against generation. This is a cumulative counter, so the line only ever rises and its height is total work done, not work done in that generation. The per-generation cost is the step between two adjacent points, and a visibly steeper step usually means an audit ran, since gate panels are spent on top of training play."
-        [ ( "Denominator", "Episodes resolved since the run started, as a running total." )
-        , ( "Window", "Cumulative over the whole run, sampled once per generation." )
-        , ( "Source", "Training and gate episodes combined." )
         ]
 
 
@@ -865,29 +567,6 @@ controls =
         [ ( "Denominator", "None; actions." )
         , ( "Window", "Immediate." )
         , ( "Source", "POST to the local control endpoint on the loopback interface." )
-        ]
-
-
-
--- BROAD MODE
---
--- A broad run is gated on one aggregate figure over a balanced held-out
--- distribution, not cell by cell. These tips exist so that difference is
--- stated wherever a broad-mode number appears, rather than left for the
--- reader to infer from a heading.
-
-
-broadMode : Maybe Api.Scoring -> Tip
-broadMode scoring =
-    t "broad-mode"
-        "Broad any-versus-any mode"
-        ("Every ship is active against every ship at once. There is no staged unlock and no per-matchup gate: the run is judged on one overall "
-            ++ rateOf scoring
-            ++ " against Awesome cyborgs over a balanced distribution. The per-cell grid stays on the page as a diagnostic that shows where the champion is weak, which is exactly what an aggregate target hides."
-        )
-        [ ( "Denominator", "None; a mode, not a measurement." )
-        , ( "Window", "From the operator transition onward." )
-        , ( "Source", "The trainer's declared curriculum ladder and evaluation scope." )
         ]
 
 
@@ -959,12 +638,90 @@ samplerCoverage =
         ]
 
 
-originRun : Tip
-originRun =
-    t "origin-run"
-        "Carried-over provenance"
-        "This run did not start from scratch. Genomes, weights, mutation rates, species, the innovation counter and the RNG states were copied from an earlier run at a recorded generation. What was deliberately not copied is evidence: the in-flight panel was abandoned at the transition and every fitness, probe and gate result was cleared, because results measured under the old distribution say nothing about this one."
-        [ ( "Denominator", "None; an identifier and a generation number." )
-        , ( "Window", "Fixed at the transition." )
-        , ( "Source", "The transition event recorded in the checkpoint." )
+
+-- WHAT IT IS DOING RIGHT NOW
+
+
+nowPlaying : Tip
+nowPlaying =
+    t "now-playing"
+        "What it is playing"
+        "What the trainer is spending its next episodes on: which gate round is in flight if any, how the shared training panel is drawn, and the rules every one of those fights is scored under. None of this says how good the champion is; it says what question is currently being asked of it."
+        [ ( "Denominator", "Varies per row; each states its own." )
+        , ( "Window", "The generation in flight." )
+        , ( "Source", "Trainer scheduling and run configuration, republished with every snapshot." )
+        ]
+
+
+board : Tip
+board =
+    t "board"
+        "Active board"
+        "Every ordered matchup the run trains on, and it is all of them from generation one. Our ship against their ship is a different cell from the reverse, so both orientations are counted separately. Nothing here is earned: this is the size of the problem, never progress through it."
+        [ ( "Denominator", "None; a count of ordered pairs." )
+        , ( "Window", "Fixed for the lifetime of the run." )
+        , ( "Source", "The engine's board definition." )
+        ]
+
+
+nextGate : Tip
+nextGate =
+    t "next-gate"
+        "What opens the next gate"
+        "The sequence a champion has to walk to clear the gate, in order: pass the cheap readiness probe, then post the demanded count on a full audit panel, then post it again on an independent confirm panel. Stating only the target percentage hides the first and third steps, and hides that the demanded count is higher than the target because the bound has to clear it rather than the raw rate."
+        [ ( "Denominator", "The readiness sample for the probe; the predeclared panel size for each round." )
+        , ( "Window", "The attempt in flight, or the next one if none is." )
+        , ( "Source", "Trainer configuration and the published round state." )
+        ]
+
+
+
+-- POPULATION AND STRUCTURE
+
+
+populationPanel : Tip
+populationPanel =
+    t "population-panel"
+        "Population and structure"
+        "The state of the evolutionary machinery: how many genomes are alive, how many species they split into, and how large their graphs have grown. These say what the search is doing, not how well it is doing; the gate at the top of the page is the only thing that speaks to quality."
+        [ ( "Denominator", "Varies per tile; each states its own." )
+        , ( "Window", "Current generation." )
+        , ( "Source", "Evolution loop and the genome census." )
+        ]
+
+
+
+-- COST AND HEALTH
+
+
+workRates : Tip
+workRates =
+    t "work-rates"
+        "Cost per unit of work"
+        "CPU nanoseconds this process spent per simulated display tick, and per link activation in the policy network. Both divide thread-summed CPU time by counts of events, so neither moves when the machine gets busy, when the duty governor rests, or when the worker count changes, and neither is flattered by a policy that learns to win faster and therefore simulates less. These are the figures to optimise against; episodes per second is not."
+        [ ( "Denominator", "Display ticks simulated, and link activations evaluated, by this process." )
+        , ( "Window", "This process only. The counters start at zero on every resume and are never checkpointed." )
+        , ( "Source", "Per-fight work counters over getrusage CPU time summed across all threads." )
+        ]
+
+
+phaseSplit : Tip
+phaseSplit =
+    t "phase-split"
+        "Where the time went"
+        "This session's CPU seconds, split across the named phases. Shares are of ACCOUNTED time, so they sum to one and the leftover is reported on its own line rather than folded into a bucket. That leftover is signed and both signs mean something: positive is CPU nobody put a clock around, and negative means worker threads were preempted mid-fight, so its size is a contention signal rather than an error."
+        [ ( "Denominator", "Accounted seconds for the shares; session CPU seconds for the unaccounted line." )
+        , ( "Window", "This process only, over the span its compute seconds cover." )
+        , ( "Source", "Per-fight clocks inside the evaluator, plus the supervisor's own timers." )
+        ]
+
+
+benchmark : Tip
+benchmark =
+    t "benchmark"
+        "Benchmark reference"
+        "What this exact binary costs on the fixed benchmark workload, taken as the BEST of several repetitions because unrelated load can only ever make a repetition slower. It is quoted only for recorded runs of this build on this workload definition, so a figure from another binary or another task list can never be compared with it by accident. It does not move while the trainer runs."
+        [ ( "Denominator", "Display ticks and link activations of the fixed task list." )
+        , ( "Window", "One recorded benchmark run, single threaded, with no duty governor and no nice." )
+        , ( "Source", "The append-only bench history beside this run. Absent until this build has been benchmarked." )
         ]

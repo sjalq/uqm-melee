@@ -17,29 +17,40 @@ A standalone Elm page served by the local melee-mario binary at `/`,
 polling `/api/status` every two seconds while the tab is visible and
 `/api/network` whenever the champion changes.
 
-Three rules shape the whole page.
+The page reads coarse to fine, in four bands, and every panel belongs to
+exactly one of them:
+
+1.  **Am I winning?** One headline success rate, the gate it is judged
+    against, and the trend behind it.
+2.  **What is it doing?** The phase, the matchups it is drawing, and
+    what would open the next gate.
+3.  **Is it learning?** Species, structure, and where the aggregate is
+    hiding a weakness. The two panels that are for looking closer rather
+    than for glancing at, the matchup grid and the network graph, are
+    folded shut until asked for.
+4.  **Is it healthy?** What the work costs per unit of work, where the
+    time went, what the machine is allowed to spend, and the log.
+
+Three rules shape the content.
 
 Honest absence. A measurement the trainer has not taken is rendered as
-"awaiting evidence", never as zero. `Maybe Float` is carried all the way
-from the decoder into the view, so there is no place where a missing
-number could quietly become `0%`.
+"awaiting evidence", never as zero. `Maybe` is carried all the way from
+the decoder into the view, so there is no place where a missing number
+could quietly become `0`.
 
-Fresh audit evidence is the headline. The champion's win rate on its
-predeclared gate panel, its Wilson lower bound, and the sample size that
-produced them sit at the top of the page at the largest size used
-anywhere. Population training results are shown elsewhere, in a
-different colour, with their own label, and are never averaged into the
-gate figures.
+One number, one place. Nothing restates a figure a band above it
+already showed. The gate is stated once, at the top, at the largest size
+used anywhere.
 
-Nothing incomparable is joined. Charts break at every curriculum stage
-boundary and at every unmeasured sample. The matchup grid shows the
-current stage and the current champion only.
+Nothing incomparable is joined. Charts break at every unmeasured
+sample, and the per-cell grid is labelled as training exposure rather
+than as evidence, because that is what it is.
 
 -}
 
 import Browser
 import Browser.Events
-import Html exposing (Html, button, dd, div, dl, dt, h1, h2, h3, p, section, span, text)
+import Html exposing (Html, button, dd, details, div, dl, dt, h1, h2, h3, p, section, span, summary, text)
 import Html.Attributes as Attr exposing (class)
 import Html.Events exposing (onClick)
 import Http
@@ -156,7 +167,6 @@ type alias Model =
     , winCursor : Maybe Int
     , speciesCursor : Maybe Int
     , nodesCursor : Maybe Int
-    , episodesCursor : Maybe Int
     , heatCursor : Maybe ( Int, Int )
     , nodeCursor : Maybe Int
     }
@@ -183,7 +193,6 @@ init () =
       , winCursor = Nothing
       , speciesCursor = Nothing
       , nodesCursor = Nothing
-      , episodesCursor = Nothing
       , heatCursor = Nothing
       , nodeCursor = Nothing
       }
@@ -260,7 +269,7 @@ httpErrorToString error =
             "the trainer answered with HTTP " ++ String.fromInt code
 
         Http.BadBody detail ->
-            "the response did not match schema version 1: " ++ detail
+            "the response did not match schema version 4: " ++ detail
 
 
 
@@ -282,8 +291,6 @@ type Msg
     | SpeciesLeave
     | NodesHover Int
     | NodesLeave
-    | EpisodesHover Int
-    | EpisodesLeave
     | HeatSelect Int Int
     | HeatClear
     | NodeSelect Int
@@ -316,8 +323,11 @@ update msg model =
 
         GotStatus (Ok status) ->
             let
+                -- Only fetch a genome when there IS one and it is not the one
+                -- already held. With no champion there is nothing to draw and
+                -- nothing to ask for.
                 needsNetwork =
-                    model.networkFor /= Just status.champion.id && status.champion.id /= ""
+                    status.champion.id /= Nothing && model.networkFor /= status.champion.id
 
                 control =
                     clearSettledControl status model.control
@@ -354,7 +364,7 @@ update msg model =
             ( { model
                 | network = Just network
                 , networkError = Nothing
-                , networkFor = Just network.championId
+                , networkFor = network.championId
                 , networkInFlight = False
               }
             , Cmd.none
@@ -423,12 +433,6 @@ update msg model =
 
         NodesLeave ->
             ( { model | nodesCursor = Nothing }, Cmd.none )
-
-        EpisodesHover index ->
-            ( { model | episodesCursor = Just index }, Cmd.none )
-
-        EpisodesLeave ->
-            ( { model | episodesCursor = Nothing }, Cmd.none )
 
         HeatSelect row col ->
             ( { model | heatCursor = Just ( row, col ) }, Cmd.none )
@@ -586,35 +590,50 @@ viewBody model =
                 tips =
                     tipHandlers model
             in
-            [ div [ class "grid grid-main" ]
-                ([ section [ class "col-8" ] [ viewGate tips model status ]
-                 , section [ class "col-4" ] [ viewVitals tips model status ]
-                 , section [ class "col-7" ] [ viewCurriculum tips status ]
-                 , section [ class "col-5" ] [ viewProgression tips status ]
-                 ]
-                    ++ (if Api.isBroad status.curriculum then
-                            [ section [ class "col-12" ] [ viewShipPerformance tips status ] ]
-
-                        else
-                            []
-                       )
-                    ++ viewCharts tips model status
-                )
+            [ band "Am I winning?"
+                "The one graded question, and the trend behind it."
+                [ section [ class "col-12" ] [ viewGate tips model status ]
+                , section [ class "col-12" ] [ viewWinChart tips model status ]
+                ]
+            , band "What is it doing?"
+                "What the next episodes are being spent on, and what would open the next gate."
+                [ section [ class "col-6" ] [ viewNowPlaying tips status ]
+                , section [ class "col-6" ] [ viewNextGate tips status ]
+                , section [ class "col-12" ] [ viewAllocation tips status ]
+                ]
+            , band "Is it learning?"
+                "Whether the search is still finding structure, and where the aggregate hides a weakness."
+                [ section [ class "col-4" ] [ viewPopulation tips status ]
+                , section [ class "col-4" ] [ viewSpeciesChart tips model status ]
+                , section [ class "col-4" ] [ viewNodesChart tips model status ]
+                , section [ class "col-12" ] [ viewShipPerformance tips status ]
+                , section [ class "col-12" ] [ viewHeatmap tips model status ]
+                , section [ class "col-12" ] [ viewTopology tips model status ]
+                ]
+            , band "Is it healthy?"
+                "What the work costs, where the time goes, and what the machine is allowed to spend."
+                [ section [ class "col-6" ] [ viewThroughput tips model status ]
+                , section [ class "col-6" ] [ viewPhaseSplit tips status ]
+                , section [ class "col-6" ] [ viewBenchmark tips status ]
+                , section [ class "col-6" ] [ viewMachine tips status ]
+                , section [ class "col-12" ] [ viewEvents tips status ]
+                ]
             ]
 
 
-viewCharts : Tip.Handlers Msg -> Model -> Api.Status -> List (Html Msg)
-viewCharts tips model status =
-    [ section [ class "col-12" ] [ viewWinChart tips model status ]
-    , section [ class "col-4" ] [ viewSpeciesChart tips model status ]
-    , section [ class "col-4" ] [ viewNodesChart tips model status ]
-    , section [ class "col-4" ] [ viewEpisodesChart tips model status ]
-    , section [ class "col-12" ] [ viewHeatmap tips model status ]
-    , section [ class "col-7" ] [ viewAllocation tips status ]
-    , section [ class "col-5" ] [ viewMachine tips status ]
-    , section [ class "col-12" ] [ viewTopology tips model status ]
-    , section [ class "col-12" ] [ viewEvents tips status ]
-    ]
+{-| One reading band. The heading is a question rather than a noun,
+because the whole point of the ordering is that a reader who only has
+ten seconds gets an answer from the first band alone.
+-}
+band : String -> String -> List (Html Msg) -> Html Msg
+band title note panels =
+    section [ class "band" ]
+        [ div [ class "band-head" ]
+            [ h2 [ class "band-title" ] [ text title ]
+            , span [ class "band-note" ] [ text note ]
+            ]
+        , div [ class "grid grid-main" ] panels
+        ]
 
 
 
@@ -685,9 +704,6 @@ viewPhasePill tips model =
 
                 Just status ->
                     ( case status.phase of
-                        Api.Errored ->
-                            "pill-bad"
-
                         Api.Paused ->
                             "pill-warn"
 
@@ -714,14 +730,11 @@ viewPhasePill tips model =
 viewFreshnessPill : Tip.Handlers Msg -> Model -> Html Msg
 viewFreshnessPill tips model =
     let
-        stale =
-            isStale model
-
         tone =
             if model.statusError /= Nothing then
                 "pill-bad"
 
-            else if stale then
+            else if isStale model then
                 "pill-warn"
 
             else
@@ -738,9 +751,23 @@ viewFreshnessPill tips model =
     Tip.view tips Tip.AlignEnd Copy.freshness [ span [ class ("pill " ++ tone) ] [ text label ] ]
 
 
+{-| Stale means either this browser has stopped hearing from the trainer
+or the trainer has said so itself.
+
+The client-side age catches a trainer that has gone away entirely, which
+the document cannot report because it stops being published. The
+document's own `stale` flag catches the case the age cannot see: the
+trainer is answering, but the snapshot it is handing out was rendered
+some time ago.
+
+-}
 isStale : Model -> Bool
 isStale model =
-    model.statusError /= Nothing || model.statusAge > staleAfterSeconds
+    model.statusError
+        /= Nothing
+        || model.statusAge
+        > staleAfterSeconds
+        || (model.status |> Maybe.map .stale |> Maybe.withDefault False)
 
 
 viewControls : Tip.Handlers Msg -> Model -> List (Html Msg)
@@ -819,7 +846,7 @@ viewBanners model =
         [ disconnectedBanner model
         , staleBanner model
         , controlBanner model
-        , errorPhaseBanner model
+        , messageBanner model
         ]
 
 
@@ -854,7 +881,7 @@ staleBanner : Model -> Maybe (Html Msg)
 staleBanner model =
     case model.status of
         Just status ->
-            if model.statusError == Nothing && model.statusAge > staleAfterSeconds && Api.phaseIsLive status.phase then
+            if model.statusError == Nothing && isStale model && Api.phaseIsLive status.phase then
                 Just
                     (div [ class "banner banner-warn", Attr.attribute "role" "status" ]
                         [ div []
@@ -862,9 +889,16 @@ staleBanner model =
                             , text
                                 ("The trainer says it is "
                                     ++ String.toLower (Api.phaseLabel status.phase)
-                                    ++ ", but it has not published an update for "
-                                    ++ Format.decimal 0 model.statusAge
-                                    ++ " seconds. Treat these numbers as historical until it catches up."
+                                    ++ ", but "
+                                    ++ (if status.stale then
+                                            "it has marked this snapshot stale itself"
+
+                                        else
+                                            "it has not published an update for "
+                                                ++ Format.decimal 0 model.statusAge
+                                                ++ " seconds"
+                                       )
+                                    ++ ". Treat these numbers as historical until it catches up."
                                 )
                             ]
                         ]
@@ -916,34 +950,25 @@ controlBanner model =
             Nothing
 
 
-errorPhaseBanner : Model -> Maybe (Html Msg)
-errorPhaseBanner model =
+{-| Whatever the trainer put in `message`, shown verbatim.
+
+There is no error phase to key a louder treatment off: a start that
+fails exits with its reason on stderr rather than publishing, so a
+running trainer's message is a note rather than a fault.
+
+-}
+messageBanner : Model -> Maybe (Html Msg)
+messageBanner model =
     case model.status of
         Just status ->
-            if status.phase == Api.Errored then
-                Just
-                    (div [ class "banner banner-bad", Attr.attribute "role" "alert" ]
-                        [ div []
-                            [ Html.strong [] [ text "Trainer reported an error. " ]
-                            , text
-                                (if String.isEmpty status.message then
-                                    "No detail was supplied."
+            if String.isEmpty status.message then
+                Nothing
 
-                                 else
-                                    status.message
-                                )
-                            ]
-                        ]
-                    )
-
-            else if not (String.isEmpty status.message) then
+            else
                 Just
                     (div [ class "banner", Attr.attribute "role" "status" ]
                         [ div [] [ text status.message ] ]
                     )
-
-            else
-                Nothing
 
         Nothing ->
             Nothing
@@ -958,6 +983,25 @@ panel tips tip title children =
     div [ class "panel" ]
         (div [ class "panel-head" ]
             [ Tip.view tips Tip.AlignStart tip [ h2 [] [ text title ] ] ]
+            :: children
+        )
+
+
+{-| A panel that starts folded shut.
+
+For the two views that are for looking closer rather than for glancing
+at. A native `details` element is used rather than model state so the
+fold survives every re-render, works with no JavaScript of ours, and
+reaches keyboard and screen-reader users for free.
+
+-}
+foldPanel : Tip.Handlers Msg -> Tip.Tip -> String -> String -> List (Html Msg) -> Html Msg
+foldPanel tips tip title note children =
+    details [ class "panel panel-fold" ]
+        (summary [ class "panel-head" ]
+            [ Tip.view tips Tip.AlignStart tip [ h2 [] [ text title ] ]
+            , span [ class "panel-note" ] [ text note ]
+            ]
             :: children
         )
 
@@ -990,13 +1034,42 @@ viewMetric tips spec =
         ]
 
 
+{-| A horizontal share bar, reused by the sample allocation list and the
+phase split. One shape for "this is what fraction of the whole X is",
+so two panels that mean the same thing look the same.
+-}
+shareRow : String -> Maybe String -> Float -> Html Msg
+shareRow name chip share =
+    div []
+        [ div [ class "alloc-name" ]
+            (span [ class "who" ] [ text name ]
+                :: (case chip of
+                        Just label ->
+                            [ span [ class "chip" ] [ text label ] ]
 
--- CHAMPION GATE
+                        Nothing ->
+                            []
+                   )
+            )
+        , div [ class "alloc-row" ]
+            [ div [ class "alloc-bar" ]
+                [ div
+                    [ class "alloc-fill"
+                    , Attr.style "width" (Format.decimal 2 (clamp 0 1 share * 100) ++ "%")
+                    ]
+                    []
+                ]
+            , span [ class "alloc-share" ] [ text (Format.percent1 share) ]
+            ]
+        ]
 
 
-{-| The bar behind every gate figure: raw rate, published bound, and the
-target line. Shared by the per-cell gate and the broad overall gate so
-the two cannot drift into meaning different things visually.
+
+-- BAND 1: AM I WINNING?
+
+
+{-| The bar behind the gate figure: raw rate, published bound, and the
+target line.
 -}
 gateMeter : Float -> Gate.Verdict -> Float -> Float -> Html msg
 gateMeter target verdict rateFraction boundFraction =
@@ -1046,19 +1119,6 @@ gateLegend scoring target =
         ]
 
 
-{-| The headline gate. Which gate that is depends on what the run is
-being judged on, and the two are never shown at once: a staged run is
-gated cell by cell, a broad run on one overall balanced result.
--}
-viewGate : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
-viewGate tips model status =
-    if Api.isBroad status.curriculum then
-        viewOverallGate tips model status
-
-    else
-        viewChampionGate tips model status
-
-
 {-| The one line that keeps the scoring rule from being read as the
 gate, rendered in the gate panel's head because that is exactly where
 the two would be confused. Nothing is added when the run's fitness is
@@ -1076,201 +1136,19 @@ scoringNote tips status =
             ]
 
 
-viewChampionGate : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
-viewChampionGate tips model status =
-    let
-        champion =
-            status.champion
+{-| The headline. One rate, one bound, one target, one meter.
 
-        target =
-            status.curriculum.target
-
-        verdict =
-            Gate.championVerdict target champion
-
-        ( rateClass, rateText ) =
-            case champion.winRate of
-                Just rate ->
-                    ( case verdict of
-                        Gate.Passing _ ->
-                            "gate-rate gate-pass"
-
-                        _ ->
-                            "gate-rate gate-fail"
-                    , Format.percent1 rate
-                    )
-
-                Nothing ->
-                    ( "gate-rate is-unknown", Format.awaiting )
-
-        boundFraction =
-            champion.lowerBound |> Maybe.withDefault 0
-
-        rateFraction =
-            champion.winRate |> Maybe.withDefault 0
-
-        verdictLine =
-            case verdict of
-                Gate.NoEvidence ->
-                    "No audit games have been played for this champion yet. The gate cannot be judged, and this is not a score of zero."
-
-                Gate.Passing bound ->
-                    "Wilson lower bound " ++ Format.percent1 bound ++ " clears the " ++ Format.percent target ++ " target on this panel."
-
-                Gate.Short bound ->
-                    "Wilson lower bound " ++ Format.percent1 bound ++ " is below the " ++ Format.percent target ++ " target, so this panel does not yet support a promotion."
-
-                Gate.RateOnly rate ->
-                    "The trainer published a raw rate of " ++ Format.percent1 rate ++ " but no confidence bound, so the gate is undecided. Promotion is judged on the bound."
-    in
-    div [ class "panel" ]
-        [ div [ class "panel-head" ]
-            ([ Tip.view tips
-                Tip.AlignStart
-                (Tip.detail (Copy.championRate status.scoring) (Scoring.explainGate status.scoring))
-                [ h2 [] [ text ("Champion fresh audit " ++ Scoring.rateLabel status.scoring) ] ]
-             , span [ class "panel-note" ] [ text "Audit evidence only. Not population training play." ]
-             ]
-                ++ scoringNote tips status
-            )
-        , div [ class "gate" ]
-            [ div [ class "gate-figure" ]
-                [ div [ class rateClass ] [ text rateText ]
-                , div [ class "gate-denominator" ]
-                    [ text
-                        (if champion.validatedGames > 0 then
-                            "over "
-                                ++ Format.fraction champion.validatedWins champion.validatedGames
-                                ++ " fresh audit games"
-
-                         else
-                            "no audit games on this champion's panel yet"
-                        )
-                    ]
-                , gateMeter target verdict rateFraction boundFraction
-                , gateLegend status.scoring target
-                , p [ class "prose" ] [ text verdictLine ]
-                , p [ class "prose" ] [ text (demandLine status) ]
-                ]
-            , div [ class "gate-side" ]
-                [ div [ class "metrics" ]
-                    [ viewMetric tips
-                        { tip = Copy.championLowerBound status.scoring
-                        , label = "Lower bound"
-                        , value = Maybe.map Format.percent1 champion.lowerBound
-                        , sub = "gate target " ++ Format.percent target
-                        , accent =
-                            case verdict of
-                                Gate.Passing _ ->
-                                    "metric-cyan"
-
-                                Gate.Short _ ->
-                                    "metric-amber"
-
-                                _ ->
-                                    ""
-                        }
-                    , viewMetric tips
-                        { tip = Copy.championGames status.scoring
-                        , label = "Audit sample"
-                        , value =
-                            if champion.validatedGames > 0 then
-                                Just (Format.fraction champion.validatedWins champion.validatedGames)
-
-                            else
-                                Nothing
-                        , sub = Scoring.successPlural status.scoring ++ " over predeclared panel games"
-                        , accent = ""
-                        }
-                    , viewMetric tips
-                        { tip = Copy.championId
-                        , label = "Champion"
-                        , value =
-                            if String.isEmpty champion.id then
-                                Nothing
-
-                            else
-                                Just (Format.shortId champion.id)
-                        , sub = "evidence resets when this changes"
-                        , accent = ""
-                        }
-                    , viewMetric tips
-                        { tip = Copy.championStructure
-                        , label = "Topology"
-                        , value = Just (Format.count champion.nodes ++ " / " ++ Format.count champion.connections)
-                        , sub = Format.count champion.hiddenNodes ++ " hidden, evolved"
-                        , accent = ""
-                        }
-                    , viewMetric tips
-                        { tip = Copy.observedNeeded status.scoring
-                        , label = Format.capitalise (Scoring.successPlural status.scoring) ++ " needed"
-                        , value =
-                            Gate.winsNeeded Gate.z95 target status.audit.panel
-                                |> Maybe.map (\wins -> Format.fraction wins status.audit.panel)
-                        , sub = "observed, to clear the bound"
-                        , accent = "metric-amber"
-                        }
-                    , viewMetric tips
-                        { tip = Copy.auditPanel status.scoring
-                        , label = "Audit panel"
-                        , value =
-                            if status.audit.panel > 0 then
-                                Just (String.fromInt status.audit.panel)
-
-                            else
-                                Nothing
-                        , sub =
-                            String.fromInt status.audit.maxLosses
-                                ++ " losses allowed, abandoned on the "
-                                ++ ordinal (status.audit.maxLosses + 1)
-                        , accent = ""
-                        }
-                    , viewMetric tips
-                        { tip = Copy.worstCell
-                        , label = "Worst cell"
-                        , value = Maybe.map Format.percent1 champion.worstCellLowerBound
-                        , sub = "weakest cell's bound"
-                        , accent = ""
-                        }
-                    ]
-                , p [ class "prose" ]
-                    [ text
-                        (if isStale model then
-                            "These figures are from a stale snapshot; see the notice above."
-
-                         else
-                            "These figures describe one champion on one predeclared panel at stage "
-                                ++ String.fromInt status.curriculum.stage
-                                ++ ". They say nothing about matchups outside that panel."
-                        )
-                    ]
-                ]
-            ]
-        ]
-
-
-
-{-| The broad run's headline: one aggregate win rate over a balanced
-held-out distribution.
-
-Everything on this panel is worded to keep three things from being
-confused with one another: the aggregate figure being gated, the two
-independent rounds that have to clear it, and the per-hull diagnostics
-that show where the aggregate is hiding a weakness. The per-cell
-language used by the staged gate does not appear here at all, because
-nothing on this panel is a per-cell claim.
+An aggregate over a fixed held-out balanced panel, judged on the bound
+rather than on the raw rate, and cleared only when two independent
+rounds have both cleared it under the same frozen champion.
 
 -}
-viewOverallGate : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
-viewOverallGate tips model status =
+viewGate : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
+viewGate tips model status =
     let
-        -- The full reasoning lives behind the heading's explanation trigger
-        -- rather than under it. Printed in full it ran to a dozen paragraphs
-        -- and pushed every number below the fold, which is how a dashboard
-        -- stops being read at all.
         gateTip =
             Tip.detail (Copy.overallGate status.scoring)
-                (Gate.explainBroad status.scoring status.curriculum status.overall status.shipPerformance
+                (Gate.explainOverall status.scoring status.board status.overall status.shipPerformance
                     ++ Scoring.explainGate status.scoring
                 )
 
@@ -1281,9 +1159,11 @@ viewOverallGate tips model status =
         Nothing ->
             div [ class "panel" ]
                 [ div [ class "panel-head" ]
-                    [ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text heading ] ]
-                    , span [ class "panel-note" ] [ text "any ship versus any ship, Awesome cyborgs" ]
-                    ]
+                    ([ Tip.view tips Tip.AlignStart gateTip [ h2 [] [ text heading ] ]
+                     , span [ class "panel-note" ] [ text "any ship versus any ship, Awesome cyborgs" ]
+                     ]
+                        ++ scoringNote tips status
+                    )
                 , div [ class "placeholder" ]
                     [ Html.strong [] [ text Format.awaiting ]
                     , span [] [ text "The trainer has not published an overall balanced panel result yet. This is an absence of evidence, not a score of zero." ]
@@ -1426,42 +1306,43 @@ viewOverallGate tips model status =
                             , viewMetric tips
                                 { tip = Copy.championId
                                 , label = "Champion"
-                                , value =
-                                    if String.isEmpty overall.championId then
-                                        Nothing
-
-                                    else
-                                        Just (Format.shortId overall.championId)
+                                , value = Maybe.map Format.shortId overall.championId
                                 , sub = "evidence resets when this changes"
                                 , accent = ""
-                                }
-                            , viewMetric tips
-                                { tip = Copy.observedNeeded status.scoring
-                                , label = Format.capitalise (Scoring.successPlural status.scoring) ++ " needed"
-                                , value =
-                                    Gate.winsNeeded Gate.z95 overall.target overall.panel
-                                        |> Maybe.map (\wins -> Format.fraction wins overall.panel)
-                                , sub = "observed, to clear the bound"
-                                , accent = "metric-amber"
                                 }
                             , roundMetric tips Copy.overallRound "Audit round" overall.target overall.audit
                             , roundMetric tips Copy.overallRound "Confirm round" overall.target overall.confirm
                             ]
-                        , p [ class "prose" ]
-                            [ text
-                                (if isStale model then
-                                    "These figures are from a stale snapshot; see the notice above."
-
-                                 else if overall.passed then
-                                    "Both rounds have cleared the overall target for this champion. That is an aggregate result over the balanced distribution, not a per-matchup guarantee; the per-hull table below shows where it is weakest."
-
-                                 else
-                                    "Passes only after the audit round and then an independent confirm round. Neither round's evidence is added to the other's."
-                                )
-                            ]
+                        , p [ class "prose" ] [ text (gateStandingLine model overall) ]
                         ]
                     ]
                 ]
+
+
+{-| The last word under the gate tiles: whether this champion has
+cleared it, whether somebody else did, or what is still owed.
+-}
+gateStandingLine : Model -> Api.Overall -> String
+gateStandingLine model overall =
+    if isStale model then
+        "These figures are from a stale snapshot; see the notice above."
+
+    else if overall.passed then
+        "Both rounds have cleared the overall target for this champion. That is an aggregate result over the balanced distribution, not a per-matchup guarantee; the per-hull table below shows where it is weakest."
+
+    else
+        case ( overall.passedBy, overall.championId ) of
+            ( Just cleared, current ) ->
+                if Just cleared /= current then
+                    "Champion "
+                        ++ Format.shortId cleared
+                        ++ " cleared both rounds, but it is no longer the champion. That result belongs to that policy and is not inherited, so the gate stands open again."
+
+                else
+                    "Passes only after the audit round and then an independent confirm round. Neither round's evidence is added to the other's."
+
+            ( Nothing, _ ) ->
+                "Passes only after the audit round and then an independent confirm round. Neither round's evidence is added to the other's."
 
 
 {-| One round's standing, shown beside the other so a passed audit can
@@ -1503,9 +1384,9 @@ roundMetric tips tip label target round =
         }
 
 
-{-| What the overall gate actually demands on its panel, in observed
-successes rather than in the target percentage, for the same reason the
-staged gate spells it out: a bound floor of 80% is not 80 in 100.
+{-| What the gate actually demands on its panel, in observed successes
+rather than in the target percentage: a bound floor of 80% is not 80 in
+100.
 
 The noun is the run's own, because under a crew-lead gate the count the
 panel has to post is a count of leads and calling it a win count would
@@ -1534,136 +1415,151 @@ overallDemandLine scoring overall =
             "No overall panel size has been published yet, so the observed count the gate demands cannot be stated."
 
 
-{-| Spells out what the gate actually demands on this panel. A target of
-80% is a floor on the Wilson bound, so the observed score a candidate
-has to post is meaningfully higher, and saying only "80%" invites the
-reader to think 80 of 100 would pass.
--}
-demandLine : Api.Status -> String
-demandLine status =
+viewWinChart : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
+viewWinChart tips model status =
     let
-        panelSize =
-            status.audit.panel
-
         target =
-            status.curriculum.target
+            status.overall |> Maybe.map .target |> Maybe.withDefault 0.8
+
+        training =
+            let
+                base =
+                    Chart.series "training"
+                        ("Training "
+                            ++ Scoring.rateLabel status.scoring
+                            ++ " (champion's own sampled panel this generation)"
+                        )
+                        "#ffb23f"
+                        (List.map .trainingWinRate status.history)
+            in
+            { base | width = 1.3 }
+
+        validation =
+            let
+                base =
+                    Chart.series "validation"
+                        ("Champion readiness "
+                            ++ Scoring.rateLabel status.scoring
+                            ++ " (screening probe, not audit evidence)"
+                        )
+                        "#4fd6e0"
+                        (List.map .validationWinRate status.history)
+            in
+            { base | markers = True, width = 2.4 }
     in
-    case Gate.winsNeeded Gate.z95 target panelSize of
-        Just wins ->
-            "On the predeclared panel of "
-                ++ String.fromInt panelSize
-                ++ ", clearing the "
-                ++ Format.percent target
-                ++ " Wilson lower bound takes "
-                ++ String.fromInt wins
-                ++ " observed "
-                ++ Scoring.successPlural status.scoring
-                ++ " ("
-                ++ Format.percent1 (toFloat wins / toFloat panelSize)
-                ++ "), not "
-                ++ String.fromInt (ceiling (target * toFloat panelSize))
-                ++ ". That leaves "
-                ++ String.fromInt status.audit.maxLosses
-                ++ " "
-                ++ Scoring.nonSuccessPhrase status.scoring
-                ++ " to spare, so the attempt survives "
-                ++ String.fromInt status.audit.maxLosses
-                ++ " and is abandoned on the "
-                ++ ordinal (status.audit.maxLosses + 1)
-                ++ ", the point at which the target became unreachable."
-
-        Nothing ->
-            "No audit panel size has been published yet, so the observed count the gate demands cannot be stated."
+    chartPanel tips
+        (Tip.detail (Copy.winRateChart status.scoring) (Scoring.explainGate status.scoring))
+        (Scoring.successHeading status.scoring ++ " over generations")
+        status
+        (Chart.view
+            { height = 240
+            , userWidth = 760
+            , xLabels = historyLabels status
+            , yMin = 0
+            , yMax = 1
+            , yTicks = List.map (\v -> ( v, Format.percent v )) [ 0, 0.25, 0.5, 0.75, 1 ]
+            , series = [ training, validation ]
+            , guides = [ { value = target, label = "gate " ++ Format.percent target, color = "#f4ead6" } ]
+            , hovered = model.winCursor
+            , onHover = WinHover
+            , onLeave = WinLeave
+            , formatValue = Format.percent1
+            , emptyHint = "The trainer publishes a history point once the first generation has been scored."
+            , describedBy = "readout-winrate"
+            }
+            |> withNote "Neither line is gate evidence. Training is the sampled panel the population was scored on; readiness is the cheap balanced probe that decides when an audit is worth spending. The gate guide is the aggregate target both are read against."
+        )
 
 
-{-| The loss cap is the number of losses an attempt can absorb and still
-reach the target, so the cap itself is survivable and the abort happens
-on the next one.
+
+-- BAND 2: WHAT IS IT DOING?
+
+
+{-| What the next episodes are actually being spent on.
+
+The sampler rows are the real answer, so they lead. The scoring rules
+follow them because every one of those fights is scored under them, and
+a reader who does not know what a "rate" counts here cannot read any
+other panel on the page.
+
 -}
-ordinal : Int -> String
-ordinal n =
+viewNowPlaying : Tip.Handlers Msg -> Api.Status -> Html Msg
+viewNowPlaying tips status =
     let
-        suffix =
-            if modBy 100 n >= 11 && modBy 100 n <= 13 then
-                "th"
+        opponents =
+            status.matchups
+                |> List.map .opponentType
+                |> List.foldl
+                    (\kind acc ->
+                        if List.member kind acc then
+                            acc
 
-            else
-                case modBy 10 n of
-                    1 ->
-                        "st"
+                        else
+                            acc ++ [ kind ]
+                    )
+                    []
 
-                    2 ->
-                        "nd"
+        samplerRows sampler =
+            [ dt [] [ Tip.view tips Tip.AlignStart Copy.samplerCoverage [ text "Training panel" ] ]
+            , dd []
+                [ text
+                    (case sampler.panel of
+                        Just episodes ->
+                            String.fromInt episodes ++ " shared episodes per generation, same panel for every genome"
 
-                    3 ->
-                        "rd"
+                        Nothing ->
+                            "size not reported"
+                    )
+                ]
+            , dt [] [ Tip.view tips Tip.AlignStart Copy.samplerCoverage [ text "Balanced share" ] ]
+            , dd []
+                [ text
+                    (case sampler.balancedShare of
+                        Just share ->
+                            Format.percent1 share ++ " of that panel drawn by the balanced rotation, the rest drawn adaptively"
 
-                    _ ->
-                        "th"
+                        Nothing ->
+                            Format.awaiting
+                    )
+                ]
+            , dt [] [ Tip.view tips Tip.AlignStart Copy.samplerCoverage [ text "Rotation" ] ]
+            , dd []
+                [ text
+                    (case ( sampler.cursor, sampler.tour ) of
+                        ( Just cursor, Just tour ) ->
+                            "cursor at "
+                                ++ Format.count cursor
+                                ++ ", "
+                                ++ String.fromInt tour
+                                ++ " full tours of the board completed"
+
+                        ( Just cursor, Nothing ) ->
+                            "cursor at " ++ Format.count cursor ++ ", completed tours not reported"
+
+                        ( Nothing, Just tour ) ->
+                            String.fromInt tour ++ " full tours completed, cursor not reported"
+
+                        ( Nothing, Nothing ) ->
+                            Format.awaiting
+                    )
+                ]
+            ]
     in
-    String.fromInt n ++ suffix
-
-
-
--- VITALS
-
-
-viewVitals : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
-viewVitals tips model status =
-    panel tips Copy.vitals
-        "Run vitals"
+    panel tips
+        Copy.nowPlaying
+        "What it is playing"
         [ div [ class "metrics" ]
             [ viewMetric tips
-                { tip = Copy.generation
-                , label = "Generation"
-                , value = Just (Format.count status.generation)
-                , sub = "bred and scored"
-                , accent = ""
-                }
-            , viewMetric tips
-                { tip = Copy.episodes
-                , label = "Episodes"
-                , value = Just (Format.count status.episodes)
-                , sub = "training plus audit"
-                , accent = ""
-                }
-            , viewMetric tips
-                { tip = Copy.episodesPerSecond
-                , label = "Throughput"
+                { tip = Copy.board
+                , label = "Active board"
                 , value =
-                    if status.episodesPerSecond > 0 then
-                        Just (Format.decimal 2 status.episodesPerSecond)
+                    if status.board.totalMatchups > 0 then
+                        Just (Format.count status.board.totalMatchups)
 
                     else
                         Nothing
-                , sub = "episodes per second"
-                , accent = ""
-                }
-            , viewMetric tips
-                { tip = Copy.elapsed
-                , label = "Elapsed"
-                , value = Just (Format.duration status.elapsedSeconds)
-                , sub = "summed across resumes"
-                , accent = ""
-                }
-            , viewMetric tips
-                { tip = Copy.unresolved status.scoring
-                , label = "Unresolved"
-                , value = Just (Format.count status.episodesUnresolved)
-                , sub =
-                    if status.episodes > 0 then
-                        Format.percent1 (toFloat status.episodesUnresolved / toFloat status.episodes)
-                            ++ " "
-                            ++ Scoring.unresolvedNote status.scoring
-
-                    else
-                        Scoring.unresolvedNote status.scoring
-                , accent =
-                    if status.episodes > 0 && toFloat status.episodesUnresolved > 0.25 * toFloat status.episodes then
-                        "metric-amber"
-
-                    else
-                        ""
+                , sub = "ordered matchups, all active from generation one"
+                , accent = "metric-cyan"
                 }
             , viewMetric tips
                 { tip = Tip.detail Copy.fitnessRule (Scoring.explain status.scoring status.resources)
@@ -1698,620 +1594,191 @@ viewVitals tips model status =
                         _ ->
                             ""
                 }
-            , viewMetric tips
-                { tip = Copy.combatVictories
-                , label = "Combat victories"
-                , value = Scoring.combatVictoriesValue status.combatVictories
-                , sub = Scoring.combatVictoriesNote status.combatVictories
-                , accent = ""
-                }
-            ]
-        , p [ class "prose" ]
-            [ text
-                ("Polling "
-                    ++ statusUrl
-                    ++ " every "
-                    ++ Format.decimal 0 (pollMillis / 1000)
-                    ++ " seconds"
-                    ++ (if model.visible then
-                            "."
-
-                        else
-                            ", paused while this tab is hidden."
-                       )
-                )
-            ]
-        ]
-
-
-
--- CURRICULUM
-
-
-viewCurriculum : Tip.Handlers Msg -> Api.Status -> Html Msg
-viewCurriculum tips status =
-    let
-        curriculum =
-            status.curriculum
-
-        target =
-            curriculum.target
-
-        broad =
-            Api.isBroad curriculum
-
-        blockers =
-            Gate.analyse target status.matchups
-
-        -- In broad mode this panel earns one sentence on screen. Its subject
-        -- is the cells, the gate is explained on the gate panel, and the rest
-        -- of the reasoning sits behind the heading's explanation trigger.
-        cellDetail =
-            Gate.explainBroadCells curriculum status.matchups
-
-        reasons =
-            if broad then
-                List.take 1 cellDetail
-
-            else
-                Gate.explain target curriculum status.matchups
-
-        weakest =
-            Gate.weakestFirst target status.matchups
-                |> List.filter (\m -> m.status /= Api.Mastered)
-                |> List.take 5
-    in
-    div [ class "panel" ]
-        [ div [ class "panel-head" ]
-            [ Tip.view tips
-                Tip.AlignStart
-                (if broad then
-                    Tip.detail (Copy.broadMode status.scoring) (List.drop 1 cellDetail)
-
-                 else
-                    Copy.expansionBlocked
-                )
-                [ h2 []
-                    [ text
-                        (if broad then
-                            "Curriculum: all ships active"
-
-                         else
-                            "Curriculum and why it is or is not expanding"
-                        )
-                    ]
-                ]
-            , span [ class "panel-note" ]
-                [ text
-                    (if broad then
-                        "overall balanced target, no per-matchup gate"
-
-                     else
-                        "stage " ++ String.fromInt curriculum.stage
-                    )
-                ]
-            ]
-        , div [ class "metrics" ]
-            [ viewMetric tips
-                { tip =
-                    if broad then
-                        Copy.broadMode status.scoring
-
-                    else
-                        Copy.stage
-                , label =
-                    if broad then
-                        "Active board"
-
-                    else
-                        "Stage"
-                , value =
-                    if broad then
-                        Just
-                            (String.fromInt (List.length curriculum.ourRoster)
-                                ++ " \u{00D7} "
-                                ++ String.fromInt (List.length curriculum.opponentRoster)
-                            )
-
-                    else
-                        Just (String.fromInt curriculum.stage)
-                , sub =
-                    if broad then
-                        "every ship of ours against every opponent, at once"
-
-                    else
-                        String.fromInt (List.length curriculum.ourRoster)
-                            ++ " of ours \u{00D7} "
-                            ++ String.fromInt (List.length curriculum.opponentRoster)
-                            ++ " opponents"
-                , accent =
-                    if broad then
-                        "metric-cyan"
-
-                    else
-                        ""
-                }
-            , viewMetric tips
-                { tip = Copy.matchupCoverage
-                , label =
-                    if broad then
-                        "Cells cleared"
-
-                    else
-                        "Mastered cells"
-                , value = Just (Format.fraction curriculum.masteredMatchups curriculum.totalMatchups)
-                , sub =
-                    if broad then
-                        "diagnostic only, gates nothing in this mode"
-
-                    else
-                        "each cell gated on its own evidence"
-                , accent =
-                    if broad then
-                        ""
-
-                    else if curriculum.totalMatchups > 0 && curriculum.masteredMatchups == curriculum.totalMatchups then
-                        "metric-cyan"
-
-                    else
-                        ""
-                }
-            , viewMetric tips
-                { tip = Copy.unevaluated
-                , label = "Unevaluated"
-                , value = Just (String.fromInt blockers.unseen)
-                , sub =
-                    if broad then
-                        "cells with no gate games; a blind spot, not a blocker"
-
-                    else
-                        "active cells with no audit games"
-                , accent =
-                    if broad then
-                        ""
-
-                    else if blockers.unseen > 0 then
-                        "metric-amber"
-
-                    else
-                        ""
-                }
-            , viewMetric tips
-                { tip =
-                    if broad then
-                        Copy.overallGate status.scoring
-
-                    else
-                        Copy.nextExpansion
-                , label =
-                    if broad then
-                        "Overall target"
-
-                    else
-                        "Next addition"
-                , value =
-                    if broad then
-                        Just (Format.percent curriculum.target)
-
-                    else
-                        case ( curriculum.nextSide, curriculum.nextShip ) of
-                            ( Api.Complete, _ ) ->
-                                Just "complete"
-
-                            ( _, Just ship ) ->
-                                Just ship
-
-                            ( Api.UnknownSide _, Nothing ) ->
-                                Nothing
-
-                            ( _, Nothing ) ->
-                                Nothing
-                , sub =
-                    if broad then
-                        "overall, on a balanced held-out panel"
-
-                    else
-                        Api.nextSideLabel curriculum.nextSide
-                , accent = ""
-                }
-            ]
-        , div [ Attr.style "margin-top" "14px" ]
-            (List.map (\line -> p [ class "prose" ] [ text line ]) reasons)
-        , if List.isEmpty weakest then
-            text ""
-
-          else
-            div [ Attr.style "margin-top" "14px" ]
-                [ h3 []
-                    [ text
-                        (if broad then
-                            "Weakest cells on the board"
-
-                         else
-                            "Cells holding the gate up"
-                        )
-                    ]
-                , p [ class "prose", Attr.style "margin-top" "4px" ]
-                    [ text
-                        (if broad then
-                            "Diagnostics. None of these blocks the overall gate; they show where an aggregate pass would be thinnest."
-
-                         else
-                            "Each of these has to clear the target on its own fresh audit evidence before the roster grows."
-                        )
-                    ]
-                , div [ class "alloc", Attr.style "margin-top" "8px" ]
-                    (List.map (viewWeakCell target) weakest)
-                ]
-        , div [ Attr.style "margin-top" "16px" ]
-            [ h3 []
-                [ text
-                    (if broad then
-                        "Rosters, all active"
-
-                     else
-                        "Rosters in frozen expansion order"
-                    )
-                ]
-            , div [ Attr.style "margin-top" "8px" ]
-                [ Tip.view tips Tip.AlignStart Copy.rosterOurs [ span [ class "eyebrow" ] [ text "Ours" ] ] ]
-            , div [ class "chip-row", Attr.style "margin-top" "6px" ] (rosterChips curriculum.ourRoster)
-            , div [ Attr.style "margin-top" "12px" ]
-                [ Tip.view tips Tip.AlignStart Copy.rosterTheirs [ span [ class "eyebrow" ] [ text "Opponents" ] ] ]
-            , div [ class "chip-row", Attr.style "margin-top" "6px" ] (rosterChips curriculum.opponentRoster)
-            , div [ Attr.style "margin-top" "12px" ]
-                [ Tip.view tips Tip.AlignStart Copy.opponentTypes [ span [ class "eyebrow" ] [ text "Opponent types" ] ] ]
-            , div [ class "chip-row", Attr.style "margin-top" "6px" ]
-                (if List.isEmpty curriculum.opponentTypes then
-                    [ span [ class "chip" ] [ text "none reported" ] ]
-
-                 else
-                    List.map (\kind -> span [ class "chip" ] [ text (Api.opponentTypeLabel kind) ]) curriculum.opponentTypes
-                )
             ]
         , dl [ class "deflist", Attr.style "margin-top" "16px" ]
-            ([ dt [] [ Tip.view tips Tip.AlignStart Copy.ladderPhase [ text "Ladder" ] ]
-             , dd [] [ text (Api.ladderLabel curriculum.ladder) ]
-             , dt [] [ Tip.view tips Tip.AlignStart Copy.opponentRevision [ text "Opponent rev" ] ]
+            ([ dt [] [ Tip.view tips Tip.AlignStart Copy.phase [ text "Doing now" ] ]
              , dd []
                 [ text
-                    ("r"
-                        ++ String.fromInt curriculum.opponentRevision
-                        ++ (case curriculum.opponentFingerprint of
-                                Just fingerprint ->
-                                    " \u{00B7} " ++ Format.shortId fingerprint
+                    (Api.phaseLabel status.phase
+                        ++ (case status.overall |> Maybe.andThen .round of
+                                Just round ->
+                                    ", " ++ Api.overallRoundLabel round ++ " round in flight"
 
                                 Nothing ->
-                                    " \u{00B7} cyborg only, no frozen model yet"
+                                    ", no gate round in flight"
                            )
                     )
                 ]
-             , dt [] [ Tip.view tips Tip.AlignStart Copy.readiness [ text "Readiness" ] ]
+             , dt [] [ text "Opponents" ]
              , dd []
                 [ text
-                    ((case status.readiness.lastRate of
-                        Just rate ->
-                            Format.percent1 rate
-                                ++ " "
-                                ++ Scoring.rateLabel status.scoring
-                                ++ " over "
-                                ++ String.fromInt status.readiness.games
-                                ++ " games, needs "
-                                ++ Format.percent status.readiness.threshold
-
-                        Nothing ->
-                            "not yet screened \u{00B7} "
-                                ++ String.fromInt status.readiness.games
-                                ++ " games every "
-                                ++ String.fromInt status.readiness.period
-                                ++ " generations, needs "
-                                ++ Format.percent status.readiness.threshold
-                                ++ " "
-                                ++ Scoring.rateLabel status.scoring
-                     )
-                        ++ " \u{00B7} screening probe, never gate evidence"
-                        ++ (case status.readiness.purpose of
-                                Just purpose ->
-                                    " \u{00B7} " ++ purpose
-
-                                Nothing ->
-                                    ""
-                           )
-                    )
-                ]
-             ]
-                ++ regressionRow tips status
-            )
-        ]
-
-
-{-| One row, and only when the trainer actually reports the block. An
-engine that does not run regression rehearsal should not grow an empty
-placeholder for it.
--}
-regressionRow : Tip.Handlers Msg -> Api.Status -> List (Html Msg)
-regressionRow tips status =
-    case status.regression of
-        Nothing ->
-            []
-
-        Just regression ->
-            let
-                phaseText =
-                    if regression.sweeping then
-                        "sweeping now"
-
-                    else if regression.rehearsing > 0 then
-                        "rehearsing " ++ String.fromInt regression.rehearsing ++ " cells"
-
-                    else if regression.active then
-                        "armed"
-
-                    else
-                        "idle"
-
-                resultText =
-                    if regression.lastSwept <= 0 then
-                        "no sweep yet"
-
-                    else if regression.lastFailed > 0 then
-                        "last sweep at generation "
-                            ++ String.fromInt regression.lastSwept
-                            ++ " lost "
-                            ++ String.fromInt regression.lastFailed
-                            ++ " previously mastered cells"
-
-                    else
-                        "last sweep at generation "
-                            ++ String.fromInt regression.lastSwept
-                            ++ " held every mastered cell"
-            in
-            [ dt [] [ Tip.view tips Tip.AlignStart (Copy.regression status.scoring) [ text "Regression" ] ]
-            , dd [] [ text (phaseText ++ " \u{00B7} " ++ resultText) ]
-            ]
-
-
-rosterChips : List String -> List (Html Msg)
-rosterChips roster =
-    case roster of
-        [] ->
-            [ span [ class "chip" ] [ text "none reported" ] ]
-
-        first :: rest ->
-            span [ class "chip chip-seed" ] [ text (first ++ " \u{00B7} seed") ]
-                :: List.indexedMap
-                    (\i name ->
-                        span
-                            [ class
-                                (if i == List.length rest - 1 then
-                                    "chip chip-new"
-
-                                 else
-                                    "chip"
-                                )
-                            ]
-                            [ text name ]
-                    )
-                    rest
-
-
-viewWeakCell : Float -> Api.Matchup -> Html Msg
-viewWeakCell target matchup =
-    let
-        measured =
-            case matchup.lowerBound of
-                Just bound ->
-                    Just bound
-
-                Nothing ->
-                    matchup.winRate
-
-        width =
-            case measured of
-                Just value ->
-                    clamp 0 1 value * 100
-
-                Nothing ->
-                    0
-    in
-    div []
-        [ div [ class "alloc-name" ]
-            [ span [ class "who" ] [ text ("our " ++ matchup.us ++ " vs their " ++ matchup.them) ]
-            , span [ class "chip" ] [ text (Api.matchupStatusLabel matchup.status) ]
-
-            -- A cell with no audit evidence has usually still been played
-            -- hard in training. Showing that here stops the bar reading as
-            -- an untouched matchup.
-            , if matchup.trainingGames > 0 then
-                span [ class "chip" ]
-                    [ text (Format.decimal 0 matchup.trainingGames ++ " training") ]
-
-              else
-                text ""
-            ]
-        , div [ class "alloc-row" ]
-            [ div [ class "alloc-bar" ]
-                [ div
-                    [ class "alloc-fill"
-                    , Attr.style "width" (Format.decimal 2 width ++ "%")
-                    , Attr.style "background" (Heatmap.cellFill target measured)
-                    ]
-                    []
-                ]
-            , span [ class "alloc-share" ]
-                [ text
-                    (case measured of
-                        Just value ->
-                            Format.percent1 value
-
-                        Nothing ->
-                            "no audit"
-                    )
-                ]
-            ]
-        ]
-
-
-
--- LADDER
-
-
-{-| The panel in the ladder's slot. A staged run gets the rung ladder; a
-broad run has no rungs to climb, so it gets the mode's own summary
-instead of a ladder that would imply an expansion that is not happening.
--}
-viewProgression : Tip.Handlers Msg -> Api.Status -> Html Msg
-viewProgression tips status =
-    if Api.isBroad status.curriculum then
-        viewBroadMode tips status
-
-    else
-        viewLadder tips status
-
-
-viewBroadMode : Tip.Handlers Msg -> Api.Status -> Html Msg
-viewBroadMode tips status =
-    let
-        curriculum =
-            status.curriculum
-
-        ours =
-            List.length curriculum.ourRoster
-
-        theirs =
-            List.length curriculum.opponentRoster
-
-        samplerRows =
-            case status.sampler of
-                Nothing ->
-                    []
-
-                Just sampler ->
-                    [ dt [] [ Tip.view tips Tip.AlignStart Copy.samplerCoverage [ text "Training panel" ] ]
-                    , dd []
-                        [ text
-                            (case sampler.panel of
-                                Just episodes ->
-                                    String.fromInt episodes ++ " shared episodes per generation, same panel for every genome"
-
-                                Nothing ->
-                                    "size not reported"
-                            )
-                        ]
-                    , dt [] [ Tip.view tips Tip.AlignStart Copy.samplerCoverage [ text "Balanced share" ] ]
-                    , dd []
-                        [ text
-                            (case sampler.balancedShare of
-                                Just share ->
-                                    Format.percent1 share ++ " of that panel drawn by the balanced rotation, the rest drawn adaptively"
-
-                                Nothing ->
-                                    Format.awaiting
-                            )
-                        ]
-                    , dt [] [ Tip.view tips Tip.AlignStart Copy.samplerCoverage [ text "Rotation" ] ]
-                    , dd []
-                        [ text
-                            (case ( sampler.cursor, sampler.tour ) of
-                                ( Just cursor, Just tour ) ->
-                                    "cursor at "
-                                        ++ Format.count cursor
-                                        ++ ", "
-                                        ++ String.fromInt tour
-                                        ++ " full tours of the board completed"
-
-                                ( Just cursor, Nothing ) ->
-                                    "cursor at " ++ Format.count cursor ++ ", completed tours not reported"
-
-                                ( Nothing, Just tour ) ->
-                                    String.fromInt tour ++ " full tours completed, cursor not reported"
-
-                                ( Nothing, Nothing ) ->
-                                    Format.awaiting
-                            )
-                        ]
-                    ]
-
-        provenanceRows =
-            case curriculum.originRunId of
-                Nothing ->
-                    []
-
-                Just origin ->
-                    -- One row, not three. The whole migration is a single fact.
-                    [ dt [] [ Tip.view tips Tip.AlignStart Copy.originRun [ text "Carried over" ] ]
-                    , dd []
-                        [ text
-                            (origin
-                                ++ (case curriculum.originGeneration of
-                                        Just generation ->
-                                            " \u{00B7} g" ++ String.fromInt generation
-
-                                        Nothing ->
-                                            ""
-                                   )
-                                ++ (case curriculum.originFingerprint of
-                                        Just fingerprint ->
-                                            " \u{00B7} " ++ Format.shortId fingerprint
-
-                                        Nothing ->
-                                            ""
-                                   )
-                                ++ (case curriculum.transitionReason of
-                                        Just reason ->
-                                            " \u{00B7} " ++ reason
-
-                                        Nothing ->
-                                            ""
-                                   )
-                            )
-                        ]
-                    ]
-    in
-    panel tips
-        (Tip.detail (Copy.broadMode status.scoring) (List.drop 1 (Gate.explainBroadBoard curriculum)))
-        "Any ship versus any ship"
-        [ div [ class "metrics" ]
-            [ viewMetric tips
-                { tip = Copy.broadMode status.scoring
-                , label = "Active board"
-                , value = Just (String.fromInt ours ++ " \u{00D7} " ++ String.fromInt theirs)
-                , sub = Format.count (ours * theirs) ++ " ordered matchups, all active at once"
-                , accent = "metric-cyan"
-                }
-            , viewMetric tips
-                { tip = Copy.broadMode status.scoring
-                , label = "Evaluation"
-                , value = Just "overall"
-                , sub = Api.evaluationScopeLabel curriculum.evaluationScope
-                , accent = ""
-                }
-            ]
-        , p [ class "prose", Attr.style "margin-top" "12px" ]
-            [ text (Maybe.withDefault "" (List.head (Gate.explainBroadBoard curriculum))) ]
-        , dl [ class "deflist", Attr.style "margin-top" "16px" ]
-            ([ dt [] [ Tip.view tips Tip.AlignStart Copy.ladderPhase [ text "Ladder" ] ]
-             , dd [] [ text (Api.ladderLabel curriculum.ladder) ]
-             , dt [] [ Tip.view tips Tip.AlignStart Copy.opponentTypes [ text "Opponents" ] ]
-             , dd []
-                [ text
-                    (if List.isEmpty curriculum.opponentTypes then
+                    (if List.isEmpty opponents then
                         "not reported"
 
                      else
-                        String.join ", " (List.map Api.opponentTypeLabel curriculum.opponentTypes)
-                            ++ (if curriculum.selfPlayIsGated then
-                                    " \u{00B7} frozen model opponents gated until the overall target is cleared"
-
-                                else
-                                    ""
-                               )
+                        String.join ", " (List.map Api.opponentTypeLabel opponents)
                     )
                 ]
              ]
-                ++ samplerRows
-                ++ provenanceRows
+                ++ (case status.sampler of
+                        Just sampler ->
+                            samplerRows sampler
+
+                        Nothing ->
+                            []
+                   )
             )
+        ]
+
+
+{-| What would open the next gate, stated as the sequence it is.
+-}
+viewNextGate : Tip.Handlers Msg -> Api.Status -> Html Msg
+viewNextGate tips status =
+    let
+        readiness =
+            status.readiness
+
+        target =
+            status.overall |> Maybe.map .target |> Maybe.withDefault 0.8
+
+        panelSize =
+            status.overall |> Maybe.map .panel |> Maybe.withDefault 0
+    in
+    panel tips
+        Copy.nextGate
+        "What opens the next gate"
+        [ div [ class "metrics" ]
+            [ viewMetric tips
+                { tip = Copy.readiness
+                , label = "Readiness probe"
+                , value = Maybe.map Format.percent1 readiness.lastRate
+                , sub =
+                    "needs "
+                        ++ Format.percent readiness.threshold
+                        ++ " over "
+                        ++ String.fromInt readiness.games
+                        ++ " balanced games to buy an audit"
+                        ++ (if readiness.period > 0 then
+                                ", probed every " ++ String.fromInt readiness.period ++ " generations"
+
+                            else
+                                ""
+                           )
+                , accent =
+                    case readiness.lastRate of
+                        Just rate ->
+                            if rate >= readiness.threshold then
+                                "metric-cyan"
+
+                            else
+                                "metric-amber"
+
+                        Nothing ->
+                            ""
+                }
+            , viewMetric tips
+                { tip = Copy.observedNeeded status.scoring
+                , label = Format.capitalise (Scoring.successPlural status.scoring) ++ " needed"
+                , value =
+                    Gate.winsNeeded Gate.z95 target panelSize
+                        |> Maybe.map (\wins -> Format.fraction wins panelSize)
+                , sub = "observed, on one round's panel, to clear the bound"
+                , accent = "metric-amber"
+                }
+            ]
+        , div [ Attr.style "margin-top" "14px" ]
+            (List.map (\line -> p [ class "prose" ] [ text line ])
+                (Gate.nextGateSteps status.scoring readiness status.overall)
+            )
+        ]
+
+
+viewAllocation : Tip.Handlers Msg -> Api.Status -> Html Msg
+viewAllocation tips status =
+    let
+        total =
+            status.matchups |> List.map .sampleWeight |> List.sum
+
+        top =
+            status.matchups
+                |> List.sortBy (\m -> -m.sampleWeight)
+                |> List.take 10
+                |> List.filter (\m -> m.sampleWeight > 0)
+
+        row matchup =
+            shareRow ("our " ++ matchup.us ++ " vs their " ++ matchup.them)
+                (Just (Format.decimal 1 matchup.trainingGames ++ " games"))
+                (if total <= 0 then
+                    0
+
+                 else
+                    matchup.sampleWeight / total
+                )
+    in
+    panel tips
+        Copy.sampleAllocation
+        "Training sample allocation"
+        [ if List.isEmpty top then
+            div [ class "placeholder" ]
+                [ Html.strong [] [ text "No weights published" ]
+                , span [] [ text "The sampler has not reported per-cell weights for the upcoming generation." ]
+                ]
+
+          else
+            div [ class "alloc" ] (List.map row top)
+        , p [ class "prose", Attr.style "margin-top" "14px" ]
+            [ text "Weights are a deterministic mixture: a floor that keeps every cell rehearsed, a term that favours cells with little evidence, and a term that favours cells whose outcome is still close. Both seat orientations are sampled." ]
+        , p [ class "prose" ]
+            [ text "Every population member plays the same sampled panel within a generation, so their scores are comparable with each other. When the panel changes, elites are rescored rather than carrying a fitness earned on a different panel." ]
+        , p [ class "prose" ]
+            [ text "These weights steer training play only. Gate evidence comes from separate balanced panels on separate seeds, and nothing here feeds it." ]
+        ]
+
+
+
+-- BAND 3: IS IT LEARNING?
+
+
+viewPopulation : Tip.Handlers Msg -> Api.Status -> Html Msg
+viewPopulation tips status =
+    let
+        population =
+            status.population
+    in
+    panel tips
+        Copy.populationPanel
+        "Population and structure"
+        [ div [ class "metrics" ]
+            [ viewMetric tips
+                { tip = Copy.populationSize
+                , label = "Population"
+                , value = Just (Format.count population.size)
+                , sub = "genomes this generation"
+                , accent = ""
+                }
+            , viewMetric tips
+                { tip = Copy.species
+                , label = "Species"
+                , value = Just (Format.count population.species)
+                , sub = "compatibility groups"
+                , accent = ""
+                }
+            , viewMetric tips
+                { tip = Copy.meanNodes
+                , label = "Mean nodes"
+                , value = Just (Format.decimal 1 population.meanNodes)
+                , sub = String.fromInt Slots.hiddenFirst ++ " are fixed inputs and outputs"
+                , accent = ""
+                }
+            , viewMetric tips
+                { tip = Copy.meanConnections
+                , label = "Mean links"
+                , value = Just (Format.decimal 1 population.meanConnections)
+                , sub = "enabled connections"
+                , accent = ""
+                }
+            ]
         ]
 
 
@@ -2519,96 +1986,6 @@ shipTable scoring rows =
         ]
 
 
-viewLadder : Tip.Handlers Msg -> Api.Status -> Html Msg
-viewLadder tips status =
-    let
-        curriculum =
-            status.curriculum
-
-        ours =
-            max 1 (List.length curriculum.ourRoster)
-
-        theirs =
-            max 1 (List.length curriculum.opponentRoster)
-
-        currentStage =
-            curriculum.stage
-
-        -- Stage 0 is 1x1. Each stage adds one ship, opponent side first,
-        -- so stage n has 1 + ceil(n/2) opponents and 1 + floor(n/2) of ours.
-        sizesAt stage =
-            ( 1 + (stage // 2), 1 + ((stage + 1) // 2) )
-
-        lastStage =
-            48
-
-        window =
-            List.range (max 0 (currentStage - 2)) (min lastStage (currentStage + 3))
-
-        rung stage =
-            let
-                ( o, t ) =
-                    sizesAt stage
-
-                isCurrent =
-                    stage == currentStage
-
-                ( shownO, shownT ) =
-                    if isCurrent then
-                        ( ours, theirs )
-
-                    else
-                        ( o, t )
-            in
-            div
-                [ class
-                    ("ladder-rung"
-                        ++ (if isCurrent then
-                                " is-current"
-
-                            else if stage < currentStage then
-                                " is-done"
-
-                            else
-                                ""
-                           )
-                    )
-                ]
-                [ span [ class "ladder-stage" ] [ text ("stage " ++ String.fromInt stage) ]
-                , div []
-                    [ div [ class "ladder-size" ]
-                        [ text (String.fromInt shownO ++ " ours \u{00D7} " ++ String.fromInt shownT ++ " opponents") ]
-                    , div [ class "ladder-detail" ]
-                        [ text (String.fromInt (shownO * shownT) ++ " ordered matchups, each gated separately") ]
-                    ]
-                , span [ class "ladder-right" ]
-                    [ text
-                        (if isCurrent then
-                            "here"
-
-                         else if stage < currentStage then
-                            "passed"
-
-                         else
-                            "not attempted"
-                        )
-                    ]
-                ]
-    in
-    panel tips
-        Copy.ladder
-        "Curriculum ladder"
-        [ div [ class "ladder" ] (List.map rung window)
-        , p [ class "prose", Attr.style "margin-top" "12px" ]
-            [ text
-                ("Expansion alternates: opponent side, then our side, from the seeded pair up to 25 \u{00D7} 25 ("
-                    ++ Format.count 625
-                    ++ " ordered matchups). Sizes for stages other than the current one are derived from that fixed order, not measured."
-                )
-            ]
-        ]
-
-
 
 -- CHARTS
 
@@ -2616,11 +1993,6 @@ viewLadder tips status =
 historyLabels : Api.Status -> List String
 historyLabels status =
     List.map (\h -> "g" ++ String.fromInt h.generation) status.history
-
-
-historySegments : Api.Status -> List Int
-historySegments status =
-    List.map .stage status.history
 
 
 countTicks : Float -> List ( Float, String )
@@ -2670,93 +2042,6 @@ chartPanel tips tip title status body =
         ]
 
 
-viewWinChart : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
-viewWinChart tips model status =
-    let
-        training =
-            let
-                base =
-                    Chart.series "training"
-                        ("Training "
-                            ++ Scoring.rateLabel status.scoring
-                            ++ " (champion's own sampled panel this generation)"
-                        )
-                        "#ffb23f"
-                        (List.map .trainingWinRate status.history)
-            in
-            { base | width = 1.3 }
-
-        validation =
-            let
-                base =
-                    Chart.series "validation"
-                        ("Champion readiness "
-                            ++ Scoring.rateLabel status.scoring
-                            ++ " (screening probe, not audit evidence)"
-                        )
-                        "#4fd6e0"
-                        (List.map .validationWinRate status.history)
-            in
-            { base | markers = True, width = 2.4 }
-    in
-    chartPanel tips
-        (Tip.detail (Copy.winRateChart status.scoring) (Scoring.explainGate status.scoring))
-        (Scoring.successHeading status.scoring ++ " over generations")
-        status
-        (Chart.view
-            { height = 240
-            , userWidth = 760
-            , xLabels = historyLabels status
-            , segments = historySegments status
-            , yMin = 0
-            , yMax = 1
-            , yTicks = List.map (\v -> ( v, Format.percent v )) [ 0, 0.25, 0.5, 0.75, 1 ]
-            , series = [ training, validation ]
-            , guides = [ { value = status.curriculum.target, label = "gate " ++ Format.percent status.curriculum.target, color = "#f4ead6" } ]
-            , hovered = model.winCursor
-            , onHover = WinHover
-            , onLeave = WinLeave
-            , formatValue = Format.percent1
-            , emptyHint = "The trainer publishes a history point once the first generation has been scored."
-            , describedBy = "readout-winrate"
-            }
-            |> scopeChangeNote status
-        )
-
-
-{-| The transition from a staged run to a broad one changes what the win
-rate is a win rate *of*, which no axis can show.
-
-The chart already refuses to join a line across a stage boundary, so the
-break is drawn. What the break cannot say is that the points to its left
-were measured against a handful of ships and the points to its right
-against the whole board, and that a drop across it is a change of
-question rather than a loss of skill. That has to be said in words.
-
--}
-scopeChangeNote : Api.Status -> Html Msg -> Html Msg
-scopeChangeNote status body =
-    let
-        stages =
-            List.map .stage status.history
-
-        earlier =
-            List.filter (\stage -> stage < status.curriculum.stage) stages
-    in
-    if Api.isBroad status.curriculum && not (List.isEmpty earlier) then
-        withNote
-            ("The dashed break marks the change of scope. Points to its left were measured on the narrow staged roster, up to stage "
-                ++ String.fromInt (List.foldl max 0 earlier)
-                ++ "; points to its right are measured against all "
-                ++ Format.count (List.length status.curriculum.ourRoster * List.length status.curriculum.opponentRoster)
-                ++ " ordered matchups. They are not the same measurement, they are never joined, and a fall across the break is a harder question rather than a worse champion."
-            )
-            body
-
-    else
-        body
-
-
 viewSpeciesChart : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
 viewSpeciesChart tips model status =
     let
@@ -2774,7 +2059,6 @@ viewSpeciesChart tips model status =
             { height = 190
             , userWidth = 400
             , xLabels = historyLabels status
-            , segments = historySegments status
             , yMin = 0
             , yMax = top
             , yTicks = countTicks top
@@ -2807,12 +2091,16 @@ viewNodesChart tips model status =
             { height = 190
             , userWidth = 400
             , xLabels = historyLabels status
-            , segments = historySegments status
             , yMin = 0
             , yMax = top
             , yTicks = countTicks top
             , series = [ Chart.series "nodes" "Nodes" "#4fd6e0" values ]
-            , guides = [ { value = toFloat Slots.hiddenFirst, label = "70 fixed", color = "#56618a" } ]
+            , guides =
+                [ { value = toFloat Slots.hiddenFirst
+                  , label = String.fromInt Slots.hiddenFirst ++ " fixed"
+                  , color = "#56618a"
+                  }
+                ]
             , hovered = model.nodesCursor
             , onHover = NodesHover
             , onLeave = NodesLeave
@@ -2823,47 +2111,19 @@ viewNodesChart tips model status =
         )
 
 
-viewEpisodesChart : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
-viewEpisodesChart tips model status =
-    let
-        values =
-            List.map (\h -> Just (toFloat h.episodes)) status.history
-
-        top =
-            maxOf values
-    in
-    chartPanel tips
-        Copy.throughputChart
-        "Cumulative episodes"
-        status
-        (Chart.view
-            { height = 190
-            , userWidth = 400
-            , xLabels = historyLabels status
-            , segments = historySegments status
-            , yMin = 0
-            , yMax = top
-            , yTicks = countTicks top
-            , series = [ Chart.series "episodes" "Episodes resolved, running total" "#ffb23f" values ]
-            , guides = []
-            , hovered = model.episodesCursor
-            , onHover = EpisodesHover
-            , onLeave = EpisodesLeave
-            , formatValue = Format.decimal 0
-            , emptyHint = "No generations have been scored yet."
-            , describedBy = "readout-episodes"
-            }
-            |> withNote "This is a running total, so the line can only rise. The cost of one generation is the step between two adjacent points, not the height of the line."
-        )
-
-
 
 -- HEATMAP
 
 
+{-| Folded shut by default: this is the panel to open when the aggregate
+has already said something interesting, not one to glance at.
+-}
 viewHeatmap : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
 viewHeatmap tips model status =
     let
+        target =
+            status.overall |> Maybe.map .target |> Maybe.withDefault 0.8
+
         byType =
             [ Api.Cyborg, Api.ModelOpponent ]
                 |> List.map (\kind -> ( kind, List.filter (\m -> m.opponentType == kind) status.matchups ))
@@ -2894,210 +2154,30 @@ viewHeatmap tips model status =
             div [ Attr.style "margin-top" "14px" ]
                 [ h3 [] [ text ("Opponent type: " ++ Api.opponentTypeLabel kind) ]
                 , Heatmap.view
-                    { target = status.curriculum.target
+                    { target = target
                     , selected = model.heatCursor
                     , onSelect = HeatSelect
                     , onClear = HeatClear
                     , describedBy = "readout-heat"
                     , successPlural = Scoring.successPlural status.scoring
                     }
-                    (Heatmap.grid status.curriculum.ourRoster status.curriculum.opponentRoster list)
+                    (Heatmap.grid list)
                 ]
     in
-    div [ class "panel" ]
-        [ div [ class "panel-head" ]
-            [ Tip.view tips Tip.AlignStart Copy.heatmap [ h2 [] [ text "Ordered matchup evidence" ] ]
-            , span [ class "panel-note" ]
-                [ text
-                    (if Api.isBroad status.curriculum then
-                        "current champion \u{00B7} per-cell diagnostic, gates nothing"
-
-                     else
-                        "current champion, stage " ++ String.fromInt status.curriculum.stage ++ ", audit games only"
-                    )
-                ]
-            ]
-        , if Api.isBroad status.curriculum then
-            p [ class "prose" ]
-                [ text "In broad mode no cell has a gate of its own. This grid is a diagnostic: it shows where the champion is weak inside the distribution the overall target averages over. A cell with no games is unmeasured, not lost." ]
-
-          else
-            text ""
+    foldPanel tips
+        Copy.heatmap
+        "Ordered matchup training exposure"
+        (Format.count (List.length status.matchups) ++ " cells \u{00B7} open to look closer")
+        [ p [ class "prose" ]
+            [ text "No cell has a gate of its own. This grid shows where the population has actually been made to practise and how those practice games went, which is what an aggregate cannot show. A cell with no games is unmeasured, not lost." ]
         , if List.isEmpty groups then
             div [ class "placeholder" ]
                 [ Html.strong [] [ text "No matchups reported" ]
-                , span [] [ text "The trainer has not published per-cell evidence for this stage yet." ]
+                , span [] [ text "The trainer has not published per-cell training exposure yet." ]
                 ]
 
           else
             div [] (List.map renderGroup groups)
-        ]
-
-
-
--- SAMPLE ALLOCATION
-
-
-viewAllocation : Tip.Handlers Msg -> Api.Status -> Html Msg
-viewAllocation tips status =
-    let
-        total =
-            status.matchups |> List.map .sampleWeight |> List.sum
-
-        top =
-            status.matchups
-                |> List.sortBy (\m -> -m.sampleWeight)
-                |> List.take 10
-                |> List.filter (\m -> m.sampleWeight > 0)
-
-        row matchup =
-            let
-                share =
-                    if total <= 0 then
-                        0
-
-                    else
-                        matchup.sampleWeight / total
-            in
-            div []
-                [ div [ class "alloc-name" ]
-                    [ span [ class "who" ] [ text ("our " ++ matchup.us ++ " vs their " ++ matchup.them) ]
-                    , span [ class "chip" ] [ text (Api.matchupStatusLabel matchup.status) ]
-                    ]
-                , div [ class "alloc-row" ]
-                    [ div [ class "alloc-bar" ]
-                        [ div [ class "alloc-fill", Attr.style "width" (Format.decimal 2 (share * 100) ++ "%") ] [] ]
-                    , span [ class "alloc-share" ] [ text (Format.percent1 share) ]
-                    ]
-                ]
-    in
-    panel tips
-        Copy.sampleAllocation
-        "Training sample allocation"
-        [ if List.isEmpty top then
-            div [ class "placeholder" ]
-                [ Html.strong [] [ text "No weights published" ]
-                , span [] [ text "The sampler has not reported per-cell weights for the upcoming generation." ]
-                ]
-
-          else
-            div [ class "alloc" ] (List.map row top)
-        , p [ class "prose", Attr.style "margin-top" "14px" ]
-            [ text "Weights are a deterministic mixture: weak and uncertain cells, cells added by the most recent expansion, and a coverage floor that keeps every active cell rehearsed. Both seat orientations are sampled." ]
-        , p [ class "prose" ]
-            [ text "Every population member plays the same sampled panel within a generation, so their scores are comparable with each other. When the panel changes, elites are rescored rather than carrying a fitness earned on a different panel." ]
-        , p [ class "prose" ]
-            [ text "These weights steer training play only. Gate evidence comes from separate audit panels on separate seeds, and nothing here feeds it." ]
-        ]
-
-
-
--- MACHINE
-
-
-viewMachine : Tip.Handlers Msg -> Api.Status -> Html Msg
-viewMachine tips status =
-    let
-        checkpoint =
-            status.checkpoint
-
-        resources =
-            status.resources
-
-        population =
-            status.population
-    in
-    div [ class "panel" ]
-        [ div [ class "panel-head" ]
-            [ Tip.view tips Tip.AlignStart Copy.machine [ h2 [] [ text "Population, checkpoint and resources" ] ] ]
-        , div [ class "metrics" ]
-            [ viewMetric tips
-                { tip = Copy.populationSize
-                , label = "Population"
-                , value = Just (Format.count population.size)
-                , sub = "genomes this generation"
-                , accent = ""
-                }
-            , viewMetric tips
-                { tip = Copy.species
-                , label = "Species"
-                , value = Just (Format.count population.species)
-                , sub = "compatibility groups"
-                , accent = ""
-                }
-            , viewMetric tips
-                { tip = Copy.meanNodes
-                , label = "Mean nodes"
-                , value = Just (Format.decimal 1 population.meanNodes)
-                , sub = "70 are fixed inputs and outputs"
-                , accent = ""
-                }
-            , viewMetric tips
-                { tip = Copy.meanConnections
-                , label = "Mean links"
-                , value = Just (Format.decimal 1 population.meanConnections)
-                , sub = "enabled connections"
-                , accent = ""
-                }
-            ]
-        , div [ Attr.style "margin-top" "16px" ]
-            [ h3 [] [ text "Checkpoint" ] ]
-        , dl [ class "deflist", Attr.style "margin-top" "8px" ]
-            [ dt [] [ Tip.view tips Tip.AlignStart Copy.checkpointSaved [ text "Saved" ] ]
-            , dd []
-                [ text
-                    (case checkpoint.savedAt of
-                        Just at ->
-                            at
-
-                        Nothing ->
-                            "never in this run"
-                    )
-                ]
-            , dt [] [ Tip.view tips Tip.AlignStart Copy.checkpointGeneration [ text "Generation" ] ]
-            , dd [] [ text (Format.count checkpoint.generation) ]
-            , dt [] [ Tip.view tips Tip.AlignStart Copy.checkpointResumable [ text "Resumable" ] ]
-            , dd []
-                [ text
-                    (if checkpoint.resumable then
-                        "yes, exact resume"
-
-                     else
-                        "no"
-                    )
-                ]
-            , dt [] [ Tip.view tips Tip.AlignStart Copy.checkpointPath [ text "Path" ] ]
-            , dd []
-                [ text
-                    (if String.isEmpty checkpoint.path then
-                        "not reported"
-
-                     else
-                        checkpoint.path
-                    )
-                ]
-            ]
-        , div [ Attr.style "margin-top" "16px" ]
-            [ h3 [] [ text "Resource caps" ] ]
-        , dl [ class "deflist", Attr.style "margin-top" "8px" ]
-            ([ dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesWorkers [ text "Threads" ] ]
-             , dd [] [ text (Resources.threadsLine resources) ]
-             , dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesDuty [ text "Duty cycle" ] ]
-             , dd [] [ text (Resources.dutyLine resources) ]
-             ]
-                ++ (case Resources.budgetLine resources of
-                        Just budget ->
-                            [ dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesBudget [ text "Compute budget" ] ]
-                            , dd [] [ text budget ]
-                            ]
-
-                        Nothing ->
-                            []
-                   )
-                ++ [ dt [] [ Tip.view tips Tip.AlignStart Copy.runId [ text "Run" ] ]
-                   , dd [] [ text status.runId ]
-                   ]
-            )
         ]
 
 
@@ -3108,25 +2188,33 @@ viewMachine tips status =
 viewTopology : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
 viewTopology tips model status =
     let
+        mismatch =
+            case ( model.network |> Maybe.andThen .championId, status.champion.id ) of
+                ( Just drawn, Just current ) ->
+                    drawn /= current
+
+                _ ->
+                    False
+
         body =
             case ( model.network, model.networkError ) of
                 ( Just network, _ ) ->
                     if List.isEmpty network.genome.nodes && List.isEmpty network.genome.genes then
                         div [ class "placeholder" ]
                             [ Html.strong [] [ text "Empty genome" ]
-                            , span [] [ text "The network endpoint answered, but the champion genome contains no nodes or connections yet." ]
+                            , span [] [ text "The network endpoint answered, but there is no champion genome to draw yet." ]
                             ]
 
                     else
                         div []
-                            [ if network.championId /= status.champion.id && network.championId /= "" && status.champion.id /= "" then
+                            [ if mismatch then
                                 div [ class "banner banner-warn" ]
                                     [ div []
                                         [ text
                                             ("This graph is champion "
-                                                ++ Format.shortId network.championId
+                                                ++ Format.shortId (Maybe.withDefault "" network.championId)
                                                 ++ ", but the current champion is "
-                                                ++ Format.shortId status.champion.id
+                                                ++ Format.shortId (Maybe.withDefault "" status.champion.id)
                                                 ++ ". Refresh to fetch the current genome."
                                             )
                                         ]
@@ -3158,19 +2246,405 @@ viewTopology tips model status =
                         , span [] [ text "Fetching the champion network." ]
                         ]
     in
-    div [ class "panel" ]
-        [ div [ class "panel-head" ]
-            [ Tip.view tips Tip.AlignStart Copy.topology [ h2 [] [ text "Champion network topology" ] ]
-            , span [ class "panel-note" ]
-                [ text
-                    (String.fromInt Slots.inputCount
-                        ++ " inputs \u{2192} evolved hidden nodes \u{2192} "
-                        ++ String.fromInt Slots.outputCount
-                        ++ " outputs"
-                    )
-                ]
+    foldPanel tips
+        Copy.topology
+        "Champion network topology"
+        (String.fromInt Slots.inputCount
+            ++ " inputs \u{2192} evolved hidden nodes \u{2192} "
+            ++ String.fromInt Slots.outputCount
+            ++ " outputs \u{00B7} open to look closer"
+        )
+        [ body ]
+
+
+
+-- BAND 4: IS IT HEALTHY?
+
+
+{-| What the work costs, and how much of it there has been.
+
+The two nanosecond figures lead because they are the only ones here that
+hold still: they divide thread-summed CPU time by counts of events, so
+neither the worker count nor the machine's load can move them. The
+episodes-per-second figure sits below them and says in its own sub-label
+that it is a wall clock and therefore load dependent, because it is the
+number a reader will otherwise assume is the throughput to optimise.
+
+-}
+viewThroughput : Tip.Handlers Msg -> Model -> Api.Status -> Html Msg
+viewThroughput tips model status =
+    let
+        work =
+            status.work
+
+        rate field =
+            work |> Maybe.andThen field
+    in
+    panel tips
+        Copy.workRates
+        "Throughput and cost"
+        [ div [ class "metrics" ]
+            [ viewMetric tips
+                { tip = Copy.workRates
+                , label = "CPU ns / tick"
+                , value = rate .cpuNanosPerDisplayTick |> Maybe.map (Format.decimal 1)
+                , sub = "per simulated display tick, this process, all threads"
+                , accent = "metric-cyan"
+                }
+            , viewMetric tips
+                { tip = Copy.workRates
+                , label = "CPU ns / link"
+                , value = rate .cpuNanosPerLinkActivation |> Maybe.map (Format.decimal 2)
+                , sub = "per policy link activation, this process, all threads"
+                , accent = "metric-cyan"
+                }
+            , viewMetric tips
+                { tip = Copy.workRates
+                , label = "Ticks / episode"
+                , value = rate .displayTicksPerEpisode |> Maybe.map (Format.decimal 0)
+                , sub = "shorter fights do less work, and the rates above say so"
+                , accent = ""
+                }
+            , viewMetric tips
+                { tip = Copy.episodesPerSecond
+                , label = "Episodes / second"
+                , value =
+                    if status.episodesPerSecond > 0 then
+                        Just (Format.decimal 2 status.episodesPerSecond)
+
+                    else
+                        Nothing
+                , sub = "wall clock, so load dependent; not a measure of the build"
+                , accent = "metric-amber"
+                }
+            , viewMetric tips
+                { tip = Copy.elapsed
+                , label = "Elapsed"
+                , value = Just (Format.duration status.elapsedSeconds)
+                , sub = "summed across resumes"
+                , accent = ""
+                }
+            , viewMetric tips
+                { tip = Copy.generation
+                , label = "Generation"
+                , value = Just (Format.count status.generation)
+                , sub = "bred and scored"
+                , accent = ""
+                }
+            , viewMetric tips
+                { tip = Copy.episodes
+                , label = "Episodes"
+                , value = Just (Format.count status.episodes)
+                , sub = "training plus gate play, whole run"
+                , accent = ""
+                }
+            , viewMetric tips
+                { tip = Copy.unresolved status.scoring
+                , label = "Unresolved"
+                , value = Just (Format.count status.episodesUnresolved)
+                , sub =
+                    if status.episodes > 0 then
+                        Format.percent1 (toFloat status.episodesUnresolved / toFloat status.episodes)
+                            ++ " "
+                            ++ Scoring.unresolvedNote status.scoring
+
+                    else
+                        Scoring.unresolvedNote status.scoring
+                , accent =
+                    if status.episodes > 0 && toFloat status.episodesUnresolved > 0.25 * toFloat status.episodes then
+                        "metric-amber"
+
+                    else
+                        ""
+                }
+            , viewMetric tips
+                { tip = Copy.combatVictories
+                , label = "Combat victories"
+                , value = Scoring.combatVictoriesValue status.episodesCombatWins
+                , sub = Scoring.combatVictoriesNote status.episodesCombatWins
+                , accent = ""
+                }
             ]
-        , body
+        , p [ class "prose", Attr.style "margin-top" "14px" ]
+            [ text
+                (case work of
+                    Nothing ->
+                        "This process has not computed yet, so there is nothing to divide by and the per-unit-of-work rates are absent rather than zero. Reading a checkpoint from disk is such a process."
+
+                    Just measured ->
+                        "Counted over this process only: "
+                            ++ Format.count measured.episodes
+                            ++ " episodes, "
+                            ++ Format.count measured.displayTicks
+                            ++ " display ticks and "
+                            ++ Format.count measured.linkActivations
+                            ++ " link activations. The counters start at zero on every resume and are never checkpointed."
+                )
+            ]
+        , p [ class "prose" ]
+            [ text
+                ("Polling "
+                    ++ statusUrl
+                    ++ " every "
+                    ++ Format.decimal 0 (pollMillis / 1000)
+                    ++ " seconds"
+                    ++ (if model.visible then
+                            "."
+
+                        else
+                            ", slowed while this tab is hidden."
+                       )
+                )
+            ]
+        ]
+
+
+viewPhaseSplit : Tip.Handlers Msg -> Api.Status -> Html Msg
+viewPhaseSplit tips status =
+    panel tips
+        Copy.phaseSplit
+        "Where the time went"
+        (case status.phases of
+            Nothing ->
+                [ div [ class "placeholder" ]
+                    [ Html.strong [] [ text Format.awaiting ]
+                    , span [] [ text "This process has not spent any compute seconds yet, so there is no split to show. That is no measurement, not a measurement of nothing." ]
+                    ]
+                ]
+
+            Just split ->
+                [ div [ class "alloc" ]
+                    (split.buckets
+                        |> List.filter (\bucket -> bucket.seconds > 0)
+                        |> List.map
+                            (\bucket ->
+                                shareRow bucket.name
+                                    (Just (Format.decimal 2 bucket.seconds ++ "s"))
+                                    (Maybe.withDefault 0 bucket.share)
+                            )
+                    )
+                , dl [ class "deflist", Attr.style "margin-top" "16px" ]
+                    [ dt [] [ text "Accounted" ]
+                    , dd []
+                        [ text
+                            (Format.decimal 2 split.accountedSeconds
+                                ++ "s of "
+                                ++ (split.sessionCpuSeconds
+                                        |> Maybe.map (\cpu -> Format.decimal 2 cpu ++ "s")
+                                        |> Maybe.withDefault Format.awaiting
+                                   )
+                                ++ " CPU"
+                                ++ (split.accountedShareOfCpu
+                                        |> Maybe.map (\share -> " (" ++ Format.percent1 share ++ ")")
+                                        |> Maybe.withDefault ""
+                                   )
+                            )
+                        ]
+                    , dt [] [ text "Unaccounted" ]
+                    , dd [] [ text (unaccountedLine split) ]
+                    , dt [] [ text "Threads busy" ]
+                    , dd []
+                        [ text
+                            (case split.threadsBusy of
+                                Just busy ->
+                                    Format.decimal 2 busy
+                                        ++ " on average over "
+                                        ++ Format.decimal 1 split.sessionWallSeconds
+                                        ++ "s of wall time"
+
+                                Nothing ->
+                                    Format.awaiting
+                            )
+                        ]
+                    ]
+                , p [ class "prose", Attr.style "margin-top" "12px" ]
+                    [ text "Shares are of accounted time, so they sum to one; the leftover is on its own line rather than folded into a bucket. Positive leftover is CPU nobody clocked: the supervisor loop, pool dispatch, allocation, the server thread. Negative means workers were preempted mid-fight, so its size is a contention signal rather than an error." ]
+                ]
+        )
+
+
+unaccountedLine : Api.PhaseSplit -> String
+unaccountedLine split =
+    case split.unaccountedSeconds of
+        Nothing ->
+            Format.awaiting
+
+        Just seconds ->
+            (if seconds >= 0 then
+                "+"
+
+             else
+                "\u{2212}"
+            )
+                ++ Format.decimal 3 (abs seconds)
+                ++ "s"
+                ++ (split.unaccountedShareOfCpu
+                        |> Maybe.map (\share -> " (" ++ Format.percent1 (abs share) ++ " of CPU)")
+                        |> Maybe.withDefault ""
+                   )
+                ++ (if seconds >= 0 then
+                        ", CPU nobody clocked"
+
+                    else
+                        ", workers preempted mid-fight"
+                   )
+
+
+viewBenchmark : Tip.Handlers Msg -> Api.Status -> Html Msg
+viewBenchmark tips status =
+    panel tips
+        Copy.benchmark
+        "Benchmark reference"
+        (case status.benchmark of
+            Nothing ->
+                [ div [ class "placeholder" ]
+                    [ Html.strong [] [ text "Not benchmarked" ]
+                    , span [] [ text "No fixed-work benchmark has been recorded for this build. Run melee-mario bench to record one; until then there is nothing to read the live rates against." ]
+                    ]
+                ]
+
+            Just recorded ->
+                [ div [ class "metrics" ]
+                    [ viewMetric tips
+                        { tip = Copy.benchmark
+                        , label = "Best of N"
+                        , value = recorded.bestSeconds |> Maybe.map (\s -> Format.decimal 3 s ++ "s")
+                        , sub =
+                            "fastest of "
+                                ++ (recorded.repetitions |> Maybe.map String.fromInt |> Maybe.withDefault "several")
+                                ++ " repetitions over "
+                                ++ (recorded.fights |> Maybe.map String.fromInt |> Maybe.withDefault "the")
+                                ++ " fixed fights"
+                        , accent = "metric-cyan"
+                        }
+                    , viewMetric tips
+                        { tip = Copy.benchmark
+                        , label = "CPU ns / tick"
+                        , value = recorded.cpuNanosPerDisplayTick |> Maybe.map (Format.decimal 1)
+                        , sub = "single threaded, no duty governor, no nice"
+                        , accent = ""
+                        }
+                    , viewMetric tips
+                        { tip = Copy.benchmark
+                        , label = "CPU ns / link"
+                        , value = recorded.cpuNanosPerLinkActivation |> Maybe.map (Format.decimal 2)
+                        , sub = "same quantity the live figure reports"
+                        , accent = ""
+                        }
+                    ]
+                , dl [ class "deflist", Attr.style "margin-top" "16px" ]
+                    [ dt [] [ text "Recorded" ]
+                    , dd []
+                        [ text
+                            (Maybe.withDefault "time not reported" recorded.at
+                                ++ " \u{00B7} best of "
+                                ++ String.fromInt recorded.comparableRows
+                                ++ " comparable "
+                                ++ (if recorded.comparableRows == 1 then
+                                        "result"
+
+                                    else
+                                        "results"
+                                   )
+                            )
+                        ]
+                    , dt [] [ text "Workload" ]
+                    , dd [] [ text (Maybe.withDefault "not reported" recorded.definition) ]
+                    , dt [] [ text "Build" ]
+                    , dd [] [ text (Maybe.withDefault "not reported" recorded.build) ]
+                    ]
+                , p [ class "prose", Attr.style "margin-top" "12px" ]
+                    [ text (benchmarkComparison status) ]
+                ]
+        )
+
+
+{-| The live rate against the recorded one, in words.
+
+Both are CPU nanoseconds per display tick, so they are directly
+comparable; the gap is what this session's contention and worker spill
+are costing over what the build costs with the machine to itself.
+
+-}
+benchmarkComparison : Api.Status -> String
+benchmarkComparison status =
+    case
+        ( status.benchmark |> Maybe.andThen .cpuNanosPerDisplayTick
+        , status.work |> Maybe.andThen .cpuNanosPerDisplayTick
+        )
+    of
+        ( Just recorded, Just live ) ->
+            if recorded <= 0 then
+                "The recorded benchmark reports no cost per tick, so there is nothing to compare the live rate against."
+
+            else
+                "This session is running at "
+                    ++ Format.decimal 2 (live / recorded)
+                    ++ "x the recorded cost per simulated tick. Above one is the price of sharing the machine and of spilling workers onto slower cores; it is not a change in the build."
+
+        _ ->
+            "A live rate and a recorded rate are both needed to compare them, and one of the two has not been measured."
+
+
+viewMachine : Tip.Handlers Msg -> Api.Status -> Html Msg
+viewMachine tips status =
+    let
+        checkpoint =
+            status.checkpoint
+
+        resources =
+            status.resources
+    in
+    panel tips
+        Copy.resourcesWorkers
+        "Machine and checkpoint"
+        [ dl [ class "deflist" ]
+            ([ dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesWorkers [ text "Threads" ] ]
+             , dd [] [ text (Resources.threadsLine resources) ]
+             , dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesDuty [ text "Duty cycle" ] ]
+             , dd [] [ text (Resources.dutyLine resources) ]
+             ]
+                ++ (case Resources.budgetLine resources of
+                        Just budget ->
+                            [ dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesBudget [ text "Compute budget" ] ]
+                            , dd [] [ text budget ]
+                            ]
+
+                        Nothing ->
+                            []
+                   )
+                ++ [ dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesBudget [ text "Compute spent" ] ]
+                   , dd [] [ text (Format.duration resources.computeSeconds ++ " of wall time actually computing, whole run") ]
+                   , dt [] [ Tip.view tips Tip.AlignStart Copy.resourcesWorkers [ text "Nice" ] ]
+                   , dd [] [ text (String.fromInt resources.nice ++ ", this invocation only") ]
+                   , dt [] [ Tip.view tips Tip.AlignStart Copy.checkpointSaved [ text "Saved" ] ]
+                   , dd [] [ text (Maybe.withDefault "never in this run" checkpoint.savedAt) ]
+                   , dt [] [ Tip.view tips Tip.AlignStart Copy.checkpointGeneration [ text "On disk" ] ]
+                   , dd [] [ text (Format.count checkpoint.generation ++ ", the generation a resume would start from") ]
+                   , dt [] [ Tip.view tips Tip.AlignStart Copy.checkpointResumable [ text "Resumable" ] ]
+                   , dd []
+                        [ text
+                            (if checkpoint.resumable then
+                                "yes, exact resume"
+
+                             else
+                                "no"
+                            )
+                        ]
+                   , dt [] [ Tip.view tips Tip.AlignStart Copy.checkpointPath [ text "Path" ] ]
+                   , dd []
+                        [ text
+                            (if String.isEmpty checkpoint.path then
+                                "not reported"
+
+                             else
+                                checkpoint.path
+                            )
+                        ]
+                   , dt [] [ Tip.view tips Tip.AlignStart Copy.runId [ text "Run" ] ]
+                   , dd [] [ text status.runId ]
+                   ]
+            )
         ]
 
 

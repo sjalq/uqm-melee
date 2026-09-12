@@ -7,19 +7,23 @@ module Mario.Dashboard.Heatmap exposing
     , view
     )
 
-{-| Per-matchup audit evidence, one cell per ordered pair.
+{-| Per-matchup TRAINING exposure, one cell per ordered pair.
 
 Rows are our ship, columns are the opponent. The pair is ordered: our
 Pkunk against their Umgah is a different cell from our Umgah against
-their Pkunk, and each has to pass the gate on its own evidence. Nothing
-on this grid is pooled, averaged across cells, or borrowed from training
-play.
+their Pkunk, and the two are never pooled.
 
-Colour encodes the Wilson lower bound where one exists, and the hue
-changes at the target, so a cell that has not actually cleared the gate
-can never be mistaken for one that has. A cell with no games is drawn as
-unmeasured, not as zero: never played and always lost look nothing alike
-and must not be coloured alike.
+Nothing on this grid gates anything. The run is graded on one aggregate
+over a held-out balanced panel, and these are the adaptive sampler's own
+decayed tallies from training play: how much of the board the population
+has actually been made to practise, and how those practice games went.
+A cell that is losing here blocks nothing, and a cell with no games is
+unmeasured rather than lost. The two look nothing alike and are never
+coloured alike.
+
+The overall target is drawn on the same scale, as a reference line and
+nothing more: it says where the aggregate has to land, not what any one
+cell owes.
 
 -}
 
@@ -42,18 +46,18 @@ type alias Grid =
     }
 
 
-{-| Rows and columns follow the frozen roster order where the trainer
-supplied one, so the grid grows by appending rather than reshuffling.
-Any pair the trainer reports that is not in the roster is appended
-rather than dropped.
--}
-grid : List String -> List String -> List Matchup -> Grid
-grid ourRoster opponentRoster matchups =
-    let
-        order preferred present =
-            (preferred |> List.filter (\name -> List.member name present))
-                ++ (present |> List.filter (\name -> not (List.member name preferred)))
+{-| Rows and columns come from the rows themselves, in the order the
+trainer published them.
 
+The engine walks a fixed board, so that order is the board's own and is
+stable between snapshots. Deriving it from the data rather than from a
+separate roster field means the grid cannot disagree with the cells it
+is drawing: there is no second list to fall out of step.
+
+-}
+grid : List Matchup -> Grid
+grid matchups =
+    let
         unique list =
             List.foldl
                 (\x acc ->
@@ -66,8 +70,8 @@ grid ourRoster opponentRoster matchups =
                 []
                 list
     in
-    { rows = order ourRoster (unique (List.map .us matchups))
-    , cols = order opponentRoster (unique (List.map .them matchups))
+    { rows = unique (List.map .us matchups)
+    , cols = unique (List.map .them matchups)
     , cells = List.foldl (\m acc -> Dict.insert ( m.us, m.them ) m acc) Dict.empty matchups
     }
 
@@ -104,9 +108,11 @@ lerp ( r1, g1, b1 ) ( r2, g2, b2 ) t =
     "rgb(" ++ mix r1 r2 ++ "," ++ mix g1 g2 ++ "," ++ mix b1 b2 ++ ")"
 
 
-{-| Below the target the ramp runs deep red to amber. At and above the
-target it jumps to the cyan family. The discontinuity is deliberate: the
-gate is a threshold, not a gradient, and the grid should look like it.
+{-| Below the reference rate the ramp runs deep red to amber. At and
+above it the ramp jumps to the cyan family. The discontinuity is
+deliberate: the aggregate target is a threshold, and a grid whose
+colours changed smoothly through it would hide where the distribution
+sits relative to the only number the run is graded on.
 -}
 cellFill : Float -> Maybe Float -> String
 cellFill target measured =
@@ -134,23 +140,18 @@ cellFill target measured =
                     )
 
 
-statusStroke : Api.MatchupStatus -> String
-statusStroke status =
-    case status of
-        Api.Mastered ->
-            "#4fd6e0"
+{-| Outline says only whether the cell has been practised at all, which
+is the one per-cell fact that still exists. There is no per-cell status
+vocabulary to encode any more, and inventing one would put a verdict
+back on a grid that carries none.
+-}
+exposureStroke : Float -> String
+exposureStroke games =
+    if games > 0 then
+        "#24355c"
 
-        Api.AuditingCell ->
-            "#a99bf5"
-
-        Api.Learning ->
-            "#8a5f1d"
-
-        Api.Unseen ->
-            "#24355c"
-
-        Api.UnknownStatus _ ->
-            "#98a6c7"
+    else
+        "#16203a"
 
 
 
@@ -158,15 +159,17 @@ statusStroke status =
 
 
 type alias Config msg =
-    { target : Float
+    { -- The AGGREGATE target, used as the colour ramp's reference point and
+      -- labelled as such. No cell is judged against it.
+      target : Float
     , selected : Maybe ( Int, Int )
     , onSelect : Int -> Int -> msg
     , onClear : msg
     , describedBy : String
 
     -- What the cells' tallies count, in the run's own words. A cell's
-    -- `wins` field is whatever the run's gate criterion counts, so the
-    -- readout is handed the noun rather than assuming "wins".
+    -- rate is whatever the run's gate criterion counts, so the readout
+    -- is handed the noun rather than assuming "wins".
     , successPlural : String
     }
 
@@ -198,7 +201,7 @@ view config g =
     if cols == 0 || rows == 0 then
         div [ Attr.class "placeholder" ]
             [ Html.strong [] [ text "No matchups reported" ]
-            , span [] [ text "The trainer has not published any ordered matchups for this stage yet." ]
+            , span [] [ text "The trainer has not published any ordered matchups yet." ]
             ]
 
     else
@@ -234,7 +237,7 @@ view config g =
                     , Attr.attribute "role" "group"
                     , Attr.attribute "tabindex" "0"
                     , Attr.attribute "aria-label"
-                        ("Ordered matchup evidence grid, "
+                        ("Ordered matchup training exposure grid, "
                             ++ String.fromInt rows
                             ++ " of our ships by "
                             ++ String.fromInt cols
@@ -352,24 +355,21 @@ cellsSvg config g size gap labelLeft labelTop =
                             found =
                                 Dict.get ( us, them ) g.cells
 
+                            -- A decayed tally of zero is no practice, so the
+                            -- cell is unmeasured rather than scored at zero.
                             measured =
                                 found
                                     |> Maybe.andThen
                                         (\m ->
-                                            if m.games <= 0 then
+                                            if m.trainingGames <= 0 then
                                                 Nothing
 
                                             else
-                                                case m.lowerBound of
-                                                    Just b ->
-                                                        Just b
-
-                                                    Nothing ->
-                                                        m.winRate
+                                                m.trainingWinRate
                                         )
 
-                            status =
-                                found |> Maybe.map .status |> Maybe.withDefault Api.Unseen
+                            games =
+                                found |> Maybe.map .trainingGames |> Maybe.withDefault 0
 
                             isSelected =
                                 config.selected == Just ( r, c )
@@ -387,7 +387,7 @@ cellsSvg config g size gap labelLeft labelTop =
                                         "#f4ead6"
 
                                      else
-                                        statusStroke status
+                                        exposureStroke games
                                     )
                                 , SA.strokeWidth
                                     (if isSelected then
@@ -428,7 +428,7 @@ viewReadout config g =
         Nothing ->
             wrap
                 [ div [ Attr.class "ro-line" ]
-                    [ text "Hover, tap, or focus the grid and use the arrow keys to read a cell's audit evidence." ]
+                    [ text "Hover, tap, or focus the grid and use the arrow keys to read a cell's training exposure." ]
                 ]
 
         Just ( r, c ) ->
@@ -441,29 +441,26 @@ viewReadout config g =
                                     [ text ("our " ++ us ++ "  vs  their " ++ them ++ "  (" ++ Api.opponentTypeLabel m.opponentType ++ ")") ]
                                 , div [ Attr.class "ro-line" ]
                                     [ text
-                                        (if m.games <= 0 then
-                                            "No audit games played for this ordered pair yet. Unmeasured, not lost."
+                                        (if m.trainingGames <= 0 then
+                                            "No training games played for this ordered pair yet. Unmeasured, not lost."
 
                                          else
-                                            "Audit "
+                                            "Training "
                                                 ++ config.successPlural
-                                                ++ " "
-                                                ++ Format.fraction m.wins m.games
-                                                ++ "  \u{00B7}  rate "
-                                                ++ (m.winRate |> Maybe.map Format.percent1 |> Maybe.withDefault Format.awaiting)
-                                                ++ "  \u{00B7}  Wilson lower bound "
-                                                ++ (m.lowerBound |> Maybe.map Format.percent1 |> Maybe.withDefault Format.awaiting)
-                                                ++ "  \u{00B7}  target "
+                                                ++ " rate "
+                                                ++ (m.trainingWinRate |> Maybe.map Format.percent1 |> Maybe.withDefault Format.awaiting)
+                                                ++ "  \u{00B7}  over "
+                                                ++ Format.decimal 1 m.trainingGames
+                                                ++ " decayed games  \u{00B7}  aggregate target "
                                                 ++ Format.percent config.target
+                                                ++ " for reference only"
                                         )
                                     ]
                                 , div [ Attr.class "ro-line" ]
                                     [ text
-                                        ("Status "
-                                            ++ Api.matchupStatusLabel m.status
-                                            ++ "  \u{00B7}  training sample weight "
+                                        ("Sample weight "
                                             ++ Format.decimal 3 m.sampleWeight
-                                            ++ " (weights steer training play, never the gate)"
+                                            ++ " (weights steer what the next panel plays, never the gate)"
                                         )
                                     ]
                                 ]
@@ -472,7 +469,7 @@ viewReadout config g =
                             wrap
                                 [ div [ Attr.class "ro-title" ] [ text ("our " ++ us ++ "  vs  their " ++ them) ]
                                 , div [ Attr.class "ro-line" ]
-                                    [ text "This ordered pair is not active at the current stage, so it has no evidence." ]
+                                    [ text "The trainer published no row for this ordered pair." ]
                                 ]
 
                 _ ->
@@ -484,7 +481,7 @@ viewLegend config =
     div [ Attr.class "heat-legend" ]
         [ span []
             [ span [ Attr.class "swatch", Attr.style "background" "#131c30" ] []
-            , text "unmeasured (no audit games)"
+            , text "unmeasured (no training games)"
             ]
         , span []
             [ span [ Attr.class "swatch", Attr.style "background" (cellFill config.target (Just 0)) ] []
@@ -496,11 +493,11 @@ viewLegend config =
             ]
         , span []
             [ span [ Attr.class "swatch", Attr.style "background" (cellFill config.target (Just config.target)) ] []
-            , text ("at " ++ Format.percent config.target ++ " (gate)")
+            , text ("at " ++ Format.percent config.target ++ " (aggregate target)")
             ]
         , span []
             [ span [ Attr.class "swatch", Attr.style "background" (cellFill config.target (Just 1)) ] []
             , text "100%"
             ]
-        , span [] [ text "Colour follows the Wilson lower bound, not the raw rate. Outline colour shows cell status." ]
+        , span [] [ text "Colour follows the decayed training rate. The target is the aggregate the run is graded on, drawn here only so the distribution can be read against it; no cell is judged on its own." ]
         ]

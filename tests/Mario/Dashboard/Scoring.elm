@@ -426,31 +426,24 @@ penaltyExplain scoring =
 publishes no such counter or publishes only a partial one whose figure
 would be read as a run total.
 -}
-combatVictoriesValue : Maybe Api.CombatVictories -> Maybe String
+combatVictoriesValue : Maybe Int -> Maybe String
 combatVictoriesValue victories =
-    case victories of
-        Just (Api.VictoriesAllTime total) ->
-            Just (Format.count total)
-
-        Just (Api.VictoriesSince partial) ->
-            Just (Format.count partial.victories)
-
-        Nothing ->
-            Nothing
+    Maybe.map Format.count victories
 
 
-{-| The line under that tile. A partial count carries its baseline in
-the line itself, because without it the number reads as a run total the
-engine never claimed.
+{-| The line under that tile.
+
+The counter is seeded at zero and only ever incremented, and a document
+that predates it is refused by schema version rather than resumed with a
+partial window, so the figure always covers the whole run. There is no
+"since episode N" case left to caveat.
+
 -}
-combatVictoriesNote : Maybe Api.CombatVictories -> String
+combatVictoriesNote : Maybe Int -> String
 combatVictoriesNote victories =
     case victories of
-        Just (Api.VictoriesAllTime _) ->
+        Just _ ->
             "resolved victories, whole run, all episodes"
-
-        Just (Api.VictoriesSince partial) ->
-            "resolved victories since episode " ++ Format.count partial.sinceEpisodes
 
         Nothing ->
             "not counted by this run"

@@ -23,8 +23,11 @@ use serde_json::{json, Value};
 /// word for word, the combat-win window, and a handful of constants that a
 /// reader could only ever read back unchanged. A reader that wants an earlier
 /// version is asking for numbers this engine does not produce, and should be
-/// told so rather than shown zeroes.
-pub const SCHEMA_VERSION: i64 = 3;
+/// told so rather than shown zeroes. Version 4 added the `benchmark` block:
+/// the fixed-work figure recorded for this exact build, so the live run's
+/// nanoseconds per unit of work can be read against what the build costs on a
+/// quiet machine instead of against nothing.
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// The phase the SERVER reports, which includes the two states the trainer
 /// itself has no opinion about: paused by an operator, and stopped.
@@ -249,6 +252,16 @@ impl Trainer {
             "phases": match session.measured() {
                 true => self.phases.to_json(session),
                 false => Value::Null,
+            },
+            // What this BUILD costs with the machine to itself, as the
+            // fixed-work benchmark last measured it. Null when nobody has
+            // benchmarked this binary, which is an absent reference rather
+            // than a claim that the build is free. It is not a session figure
+            // and never moves while the trainer runs; see
+            // [`crate::benchmark::reference`] for what makes a row quotable.
+            "benchmark": match self.benchmark.as_ref() {
+                Some(row) => row.clone(),
+                None => Value::Null,
             },
             // The round in flight is `overall.round`, and how far it has got is
             // `overall.wins` over `overall.games`. There is no second place

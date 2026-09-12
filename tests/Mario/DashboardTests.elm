@@ -7,10 +7,12 @@ honest rather than merely pretty:
 
   - an unmeasured value decodes and stays as `Nothing`, never as zero,
   - a future engine that adds fields or new enum values still renders,
-  - charts never join samples across a curriculum stage boundary or
-    across a gap in measurement,
-  - the "why is expansion blocked" answer is derived from per-cell
-    evidence, not from an aggregate,
+  - charts never join samples across a gap in measurement,
+  - the page reads coarse to fine, and nothing restates a number a band
+    above it already showed,
+  - the two "look closer" panels are folded shut until asked for,
+  - a wall-clock throughput figure is labelled as load dependent and a
+    per-unit-of-work figure is not,
   - the node id layout the topology view labels matches the contract,
   - every tooltip actually states its denominator, window and source.
 
@@ -19,6 +21,7 @@ honest rather than merely pretty:
 import Dict
 import Expect
 import Fuzz
+import Html.Attributes as Attr
 import Json.Decode as Decode
 import Mario.Dashboard as Dashboard
 import Mario.Dashboard.Api as Api
@@ -49,20 +52,125 @@ suite =
         , topologySuite
         , copySuite
         , controlSuite
-        , broadSuite
+        , layoutSuite
+        , healthSuite
         , scoringSuite
         , resourceSuite
         ]
 
 
+unique : List a -> List a
+unique list =
+    List.foldl
+        (\x acc ->
+            if List.member x acc then
+                acc
 
--- DECODERS
+            else
+                acc ++ [ x ]
+        )
+        []
+        list
+
+
+
+-- SHARED FIXTURES
 
 
 decode : String -> Result String Api.Status
 decode json =
     Decode.decodeString Api.decodeStatus json
         |> Result.mapError Decode.errorToString
+
+
+{-| The page itself, driven by a decoded status, so a claim is proven to
+reach the screen rather than merely to exist as a string.
+-}
+renderedFrom : String -> Result String (Query.Single Dashboard.Msg)
+renderedFrom json =
+    decode json
+        |> Result.map
+            (\status ->
+                let
+                    ( model, _ ) =
+                        Dashboard.init ()
+                in
+                Dashboard.view { model | status = Just status, requested = True }
+                    |> Query.fromHtml
+            )
+
+
+expectRendered : String -> (Query.Single Dashboard.Msg -> Expect.Expectation) -> Expect.Expectation
+expectRendered json check =
+    case renderedFrom json of
+        Ok page ->
+            check page
+
+        Err error ->
+            Expect.fail error
+
+
+{-| A training-exposure row, which is all a matchup carries now.
+-}
+matchup : String -> String -> Float -> Maybe Float -> Float -> Api.Matchup
+matchup us them games rate weight =
+    { us = us
+    , them = them
+    , opponentType = Api.Cyborg
+    , sampleWeight = weight
+    , trainingGames = games
+    , trainingWinRate = rate
+    }
+
+
+sampleCells : List Api.Matchup
+sampleCells =
+    [ matchup "Pkunk" "Umgah" 44 (Just 0.91) 0.4
+    , matchup "Pkunk" "Ilwrath" 40 (Just 0.75) 0.35
+    , matchup "Spathi" "Umgah" 0 Nothing 0.2
+    , matchup "Spathi" "Ilwrath" 40 (Just 0.95) 0.05
+    ]
+
+
+overallWith : Int -> Int -> Maybe Float -> Maybe Float -> Api.Overall
+overallWith wins games rate bound =
+    { scope = "balanced-any-any"
+    , target = 0.8
+    , panel = 500
+    , pairs = 250
+    , round = Just Api.AuditRound
+    , wins = wins
+    , games = games
+    , winRate = rate
+    , lowerBound = bound
+    , championId = Just "g-champion"
+    , passed = False
+    , passedBy = Nothing
+    , audit = { wins = wins, games = games, winRate = rate, lowerBound = bound, passed = False }
+    , confirm = { wins = 0, games = 0, winRate = Nothing, lowerBound = Nothing, passed = False }
+    , attempt = 2
+    }
+
+
+shipRow : Api.Seat -> String -> Int -> Int -> Maybe Float -> Maybe Float -> Api.EvidenceSource -> Api.ShipPerformance
+shipRow side ship wins games rate bound source =
+    { side = side
+    , ship = ship
+    , wins = wins
+    , games = games
+    , winRate = rate
+    , lowerBound = bound
+    , source = source
+    }
+
+
+readinessOf : Float -> Maybe Float -> Api.Readiness
+readinessOf threshold lastRate =
+    { threshold = threshold, games = 250, lastRate = lastRate, period = 5 }
+
+
+
+-- DECODERS
 
 
 decoderSuite : Test
@@ -72,24 +180,52 @@ decoderSuite =
             \() ->
                 case decode "{}" of
                     Ok status ->
-                        Expect.equal ( status.champion.winRate, status.champion.lowerBound, status.matchups )
+                        Expect.equal ( status.champion.id, status.overall, status.matchups )
                             ( Nothing, Nothing, [] )
 
                     Err error ->
                         Expect.fail error
-        , test "a null win rate decodes to Nothing, not to zero" <|
+        , test "a null overall rate decodes to Nothing, not to zero" <|
             \() ->
-                case decode """{"champion":{"win_rate":null,"lower_bound":null,"validated_games":0}}""" of
+                case decode """{"overall":{"win_rate":null,"lower_bound":null,"games":0}}""" of
                     Ok status ->
-                        Expect.equal ( status.champion.winRate, status.champion.lowerBound ) ( Nothing, Nothing )
+                        Expect.equal (status.overall |> Maybe.map (\o -> ( o.winRate, o.lowerBound )))
+                            (Just ( Nothing, Nothing ))
 
                     Err error ->
                         Expect.fail error
-        , test "a genuine zero win rate is preserved and is distinct from absence" <|
+        , test "a genuine zero rate is preserved and is distinct from absence" <|
             \() ->
-                case decode """{"champion":{"win_rate":0.0,"validated_games":40}}""" of
+                case decode """{"overall":{"win_rate":0.0,"games":500}}""" of
                     Ok status ->
-                        Expect.equal status.champion.winRate (Just 0)
+                        Expect.equal (status.overall |> Maybe.andThen .winRate) (Just 0)
+
+                    Err error ->
+                        Expect.fail error
+        , test "with no champion every topology figure is null rather than a graph with no nodes" <|
+            \() ->
+                case decode """{"champion":{"id":null,"nodes":null,"connections":null,"hidden_nodes":null}}""" of
+                    Ok status ->
+                        Expect.equal status.champion
+                            { id = Nothing, nodes = Nothing, connections = Nothing, hiddenNodes = Nothing }
+
+                    Err error ->
+                        Expect.fail error
+        , test "a named champion decodes its counts" <|
+            \() ->
+                case decode """{"champion":{"id":"g4dd0","nodes":184,"connections":314,"hidden_nodes":114}}""" of
+                    Ok status ->
+                        Expect.equal status.champion
+                            { id = Just "g4dd0", nodes = Just 184, connections = Just 314, hiddenNodes = Just 114 }
+
+                    Err error ->
+                        Expect.fail error
+        , test "an empty champion id is the same absence a null is, so no caller tests for both" <|
+            \() ->
+                case decode """{"champion":{"id":""},"overall":{"champion_id":""}}""" of
+                    Ok status ->
+                        Expect.equal ( status.champion.id, status.overall |> Maybe.andThen .championId )
+                            ( Nothing, Nothing )
 
                     Err error ->
                         Expect.fail error
@@ -109,37 +245,43 @@ decoderSuite =
 
                     Err error ->
                         Expect.fail error
-        , test "an unknown matchup status is preserved verbatim" <|
+        , test "the phase the engine no longer produces arrives as a stranger, not as a known state" <|
             \() ->
-                case decode """{"matchups":[{"us":"Pkunk","them":"Umgah","status":"quarantined"}]}""" of
+                -- A start that fails exits with its reason on stderr rather
+                -- than publishing, so "error" is a string no build sends.
+                case decode """{"phase":"error"}""" of
                     Ok status ->
-                        Expect.equal (List.map .status status.matchups) [ Api.UnknownStatus "quarantined" ]
+                        Expect.equal status.phase (Api.UnknownPhase "error")
 
                     Err error ->
                         Expect.fail error
-        , test "a full contract payload decodes every documented field" <|
+        , test "a full schema 4 payload decodes every documented block" <|
             \() ->
                 case decode fullPayload of
                     Ok status ->
                         Expect.equal
                             { run = status.runId
+                            , schema = status.schemaVersion
                             , phase = status.phase
-                            , stage = status.curriculum.stage
-                            , target = status.curriculum.target
-                            , champion = status.champion.lowerBound
+                            , board = status.board.totalMatchups
+                            , target = status.overall |> Maybe.map .target
+                            , bound = status.overall |> Maybe.andThen .lowerBound
                             , history = List.length status.history
                             , matchups = List.length status.matchups
+                            , ships = List.length status.shipPerformance
                             , events = List.length status.events
                             , duty = status.resources.dutyCycle
                             , resumable = status.checkpoint.resumable
                             }
-                            { run = "run-2026-09-11-a"
+                            { run = "run-2026-09-12-a"
+                            , schema = 4
                             , phase = Api.Auditing
-                            , stage = 3
-                            , target = 0.8
-                            , champion = Just 0.71
+                            , board = 625
+                            , target = Just 0.8
+                            , bound = Just 0.71
                             , history = 3
                             , matchups = 4
+                            , ships = 2
                             , events = 2
                             , duty = 0.5
                             , resumable = True
@@ -156,70 +298,134 @@ decoderSuite =
 
                     Err error ->
                         Expect.fail error
+        , test "a matchup row carries training exposure and nothing that could pass for a verdict" <|
+            \() ->
+                case decode fullPayload of
+                    Ok status ->
+                        Expect.equal (List.take 1 status.matchups)
+                            [ { us = "Pkunk"
+                              , them = "Umgah"
+                              , opponentType = Api.Cyborg
+                              , sampleWeight = 0.4
+                              , trainingGames = 44.5
+                              , trainingWinRate = Just 0.909
+                              }
+                            ]
+
+                    Err error ->
+                        Expect.fail error
+        , test "a cell with no decayed games carries no rate rather than a zero one" <|
+            \() ->
+                case decode fullPayload of
+                    Ok status ->
+                        status.matchups
+                            |> List.filter (\m -> m.trainingGames <= 0)
+                            |> List.map .trainingWinRate
+                            |> Expect.equal [ Nothing ]
+
+                    Err error ->
+                        Expect.fail error
+        , test "the gate names whoever cleared it, so a result is never inherited silently" <|
+            \() ->
+                case decode fullPayload of
+                    Ok status ->
+                        Expect.equal (status.overall |> Maybe.map (\o -> ( o.passed, o.passedBy )))
+                            (Just ( False, Just "g-earlier" ))
+
+                    Err error ->
+                        Expect.fail error
+        , test "the work block decodes its counts and its two per-unit rates" <|
+            \() ->
+                case decode fullPayload of
+                    Ok status ->
+                        Expect.equal
+                            (status.work
+                                |> Maybe.map
+                                    (\w ->
+                                        ( w.displayTicks
+                                        , w.cpuNanosPerDisplayTick
+                                        , w.displayTicksPerEpisode
+                                        )
+                                    )
+                            )
+                            (Just ( 99074, Just 1463.7, Just 3096.1 ))
+
+                    Err error ->
+                        Expect.fail error
+        , test "a process that has not computed reports no work and no split, not a page of zeroes" <|
+            \() ->
+                case decode """{"work":null,"phases":null,"benchmark":null}""" of
+                    Ok status ->
+                        Expect.equal ( status.work, status.phases, status.benchmark )
+                            ( Nothing, Nothing, Nothing )
+
+                    Err error ->
+                        Expect.fail error
+        , test "the phase split decodes all seven buckets in reading order" <|
+            \() ->
+                case decode fullPayload of
+                    Ok status ->
+                        Expect.equal (status.phases |> Maybe.map (.buckets >> List.map .name))
+                            (Just [ "simulate", "think", "encode", "compile", "evolve", "checkpoint", "serve" ])
+
+                    Err error ->
+                        Expect.fail error
+        , test "a bucket the engine omits is present at zero seconds with no share" <|
+            \() ->
+                case decode """{"phases":{"simulate":{"seconds":2,"share":1.0}}}""" of
+                    Ok status ->
+                        status.phases
+                            |> Maybe.map (.buckets >> List.filter (\b -> b.name == "serve"))
+                            |> Expect.equal (Just [ { name = "serve", seconds = 0, share = Nothing } ])
+
+                    Err error ->
+                        Expect.fail error
+        , test "the unaccounted remainder keeps its sign, because both signs mean something" <|
+            \() ->
+                case decode """{"phases":{"unaccounted_seconds":-0.42,"unaccounted_share_of_cpu":-0.006}}""" of
+                    Ok status ->
+                        Expect.equal (status.phases |> Maybe.andThen .unaccountedSeconds) (Just -0.42)
+
+                    Err error ->
+                        Expect.fail error
+        , test "the benchmark reference decodes, including how many results the best was taken over" <|
+            \() ->
+                case decode fullPayload of
+                    Ok status ->
+                        Expect.equal status.benchmark
+                            (Just
+                                { at = Just "2026-09-12T08:00:00Z"
+                                , build = Just "b6e517bda09bb2463"
+                                , definition = Just "kf64e8f14b35445ef"
+                                , repetitions = Just 5
+                                , fights = Just 32
+                                , bestSeconds = Just 0.145
+                                , cpuNanosPerDisplayTick = Just 1463.7
+                                , cpuNanosPerLinkActivation = Just 16.91
+                                , comparableRows = 12
+                                }
+                            )
+
+                    Err error ->
+                        Expect.fail error
+        , test "the combat victory counter is a whole-run total with no window to caveat" <|
+            \() ->
+                Expect.equal
+                    ( decode """{"episodes_combat_wins":37}""" |> Result.map .episodesCombatWins
+                    , decode """{"run_id":"x"}""" |> Result.map .episodesCombatWins
+                    )
+                    ( Ok (Just 37), Ok Nothing )
         , test "network genome decodes nodes and genes" <|
             \() ->
                 Decode.decodeString Api.decodeNetwork networkPayload
                     |> Result.map (\n -> ( n.championId, List.length n.genome.nodes, List.length n.genome.genes ))
-                    |> Expect.equal (Ok ( "champ-17", 3, 2 ))
-        , test "the live engine's added fields decode: ladder, opponent revision, audit panel, readiness" <|
+                    |> Expect.equal (Ok ( Just "champ-17", 3, 2 ))
+        , test "a network with no champion decodes to an empty genome rather than failing" <|
             \() ->
-                case decode livePayload of
-                    Ok status ->
-                        Expect.equal
-                            { ladder = status.curriculum.ladder
-                            , revision = status.curriculum.opponentRevision
-                            , fingerprint = status.curriculum.opponentFingerprint
-                            , selfPlayGated = status.curriculum.selfPlayIsGated
-                            , panel = status.audit.panel
-                            , maxLosses = status.audit.maxLosses
-                            , budget = status.audit.budget
-                            , readinessGames = status.readiness.games
-                            , readinessThreshold = status.readiness.threshold
-                            , stale = status.stale
-                            , hidden = status.champion.hiddenNodes
-                            , trainingRate = List.map .trainingWinRate status.matchups
-                            }
-                            { ladder = Api.Climbing
-                            , revision = 0
-                            , fingerprint = Nothing
-                            , selfPlayGated = False
-                            , panel = 100
-                            , maxLosses = 12
-                            , budget = 200000
-                            , readinessGames = 128
-                            , readinessThreshold = 0.85
-                            , stale = False
-                            , hidden = 114
-                            , trainingRate = [ Just 0.89 ]
-                            }
-
-                    Err error ->
-                        Expect.fail error
-        , test "the regression block decodes when present" <|
-            \() ->
-                case decode """{"regression":{"active":true,"budget":4000,"last_failed":2,"last_swept":41,"rehearsing":3,"sweeping":false}}""" of
-                    Ok status ->
-                        Expect.equal status.regression
-                            (Just { active = True, sweeping = False, rehearsing = 3, lastSwept = 41, lastFailed = 2, budget = 4000 })
-
-                    Err error ->
-                        Expect.fail error
-        , test "an engine that does not report regression leaves it absent, not zeroed" <|
-            \() ->
-                case decode livePayload of
-                    Ok status ->
-                        Expect.equal status.regression Nothing
-
-                    Err error ->
-                        Expect.fail error
-        , test "an unknown ladder phase is preserved verbatim" <|
-            \() ->
-                case decode """{"curriculum":{"ladder":"spiralling"}}""" of
-                    Ok status ->
-                        Expect.equal status.curriculum.ladder (Api.UnknownLadder "spiralling")
-
-                    Err error ->
-                        Expect.fail error
+                Decode.decodeString Api.decodeNetwork
+                    """{"schema_version":4,"champion_id":null,"genome":null}"""
+                    |> Result.map (\n -> ( n.championId, n.genome ))
+                    |> Expect.equal (Ok ( Nothing, Api.emptyGenome ))
         , test "a gene with no explicit enabled flag defaults to enabled" <|
             \() ->
                 Decode.decodeString Api.decodeNetwork
@@ -229,76 +435,333 @@ decoderSuite =
         ]
 
 
+{-| A schema 4 document carrying every block the contract declares, in
+the shape the engine publishes them.
+-}
 fullPayload : String
 fullPayload =
     """
-{"schema_version":1,"run_id":"run-2026-09-11-a","phase":"auditing","message":"auditing candidate",
- "generation":42,"episodes":128400,"elapsed_seconds":7325.5,"episodes_per_second":3.4,
- "updated_at":"2026-09-11T10:15:00Z",
- "curriculum":{"stage":3,"our_roster":["Pkunk","Spathi"],"opponent_roster":["Umgah","Ilwrath"],
-   "opponent_types":["cyborg"],"next_side":"opponent","next_ship":"Mycon","target":0.8,
-   "mastered_matchups":2,"total_matchups":4},
- "champion":{"id":"champ-17","validated_wins":58,"validated_games":72,"win_rate":0.8055,
-   "lower_bound":0.71,"nodes":74,"connections":91},
- "population":{"size":300,"species":11,"mean_nodes":72.4,"mean_connections":83.1},
- "checkpoint":{"saved_at":"2026-09-11T10:14:30Z","generation":42,"resumable":true,
-   "path":"artifacts/mario/run-2026-09-11-a"},
- "resources":{"workers":1,"duty_cycle":0.5},
+{"schema_version":4,"run_id":"run-2026-09-12-a","phase":"auditing","message":"auditing candidate",
+ "generation":42,"episodes":128400,"episodes_unresolved":240,"episodes_combat_wins":37,
+ "elapsed_seconds":7325.5,"episodes_per_second":3.4,
+ "updated_at":"2026-09-12T10:15:00Z","stale":false,
+ "scoring":{"fitness":"combat","speed_bonus":true,"gate":"combat-wins","no_damage_penalty":0},
+ "board":{"total_matchups":625},
+ "champion":{"id":"g-champion","nodes":184,"connections":314,"hidden_nodes":114},
+ "population":{"size":300,"species":11,"mean_nodes":172.4,"mean_connections":283.1},
+ "checkpoint":{"saved_at":"2026-09-12T10:14:30Z","generation":40,"resumable":true,
+   "path":"artifacts/mario/run-2026-09-12-a"},
+ "resources":{"workers":6,"duty_cycle":0.5,"measured_duty":0.47,"compute_seconds":3400.25,
+   "episode_ticks":3600,"nice":10},
+ "work":{"basis":"this process","episodes":32,"display_ticks":99074,"decisions":37128,
+   "node_activations":1200000,"link_activations":8576568,"element_scans":303902,
+   "elements_visited":2691259,"networks_compiled":0,
+   "cpu_nanoseconds_per_display_tick":1463.7,"cpu_nanoseconds_per_link_activation":16.91,
+   "display_ticks_per_episode":3096.1,"link_activations_per_decision":231.0,
+   "elements_per_scan":8.85},
+ "phases":{"basis":"per-thread wall totals","session_cpu_seconds":0.145,
+   "session_wall_seconds":0.146,"threads_busy":0.99,"accounted_seconds":0.145,
+   "accounted_share_of_cpu":1.0,"unaccounted_seconds":-0.0004,
+   "unaccounted_share_of_cpu":-0.003,
+   "simulate":{"seconds":0.092,"share":0.632},"think":{"seconds":0.017,"share":0.117},
+   "encode":{"seconds":0.036,"share":0.251},"compile":{"seconds":0.0,"share":0.0},
+   "evolve":{"seconds":0.0,"share":0.0},"checkpoint":{"seconds":0.0,"share":0.0},
+   "serve":{"seconds":0.0,"share":0.0}},
+ "benchmark":{"at":"2026-09-12T08:00:00Z","build":"b6e517bda09bb2463",
+   "definition":"kf64e8f14b35445ef","repetitions":5,"fights":32,"best_seconds":0.145,
+   "cpu_nanoseconds_per_display_tick":1463.7,"cpu_nanoseconds_per_link_activation":16.91,
+   "comparable_rows":12},
+ "readiness":{"threshold":0.85,"games":250,"last_rate":0.82,"period":5},
  "history":[
-   {"generation":40,"stage":2,"training_win_rate":0.61,"validation_win_rate":null,"species":9,"nodes":72,"episodes":3000},
-   {"generation":41,"stage":3,"training_win_rate":0.52,"validation_win_rate":null,"species":10,"nodes":73,"episodes":3100},
-   {"generation":42,"stage":3,"training_win_rate":0.64,"validation_win_rate":0.82,"species":11,"nodes":74,"episodes":5200}],
+   {"generation":40,"training_win_rate":0.61,"validation_win_rate":null,"species":9,"nodes":172,"episodes":3000},
+   {"generation":41,"training_win_rate":0.52,"validation_win_rate":null,"species":10,"nodes":173,"episodes":3100},
+   {"generation":42,"training_win_rate":0.64,"validation_win_rate":0.82,"species":11,"nodes":174,"episodes":5200}],
+ "overall":{"scope":"balanced-any-any","target":0.8,"panel":500,"pairs":250,"round":"audit",
+   "wins":402,"games":500,"win_rate":0.804,"lower_bound":0.71,"champion_id":"g-champion",
+   "passed":false,"passed_by":"g-earlier",
+   "audit":{"wins":402,"games":500,"win_rate":0.804,"lower_bound":0.71,"passed":false},
+   "confirm":{"wins":0,"games":0,"win_rate":null,"lower_bound":null,"passed":false},
+   "attempt":3},
+ "ship_performance":[
+   {"side":"ours","ship":"Pkunk","wins":18,"games":20,"win_rate":0.9,"lower_bound":0.7,"source":"audit"},
+   {"side":"opponent","ship":"Umgah","wins":4,"games":20,"win_rate":0.2,"lower_bound":0.08,"source":"audit"}],
+ "sampler":{"panel":900,"coverage":0.35,"cursor":41250,"tour":66},
  "matchups":[
-   {"us":"Pkunk","them":"Umgah","opponent_type":"cyborg","wins":40,"games":44,"win_rate":0.909,"lower_bound":0.79,"status":"auditing","sample_weight":0.4},
-   {"us":"Pkunk","them":"Ilwrath","opponent_type":"cyborg","wins":30,"games":40,"win_rate":0.75,"lower_bound":0.6,"status":"learning","sample_weight":0.35},
-   {"us":"Spathi","them":"Umgah","opponent_type":"cyborg","wins":0,"games":0,"win_rate":null,"lower_bound":null,"status":"unseen","sample_weight":0.2},
-   {"us":"Spathi","them":"Ilwrath","opponent_type":"cyborg","wins":38,"games":40,"win_rate":0.95,"lower_bound":0.84,"status":"mastered","sample_weight":0.05}],
- "events":[{"at":"2026-09-11T10:00:00Z","message":"stage 3 opened"},
-           {"at":"2026-09-11T10:14:00Z","message":"audit started for champ-17"}]}
-"""
-
-
-{-| Trimmed from an actual /api/status response of the running trainer
-(run dashboard-smoke-20260911), so the shape under test is the shape the
-engine really sends, including the fields added after the first contract.
--}
-livePayload : String
-livePayload =
-    """
-{"schema_version":1,"run_id":"dashboard-smoke-20260911","phase":"training","message":"training",
- "generation":258,"episodes":12384,"elapsed_seconds":204.4,"episodes_per_second":60.6,
- "updated_at":"2026-09-11T19:41:04Z","stale":false,
- "curriculum":{"ladder":"climbing","mastered_matchups":0,"next_ship":"Androsynth","next_side":"ours",
-   "opponent_fingerprint":null,"opponent_revision":0,"opponent_roster":["Umgah","Androsynth"],
-   "opponent_types":["cyborg"],"our_roster":["Pkunk"],"self_play_is_gated":false,
-   "stage":1,"target":0.8,"total_matchups":2},
- "champion":{"connections":314,"hidden_nodes":114,"id":"g4dd02251f9b298ea","lower_bound":null,
-   "nodes":184,"validated_games":0,"validated_wins":0,"win_rate":null,"worst_cell_lower_bound":null},
- "population":{"mean_connections":293.58,"mean_nodes":170.16,"size":12,"species":2},
- "checkpoint":{"generation":258,"path":"artifacts/mario/dashboard-smoke-20260911/checkpoint.json",
-   "resumable":true,"saved_at":"2026-09-11T19:41:03Z"},
- "resources":{"compute_seconds":72.58,"covers":["training","readiness","audit","self_play"],
-   "duty_cycle":0.5,"episode_ticks":3600,"measured_duty":0.355,"nice":10,"workers":1},
- "audit":{"budget":200000,"max_losses":12,"panel":100,"round":null,"spent":0},
- "readiness":{"games":128,"last_rate":null,"period":5,"threshold":0.85},
- "history":[{"episodes":48,"generation":0,"nodes":71,"species":12,"stage":0,
-   "training_win_rate":0.0,"validation_win_rate":null}],
- "matchups":[{"games":0,"lower_bound":null,"opponent_type":"cyborg","sample_weight":1.697,
-   "status":"learning","them":"Umgah","training_games":10.0,"training_win_rate":0.89,
-   "us":"Pkunk","win_rate":null,"wins":0}],
- "events":[{"at":"2026-09-11T19:37:40Z","message":"run seeded"}]}
+   {"us":"Pkunk","them":"Umgah","opponent_type":"cyborg","sample_weight":0.4,"training_games":44.5,"training_win_rate":0.909},
+   {"us":"Pkunk","them":"Ilwrath","opponent_type":"cyborg","sample_weight":0.35,"training_games":40.0,"training_win_rate":0.75},
+   {"us":"Spathi","them":"Umgah","opponent_type":"cyborg","sample_weight":0.2,"training_games":0.0,"training_win_rate":null},
+   {"us":"Spathi","them":"Ilwrath","opponent_type":"cyborg","sample_weight":0.05,"training_games":40.0,"training_win_rate":0.95}],
+ "events":[{"at":"2026-09-12T10:00:00Z","message":"run seeded"},
+           {"at":"2026-09-12T10:14:00Z","message":"audit started for g-champion"}]}
 """
 
 
 networkPayload : String
 networkPayload =
     """
-{"schema_version":1,"champion_id":"champ-17",
+{"schema_version":4,"champion_id":"champ-17",
  "genome":{"schema_version":1,
    "nodes":[{"id":0,"kind":"input"},{"id":57,"kind":"output"},{"id":70,"kind":"hidden"}],
    "genes":[{"innovation":1,"from":0,"to":70,"weight":1.25,"enabled":true},
             {"innovation":2,"from":70,"to":57,"weight":-0.5,"enabled":false}]}}
 """
+
+
+
+-- GATE
+
+
+gateSuite : Test
+gateSuite =
+    describe "gate analysis"
+        [ test "no games on the panel means no verdict rather than a failing score" <|
+            \() ->
+                Gate.overallVerdict (overallWith 0 0 Nothing Nothing)
+                    |> Expect.equal Gate.NoEvidence
+        , test "a high raw rate with no bound is undecided, never a pass" <|
+            \() ->
+                Gate.overallVerdict (overallWith 500 500 (Just 1.0) Nothing)
+                    |> Expect.equal (Gate.RateOnly 1.0)
+        , test "a rate above target with a bound below target is short, not passing" <|
+            \() ->
+                Gate.overallVerdict (overallWith 450 500 (Just 0.9) (Just 0.59))
+                    |> Expect.equal (Gate.Short 0.59)
+        , test "only a bound at or above target passes" <|
+            \() ->
+                Gate.overallVerdict (overallWith 460 500 (Just 0.92) (Just 0.8))
+                    |> Expect.equal (Gate.Passing 0.8)
+        , test "the gate demands 88 observed wins on a panel of 100, not 80" <|
+            \() ->
+                -- The target is a floor on the Wilson bound, not on the raw
+                -- rate. 80 of 100 produces a bound near 71% and fails.
+                Expect.equal
+                    ( Gate.winsNeeded Gate.z95 0.8 100
+                    , Gate.wilsonLower Gate.z95 80 100 |> Maybe.map (\b -> b >= 0.8)
+                    , Gate.wilsonLower Gate.z95 88 100 |> Maybe.map (\b -> b >= 0.8)
+                    )
+                    ( Just 88, Just False, Just True )
+        , test "the win count needed is the smallest one that clears the bound" <|
+            \() ->
+                Gate.wilsonLower Gate.z95 87 100
+                    |> Maybe.map (\b -> b >= 0.8)
+                    |> Expect.equal (Just False)
+        , test "a larger panel needs a lower observed rate, since the bound tightens" <|
+            \() ->
+                let
+                    rateFor n =
+                        Gate.winsNeeded Gate.z95 0.8 n
+                            |> Maybe.map (\w -> toFloat w / toFloat n)
+                in
+                case ( rateFor 100, rateFor 1000 ) of
+                    ( Just small, Just large ) ->
+                        Expect.lessThan small large
+
+                    _ ->
+                        Expect.fail "expected both panels to resolve"
+        , test "an unpublished panel size yields no demand rather than a made-up one" <|
+            \() ->
+                Expect.equal ( Gate.winsNeeded Gate.z95 0.8 0, Gate.wilsonLower Gate.z95 0 0 ) ( Nothing, Nothing )
+        , fuzz2 (Fuzz.intRange 1 200) (Fuzz.intRange 0 200) "the bound never exceeds the observed rate" <|
+            \games rawWins ->
+                let
+                    wins =
+                        min rawWins games
+                in
+                case Gate.wilsonLower Gate.z95 wins games of
+                    Just bound ->
+                        Expect.atMost (toFloat wins / toFloat games) bound
+
+                    Nothing ->
+                        Expect.fail "expected a bound for a non-empty panel"
+        , test "the weakest hull leads and an unmeasured hull sorts last, never first" <|
+            \() ->
+                Gate.blindSpots
+                    [ shipRow Api.OurSeat "Strong" 19 20 (Just 0.95) (Just 0.77) Api.FromAudit
+                    , shipRow Api.OurSeat "Silent" 0 0 Nothing Nothing Api.FromAudit
+                    , shipRow Api.OurSeat "Weak" 4 20 (Just 0.2) (Just 0.08) Api.FromAudit
+                    ]
+                    |> List.map .ship
+                    |> Expect.equal [ "Weak", "Strong", "Silent" ]
+        , test "seat coverage counts hulls with games apart from hulls that are merely listed" <|
+            \() ->
+                Gate.seatCoverage
+                    [ shipRow Api.OurSeat "A" 5 10 (Just 0.5) (Just 0.3) Api.FromAudit
+                    , shipRow Api.OurSeat "B" 0 0 Nothing Nothing Api.FromAudit
+                    , shipRow Api.OpponentSeat "A" 5 10 (Just 0.5) (Just 0.3) Api.FromAudit
+                    ]
+                    |> Expect.equal { ours = 2, oursWithGames = 1, opponent = 1, opponentWithGames = 1 }
+        , test "the explanation leads with the one graded question, not with a cell count" <|
+            \() ->
+                case Gate.explainOverall Nothing { totalMatchups = 625 } (Just (overallWith 402 500 (Just 0.8) (Just 0.71))) [] of
+                    first :: _ ->
+                        Expect.equal True (String.startsWith "The run is judged on one number" first)
+
+                    [] ->
+                        Expect.fail "expected an explanation"
+        , test "the explanation says the whole board is active and that nothing is unlocked by stages" <|
+            \() ->
+                let
+                    prose =
+                        Gate.explainOverall Nothing { totalMatchups = 625 } (Just (overallWith 402 500 (Just 0.8) (Just 0.71))) []
+                            |> String.join " "
+                in
+                Expect.equal
+                    ( String.contains "625 ordered matchups are trained on from generation one" prose
+                    , String.contains "no cell has a gate of its own" prose
+                    )
+                    ( True, True )
+        , test "no word of the explanation reinstates the deleted ladder vocabulary" <|
+            \() ->
+                let
+                    prose =
+                        Gate.explainOverall Nothing { totalMatchups = 625 } (Just (overallWith 402 500 (Just 0.8) (Just 0.71))) []
+                            |> String.join " "
+                            |> String.toLower
+                in
+                [ "stage", "mastered", "promotion", "roster grows", "ladder" ]
+                    |> List.filter (\word -> String.contains word prose)
+                    |> Expect.equal []
+        , test "a gate cleared by an earlier champion is named rather than inherited" <|
+            \() ->
+                let
+                    inherited =
+                        overallWith 402 500 (Just 0.8) (Just 0.71)
+
+                    prose =
+                        Gate.explainOverall Nothing
+                            { totalMatchups = 625 }
+                            (Just { inherited | passedBy = Just "g-earlier", championId = Just "g-now" })
+                            []
+                            |> String.join " "
+                in
+                Expect.equal True (String.contains "is not inherited" prose)
+        , test "a readiness-sourced table is called a probe rather than gate evidence" <|
+            \() ->
+                Gate.explainOverall Nothing
+                    { totalMatchups = 625 }
+                    (Just (overallWith 402 500 (Just 0.8) (Just 0.71)))
+                    [ shipRow Api.OurSeat "A" 5 10 (Just 0.5) (Just 0.3) Api.FromReadiness ]
+                    |> List.any (String.contains "not from a gate round")
+                    |> Expect.equal True
+        , test "the next-gate steps are the three the run actually walks, in order" <|
+            \() ->
+                Gate.nextGateSteps Nothing (readinessOf 0.85 (Just 0.82)) (Just (overallWith 402 500 (Just 0.8) (Just 0.71)))
+                    |> List.length
+                    |> Expect.equal 3
+        , test "the first step is the screening probe and it states the threshold it must clear" <|
+            \() ->
+                case Gate.nextGateSteps Nothing (readinessOf 0.85 (Just 0.82)) (Just (overallWith 402 500 (Just 0.8) (Just 0.71))) of
+                    first :: _ ->
+                        Expect.equal
+                            ( String.contains "82.0%" first, String.contains "85%" first )
+                            ( True, True )
+
+                    [] ->
+                        Expect.fail "expected steps"
+        , test "an unscored probe says so rather than reporting a rate of zero" <|
+            \() ->
+                case Gate.nextGateSteps Nothing (readinessOf 0.85 Nothing) Nothing of
+                    first :: _ ->
+                        Expect.equal True (String.startsWith "No readiness probe has been scored yet" first)
+
+                    [] ->
+                        Expect.fail "expected steps"
+        , test "the demand is stated as an observed count, never as the bare target" <|
+            \() ->
+                Gate.nextGateSteps Nothing (readinessOf 0.85 (Just 0.9)) (Just (overallWith 0 0 Nothing Nothing))
+                    |> String.join " "
+                    |> String.contains "observed wins"
+                    |> Expect.equal True
+        , test "with no published panel neither the size nor the demand is invented" <|
+            \() ->
+                Gate.nextGateSteps Nothing (readinessOf 0.85 Nothing) Nothing
+                    |> String.join " "
+                    |> String.contains "no balanced panel yet"
+                    |> Expect.equal True
+        ]
+
+
+
+-- CHART
+
+
+chartSuite : Test
+chartSuite =
+    describe "chart geometry"
+        [ test "a gap in measurement breaks the line instead of being drawn as zero" <|
+            \() ->
+                Chart.runs [ Just 0.5, Nothing, Just 0.7, Just 0.9 ]
+                    |> Expect.equal [ [ ( 0, 0.5 ) ], [ ( 2, 0.7 ), ( 3, 0.9 ) ] ]
+        , test "a fully measured history is one unbroken run, because every point asks the same question" <|
+            \() ->
+                -- The staged ladder is gone, so there is no scope change left
+                -- for the geometry to break at, and inventing one would draw
+                -- a discontinuity the data does not have.
+                Chart.runs [ Just 1, Just 2, Just 3 ]
+                    |> Expect.equal [ [ ( 0, 1 ), ( 1, 2 ), ( 2, 3 ) ] ]
+        , test "no measurements produce no runs at all" <|
+            \() ->
+                Chart.runs [ Nothing, Nothing ]
+                    |> Expect.equal []
+        , fuzz (Fuzz.listOfLengthBetween 0 20 (Fuzz.maybe (Fuzz.floatRange 0 1)))
+            "every measured sample appears exactly once across the runs"
+          <|
+            \values ->
+                let
+                    measured =
+                        values |> List.filterMap identity |> List.length
+
+                    emitted =
+                        Chart.runs values |> List.concat |> List.length
+                in
+                Expect.equal measured emitted
+        , fuzz (Fuzz.listOfLengthBetween 0 20 (Fuzz.maybe (Fuzz.floatRange 0 1)))
+            "indices come back in order and never repeat"
+          <|
+            \values ->
+                let
+                    indices =
+                        Chart.runs values |> List.concat |> List.map Tuple.first
+                in
+                Expect.equal indices (List.sort (unique indices))
+        ]
+
+
+
+-- HEATMAP
+
+
+heatmapSuite : Test
+heatmapSuite =
+    describe "matchup grid"
+        [ test "rows and columns come from the published rows, in the order they arrived" <|
+            \() ->
+                let
+                    g =
+                        Heatmap.grid sampleCells
+                in
+                Expect.equal ( g.rows, g.cols ) ( [ "Pkunk", "Spathi" ], [ "Umgah", "Ilwrath" ] )
+        , test "every published pair reaches the grid, so no row can be silently dropped" <|
+            \() ->
+                let
+                    g =
+                        Heatmap.grid (matchup "Orz" "Mycon" 2 (Just 0.5) 0.1 :: sampleCells)
+                in
+                Expect.equal
+                    ( List.member "Orz" g.rows, List.member "Mycon" g.cols, Dict.size g.cells )
+                    ( True, True, 5 )
+        , test "an unmeasured cell gets its own fill, distinct from any measured value" <|
+            \() ->
+                Expect.notEqual (Heatmap.cellFill 0.8 Nothing) (Heatmap.cellFill 0.8 (Just 0))
+        , test "crossing the reference rate changes the colour family" <|
+            \() ->
+                Expect.notEqual (Heatmap.cellFill 0.8 (Just 0.799)) (Heatmap.cellFill 0.8 (Just 0.8))
+        , test "names shorten only as the grid grows" <|
+            \() ->
+                Expect.equal
+                    ( Heatmap.shortName 4 "Androsynth", Heatmap.shortName 25 "Androsynth" )
+                    ( "Androsynth", "And" )
+        ]
 
 
 
@@ -364,370 +827,6 @@ formatSuite =
 
                     Nothing ->
                         Expect.fail ("could not parse " ++ Format.percent1 value)
-        ]
-
-
-
--- GATE
-
-
-matchup : String -> String -> Int -> Int -> Maybe Float -> Api.MatchupStatus -> Api.Matchup
-matchup us them wins games bound status =
-    { us = us
-    , them = them
-    , opponentType = Api.Cyborg
-    , wins = wins
-    , games = games
-    , winRate =
-        if games > 0 then
-            Just (toFloat wins / toFloat games)
-
-        else
-            Nothing
-    , lowerBound = bound
-    , status = status
-    , sampleWeight = 0.1
-    , trainingGames = 0
-    , trainingWinRate = Nothing
-    }
-
-
-sampleCells : List Api.Matchup
-sampleCells =
-    [ matchup "Pkunk" "Umgah" 40 44 (Just 0.79) Api.AuditingCell
-    , matchup "Pkunk" "Ilwrath" 30 40 (Just 0.6) Api.Learning
-    , matchup "Spathi" "Umgah" 0 0 Nothing Api.Unseen
-    , matchup "Spathi" "Ilwrath" 38 40 (Just 0.84) Api.Mastered
-    ]
-
-
-curriculumFor : Api.NextSide -> Maybe String -> Api.Curriculum
-curriculumFor side ship =
-    { stage = 3
-    , ourRoster = [ "Pkunk", "Spathi" ]
-    , opponentRoster = [ "Umgah", "Ilwrath" ]
-    , opponentTypes = [ Api.Cyborg ]
-    , nextSide = side
-    , nextShip = ship
-    , target = 0.8
-    , masteredMatchups = 1
-    , totalMatchups = 4
-    , ladder = Api.Climbing
-    , opponentRevision = 0
-    , opponentFingerprint = Nothing
-    , selfPlayIsGated = False
-    , evaluationScope = Api.PerCellScope
-    , stageUnlockedExternally = False
-    , transitionReason = Nothing
-    , originRunId = Nothing
-    , originGeneration = Nothing
-    , originFingerprint = Nothing
-    }
-
-
-champion : Int -> Int -> Maybe Float -> Api.Champion
-champion wins games bound =
-    { id = "c"
-    , validatedWins = wins
-    , validatedGames = games
-    , winRate =
-        if games > 0 then
-            Just (toFloat wins / toFloat games)
-
-        else
-            Nothing
-    , lowerBound = bound
-    , nodes = 70
-    , connections = 0
-    , hiddenNodes = 0
-    , worstCellLowerBound = Nothing
-    }
-
-
-gateSuite : Test
-gateSuite =
-    describe "gate analysis"
-        [ test "blockers are counted per cell, not pooled" <|
-            \() ->
-                Expect.equal (Gate.analyse 0.8 sampleCells)
-                    { total = 4
-                    , mastered = 1
-                    , unseen = 1
-                    , learning = 1
-                    , auditing = 1
-                    , short = 2
-                    , missingReverse = 0
-                    }
-        , test "a cell with a bound just under the target still blocks" <|
-            \() ->
-                Gate.analyse 0.8 [ matchup "A" "B" 79 100 (Just 0.799) Api.AuditingCell ]
-                    |> .short
-                    |> Expect.equal 1
-        , test "a cell with games but no published bound is not called short" <|
-            \() ->
-                Gate.analyse 0.8 [ matchup "A" "B" 90 100 Nothing Api.AuditingCell ]
-                    |> .short
-                    |> Expect.equal 0
-        , test "a pair with no mirror is reported so one seat cannot pass for both" <|
-            \() ->
-                Gate.missingReverseSeats
-                    [ matchup "Pkunk" "Umgah" 10 10 (Just 0.9) Api.Mastered
-                    , matchup "Pkunk" "Pkunk" 10 10 (Just 0.9) Api.Mastered
-                    , matchup "Umgah" "Umgah" 10 10 (Just 0.9) Api.Mastered
-                    ]
-                    |> Expect.equal [ ( "Umgah", "Pkunk" ) ]
-        , test "a mirror outside the current stage's rosters is not invented as a blocker" <|
-            \() ->
-                Gate.missingReverseSeats sampleCells
-                    |> Expect.equal []
-        , test "a symmetric pair reports no missing seat" <|
-            \() ->
-                Gate.missingReverseSeats
-                    [ matchup "Pkunk" "Umgah" 10 10 (Just 0.9) Api.Mastered
-                    , matchup "Umgah" "Pkunk" 10 10 (Just 0.9) Api.Mastered
-                    ]
-                    |> Expect.equal []
-        , test "a self pairing needs no mirror" <|
-            \() ->
-                Gate.missingReverseSeats [ matchup "Pkunk" "Pkunk" 5 10 (Just 0.2) Api.Learning ]
-                    |> Expect.equal []
-        , test "the weakest audited cell is listed first and mastered cells last" <|
-            \() ->
-                Gate.weakestFirst 0.8 sampleCells
-                    |> List.map (\m -> ( m.us, m.them ))
-                    |> Expect.equal
-                        [ ( "Pkunk", "Ilwrath" )
-                        , ( "Pkunk", "Umgah" )
-                        , ( "Spathi", "Umgah" )
-                        , ( "Spathi", "Ilwrath" )
-                        ]
-        , test "no audit games means no verdict rather than a failing score" <|
-            \() ->
-                Gate.championVerdict 0.8 (champion 0 0 Nothing)
-                    |> Expect.equal Gate.NoEvidence
-        , test "a high raw rate with no bound is undecided, never a pass" <|
-            \() ->
-                Gate.championVerdict 0.8 (champion 10 10 Nothing)
-                    |> Expect.equal (Gate.RateOnly 1.0)
-        , test "a rate above target with a bound below target is short, not passing" <|
-            \() ->
-                Gate.championVerdict 0.8 (champion 9 10 (Just 0.59))
-                    |> Expect.equal (Gate.Short 0.59)
-        , test "only a bound at or above target passes" <|
-            \() ->
-                Gate.championVerdict 0.8 (champion 190 200 (Just 0.8))
-                    |> Expect.equal (Gate.Passing 0.8)
-        , test "the gate demands 88 observed wins on a panel of 100, not 80" <|
-            \() ->
-                -- The target is a floor on the Wilson bound, not on the raw
-                -- rate. 80 of 100 produces a bound near 71% and fails.
-                Expect.equal
-                    ( Gate.winsNeeded Gate.z95 0.8 100
-                    , Gate.wilsonLower Gate.z95 80 100 |> Maybe.map (\b -> b >= 0.8)
-                    , Gate.wilsonLower Gate.z95 88 100 |> Maybe.map (\b -> b >= 0.8)
-                    )
-                    ( Just 88, Just False, Just True )
-        , test "the win count needed is the smallest one that clears the bound" <|
-            \() ->
-                Gate.wilsonLower Gate.z95 87 100
-                    |> Maybe.map (\b -> b >= 0.8)
-                    |> Expect.equal (Just False)
-        , test "a larger panel needs a lower observed rate, since the bound tightens" <|
-            \() ->
-                let
-                    rateFor n =
-                        Gate.winsNeeded Gate.z95 0.8 n
-                            |> Maybe.map (\w -> toFloat w / toFloat n)
-                in
-                case ( rateFor 100, rateFor 1000 ) of
-                    ( Just small, Just large ) ->
-                        Expect.lessThan small large
-
-                    _ ->
-                        Expect.fail "expected both panels to resolve"
-        , test "the loss cap is survivable: 12 losses on a panel of 100 still leave exactly 88 winnable" <|
-            \() ->
-                -- The engine reports max_losses 12 for a panel of 100.
-                -- 100 - 88 = 12, so the cap itself still permits a pass and
-                -- it is the 13th loss that makes the target unreachable.
-                case Gate.winsNeeded Gate.z95 0.8 100 of
-                    Just wins ->
-                        Expect.equal ( 100 - wins, 100 - (12 + 1) < wins ) ( 12, True )
-
-                    Nothing ->
-                        Expect.fail "expected a demand for a panel of 100"
-        , test "an unpublished panel size yields no demand rather than a made-up one" <|
-            \() ->
-                Expect.equal ( Gate.winsNeeded Gate.z95 0.8 0, Gate.wilsonLower Gate.z95 0 0 ) ( Nothing, Nothing )
-        , fuzz2 (Fuzz.intRange 1 200) (Fuzz.intRange 0 200) "the bound never exceeds the observed rate" <|
-            \games rawWins ->
-                let
-                    wins =
-                        min rawWins games
-                in
-                case Gate.wilsonLower Gate.z95 wins games of
-                    Just bound ->
-                        Expect.atMost (toFloat wins / toFloat games) bound
-
-                    Nothing ->
-                        Expect.fail "expected a bound for a non-empty panel"
-        , test "the explanation leads with how many cells block, not with an average" <|
-            \() ->
-                case Gate.explain 0.8 (curriculumFor Api.AddOpponent (Just "Mycon")) sampleCells of
-                    first :: _ ->
-                        Expect.equal True (String.startsWith "3 of 4 active ordered matchups" first)
-
-                    [] ->
-                        Expect.fail "expected an explanation"
-        , test "the explanation names the next addition" <|
-            \() ->
-                Gate.explain 0.8 (curriculumFor Api.AddOpponent (Just "Mycon")) sampleCells
-                    |> String.join " "
-                    |> String.contains "Mycon"
-                    |> Expect.equal True
-        , test "a cell with no audit games is never called never played" <|
-            \() ->
-                -- A cell can carry tens of thousands of training episodes
-                -- and still have no audit evidence. Calling that "never
-                -- played" misdescribes the run.
-                let
-                    prose =
-                        Gate.explain 0.8 (curriculumFor Api.AddOpponent (Just "Mycon")) sampleCells
-                            |> String.join " "
-                in
-                Expect.equal
-                    ( String.contains "never played" prose, String.contains "no audit games" prose )
-                    ( False, True )
-        , test "a fully mastered stage says so and stops blaming cells" <|
-            \() ->
-                let
-                    all =
-                        [ matchup "A" "B" 40 40 (Just 0.91) Api.Mastered
-                        , matchup "B" "A" 40 40 (Just 0.91) Api.Mastered
-                        ]
-                in
-                case Gate.explain 0.8 (curriculumFor Api.AddOurs (Just "Orz")) all of
-                    first :: _ ->
-                        Expect.equal True (String.contains "have cleared" first)
-
-                    [] ->
-                        Expect.fail "expected an explanation"
-        , test "an empty stage says there is nothing to gate on rather than claiming success" <|
-            \() ->
-                case Gate.explain 0.8 (curriculumFor Api.AddOpponent Nothing) [] of
-                    first :: _ ->
-                        Expect.equal True (String.contains "No ordered matchups" first)
-
-                    [] ->
-                        Expect.fail "expected an explanation"
-        ]
-
-
-
--- CHART
-
-
-chartSuite : Test
-chartSuite =
-    describe "chart geometry"
-        [ test "a gap in measurement breaks the line instead of being drawn as zero" <|
-            \() ->
-                Chart.runs [ 0, 0, 0, 0 ] [ Just 0.5, Nothing, Just 0.7, Just 0.9 ]
-                    |> Expect.equal [ [ ( 0, 0.5 ) ], [ ( 2, 0.7 ), ( 3, 0.9 ) ] ]
-        , test "a stage change breaks the line so incomparable spans are never joined" <|
-            \() ->
-                Chart.runs [ 1, 1, 2, 2 ] [ Just 0.5, Just 0.6, Just 0.7, Just 0.8 ]
-                    |> Expect.equal [ [ ( 0, 0.5 ), ( 1, 0.6 ) ], [ ( 2, 0.7 ), ( 3, 0.8 ) ] ]
-        , test "a single fully measured stage is one unbroken run" <|
-            \() ->
-                Chart.runs [ 4, 4, 4 ] [ Just 1, Just 2, Just 3 ]
-                    |> Expect.equal [ [ ( 0, 1 ), ( 1, 2 ), ( 2, 3 ) ] ]
-        , test "no measurements produce no runs at all" <|
-            \() ->
-                Chart.runs [ 0, 0 ] [ Nothing, Nothing ]
-                    |> Expect.equal []
-        , fuzz (Fuzz.listOfLengthBetween 0 20 (Fuzz.maybe (Fuzz.floatRange 0 1)))
-            "every measured sample appears exactly once across the runs"
-          <|
-            \values ->
-                let
-                    segments =
-                        List.indexedMap (\i _ -> i // 3) values
-
-                    measured =
-                        values |> List.filterMap identity |> List.length
-
-                    emitted =
-                        Chart.runs segments values |> List.concat |> List.length
-                in
-                Expect.equal measured emitted
-        , fuzz (Fuzz.listOfLengthBetween 1 20 (Fuzz.intRange 0 3))
-            "no run ever spans two different segments"
-          <|
-            \segments ->
-                let
-                    values =
-                        List.map (\_ -> Just 1) segments
-
-                    segmentOf i =
-                        segments |> List.drop i |> List.head |> Maybe.withDefault -1
-
-                    spans run =
-                        run |> List.map (\( i, _ ) -> segmentOf i) |> List.foldl (\s acc -> s :: acc) [] |> unique
-                in
-                Chart.runs segments values
-                    |> List.map (spans >> List.length)
-                    |> List.all (\n -> n == 1)
-                    |> Expect.equal True
-        ]
-
-
-unique : List a -> List a
-unique list =
-    List.foldl
-        (\x acc ->
-            if List.member x acc then
-                acc
-
-            else
-                acc ++ [ x ]
-        )
-        []
-        list
-
-
-
--- HEATMAP
-
-
-heatmapSuite : Test
-heatmapSuite =
-    describe "matchup grid"
-        [ test "rows and columns follow the frozen roster order" <|
-            \() ->
-                let
-                    g =
-                        Heatmap.grid [ "Pkunk", "Spathi" ] [ "Umgah", "Ilwrath" ] sampleCells
-                in
-                Expect.equal ( g.rows, g.cols ) ( [ "Pkunk", "Spathi" ], [ "Umgah", "Ilwrath" ] )
-        , test "a reported pair outside the roster is appended rather than dropped" <|
-            \() ->
-                let
-                    g =
-                        Heatmap.grid [ "Pkunk" ] [ "Umgah" ] (matchup "Orz" "Mycon" 1 2 Nothing Api.Learning :: sampleCells)
-                in
-                Expect.equal ( List.member "Orz" g.rows, List.member "Mycon" g.cols ) ( True, True )
-        , test "an unmeasured cell gets its own fill, distinct from any measured value" <|
-            \() ->
-                Expect.notEqual (Heatmap.cellFill 0.8 Nothing) (Heatmap.cellFill 0.8 (Just 0))
-        , test "crossing the target changes the colour family" <|
-            \() ->
-                Expect.notEqual (Heatmap.cellFill 0.8 (Just 0.799)) (Heatmap.cellFill 0.8 (Just 0.8))
-        , test "names shorten only as the grid grows" <|
-            \() ->
-                Expect.equal
-                    ( Heatmap.shortName 4 "Androsynth", Heatmap.shortName 25 "Androsynth" )
-                    ( "Androsynth", "And" )
         ]
 
 
@@ -916,13 +1015,13 @@ copySuite =
     describe "tooltip copy"
         [ test "every metric explains itself" <|
             \() ->
-                (Copy.allTips Nothing)
+                Copy.allTips Nothing
                     |> List.filter (\t -> String.length t.body < 40 || String.isEmpty t.title)
                     |> List.map .id
                     |> Expect.equal []
         , test "every tip states its denominator, its window and its source" <|
             \() ->
-                (Copy.allTips Nothing)
+                Copy.allTips Nothing
                     |> List.filter
                         (\t ->
                             let
@@ -940,37 +1039,317 @@ copySuite =
                         List.map .id (Copy.allTips Nothing)
                 in
                 Expect.equal (List.length ids) (List.length (unique ids))
-        , test "no two anchors on the page reuse the same tip, which would duplicate a DOM id" <|
+        , test "no tooltip still describes a panel the page no longer has" <|
             \() ->
-                -- Tip ids become element ids and drive the open/closed state,
-                -- so the same tip must not be attached to two anchors. Each
-                -- panel heading and each metric therefore gets its own.
+                -- The staged ladder is gone. A tip that still explains a
+                -- stage, a promotion or a per-cell gate would send a reader
+                -- looking for a panel that does not exist.
                 let
-                    onPage =
-                        [ Copy.vitals
-                        , Copy.generation
-                        , Copy.machine
-                        , Copy.populationSize
-                        , Copy.unevaluated
-                        , Copy.expansionBlocked
-                        , Copy.structureChart
-                        , Copy.nodesChart
-                        , Copy.species
-                        ]
-                            |> List.map .id
+                    banned =
+                        [ "stage", "mastered", "ladder", "expansion", "promoted", "roster" ]
+
+                    offending tip =
+                        banned
+                            |> List.filter (\word -> String.contains word (String.toLower (tip.title ++ " " ++ tip.body)))
+                            |> List.isEmpty
+                            |> not
                 in
-                Expect.equal (List.length onPage) (List.length (unique onPage))
-        , test "the audit and training tips each say which kind of evidence they describe" <|
+                Copy.allTips Nothing
+                    |> List.filter offending
+                    |> List.map .id
+                    |> Expect.equal []
+        , test "the training and audit tips each say which kind of evidence they describe" <|
             \() ->
                 Expect.equal
-                    ( String.contains "audit" (String.toLower (Copy.championRate Nothing).body)
+                    ( String.contains "held-out" (String.toLower (Copy.overallGate Nothing).body)
                     , String.contains "training" (String.toLower Copy.sampleAllocation.body)
                     )
                     ( True, True )
+        , test "the matchup grid tip calls itself training exposure, never audit evidence" <|
+            \() ->
+                Expect.equal
+                    ( String.contains "training" (String.toLower Copy.heatmap.body)
+                    , String.contains "it gates nothing" (String.toLower (sourceOf Copy.heatmap))
+                    )
+                    ( True, True )
+        , test "the throughput tip warns that its own figure is load dependent" <|
+            \() ->
+                String.contains "load dependent" Copy.episodesPerSecond.body
+                    |> Expect.equal True
+        , test "the per-unit-of-work tip says the worker count cannot move its figures" <|
+            \() ->
+                String.contains "when the worker count changes" Copy.workRates.body
+                    |> Expect.equal True
+        , test "the benchmark tip says the figure is a best of several, not a single run" <|
+            \() ->
+                String.contains "BEST of several repetitions" Copy.benchmark.body
+                    |> Expect.equal True
+        ]
+
+
+sourceOf : Tip.Tip -> String
+sourceOf tip =
+    tip.meta
+        |> List.filter (\( key, _ ) -> key == "Source")
+        |> List.map Tuple.second
+        |> String.join " "
+
+
+
+-- CONTROLS
+
+
+controlSuite : Test
+controlSuite =
+    describe "run controls"
+        [ test "action keys match the control endpoint contract" <|
+            \() ->
+                Expect.equal (List.map Dashboard.actionKey [ Dashboard.Pause, Dashboard.Resume, Dashboard.Stop ])
+                    [ "pause", "resume", "stop" ]
+        , test "a pause stays pending until the trainer itself reports paused" <|
+            \() ->
+                Dashboard.clearSettledControl (statusWithPhase Api.Training) (Dashboard.ControlAccepted Dashboard.Pause)
+                    |> Expect.equal (Dashboard.ControlAccepted Dashboard.Pause)
+        , test "a pause clears once the trainer reports paused" <|
+            \() ->
+                Dashboard.clearSettledControl (statusWithPhase Api.Paused) (Dashboard.ControlAccepted Dashboard.Pause)
+                    |> Expect.equal Dashboard.ControlIdle
+        , test "a resume clears only when the trainer is live again" <|
+            \() ->
+                Expect.equal
+                    ( Dashboard.clearSettledControl (statusWithPhase Api.Paused) (Dashboard.ControlAccepted Dashboard.Resume)
+                    , Dashboard.clearSettledControl (statusWithPhase Api.Auditing) (Dashboard.ControlAccepted Dashboard.Resume)
+                    )
+                    ( Dashboard.ControlAccepted Dashboard.Resume, Dashboard.ControlIdle )
+        , test "a failed control is never cleared by a status poll" <|
+            \() ->
+                Dashboard.clearSettledControl (statusWithPhase Api.Paused) (Dashboard.ControlFailed Dashboard.Pause "boom")
+                    |> Expect.equal (Dashboard.ControlFailed Dashboard.Pause "boom")
+        ]
+
+
+statusWithPhase : Api.Phase -> Api.Status
+statusWithPhase phase =
+    let
+        base =
+            Api.empty
+    in
+    { base | phase = phase }
+
+
+
+-- LAYOUT
+--
+-- The page is meant to be readable by someone who does not already know
+-- the system, which is a property of the ORDER as much as of the words.
+-- Each test below pins one half of that: the four questions appear once
+-- each, coarse before fine; the two panels that reward study rather than
+-- a glance start folded; and nothing that died with the staged ladder
+-- came back.
+
+
+bandTitles : List String
+bandTitles =
+    [ "Am I winning?", "What is it doing?", "Is it learning?", "Is it healthy?" ]
+
+
+layoutSuite : Test
+layoutSuite =
+    describe "the page reads coarse to fine"
+        [ test "all four bands are on the page, each exactly once" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        (List.map
+                            (\title page -> Query.has [ Selector.text title ] page)
+                            bandTitles
+                        )
+                    )
+        , test "the headline gate is inside the first band, above everything else" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.class "gate-rate" ]
+                        , Query.has [ Selector.text "80.4%" ]
+                        , Query.has [ Selector.text "Overall balanced win rate" ]
+                        ]
+                    )
+        , test "the two look-closer panels are folded shut, and only those two" <|
+            \() ->
+                expectRendered fullPayload
+                    (Query.findAll [ Selector.class "panel-fold" ]
+                        >> Query.count (Expect.equal 2)
+                    )
+        , test "no panel on the page is marked open, so both folds start shut" <|
+            \() ->
+                expectRendered fullPayload
+                    (Query.hasNot [ Selector.attribute (Attr.attribute "open" "") ])
+        , test "the folded panels are the matchup grid and the network graph" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Ordered matchup training exposure" ]
+                        , Query.has [ Selector.text "Champion network topology" ]
+                        ]
+                    )
+        , test "no panel the staged ladder owned survived the reorganisation" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.hasNot [ Selector.text "Curriculum" ]
+                        , Query.hasNot [ Selector.text "Cells holding the gate up" ]
+                        , Query.hasNot [ Selector.text "Next addition" ]
+                        , Query.hasNot [ Selector.text "Rosters in frozen expansion order" ]
+                        , Query.hasNot [ Selector.text "Regression rehearsal" ]
+                        , Query.hasNot [ Selector.text "Cumulative episodes" ]
+                        , Query.hasNot [ Selector.text "Any ship versus any ship" ]
+                        ]
+                    )
+        , test "the champion is named in the gate panel and nowhere is its topology restated" <|
+            \() ->
+                -- The node count used to be printed four times: in the gate,
+                -- in the nodes chart, in the population tiles and in the
+                -- graph's own summary. Only the last two survive, and they
+                -- are different quantities.
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "g-champion" ]
+                        , Query.hasNot [ Selector.text "Topology" ]
+                        ]
+                    )
+        , test "band two answers what it is playing and what would open the next gate" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "What it is playing" ]
+                        , Query.has [ Selector.text "What opens the next gate" ]
+                        , Query.has [ Selector.text "Training sample allocation" ]
+                        ]
+                    )
+        , test "band three answers whether it is learning" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Population and structure" ]
+                        , Query.has [ Selector.text "Species" ]
+                        , Query.has [ Selector.text "Champion nodes" ]
+                        , Query.has [ Selector.text "Per-hull blind spots" ]
+                        ]
+                    )
+        , test "band four answers whether it is healthy" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Throughput and cost" ]
+                        , Query.has [ Selector.text "Where the time went" ]
+                        , Query.has [ Selector.text "Benchmark reference" ]
+                        , Query.has [ Selector.text "Machine and checkpoint" ]
+                        , Query.has [ Selector.text "Run events" ]
+                        ]
+                    )
+        , test "the board size is stated once, and never as progress through it" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "ordered matchups, all active from generation one" ]
+                        , Query.hasNot [ Selector.text "mastered" ]
+                        ]
+                    )
         ]
 
 
 
+-- HEALTH
+--
+-- The profiling figures are the reason the health band exists, and the
+-- one way to get them wrong is to let a wall-clock number sit beside a
+-- per-unit-of-work number with nothing to tell them apart.
+
+
+healthSuite : Test
+healthSuite =
+    describe "the health band is honest about what its numbers measure"
+        [ test "the per-unit-of-work rates reach the screen" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "CPU ns / tick" ]
+                        , Query.has [ Selector.text "1463.7" ]
+                        , Query.has [ Selector.text "CPU ns / link" ]
+                        , Query.has [ Selector.text "16.91" ]
+                        ]
+                    )
+        , test "the wall-clock throughput figure says on the page that it is load dependent" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Episodes / second" ]
+                        , Query.has [ Selector.text "wall clock, so load dependent; not a measure of the build" ]
+                        ]
+                    )
+        , test "a process that has not computed shows absence, not a page of zeroes" <|
+            \() ->
+                expectRendered """{"run_id":"fresh","work":null,"phases":null,"benchmark":null}"""
+                    (Expect.all
+                        [ Query.has [ Selector.text "This process has not computed yet, so there is nothing to divide by and the per-unit-of-work rates are absent rather than zero. Reading a checkpoint from disk is such a process." ]
+                        , Query.has [ Selector.text "Not benchmarked" ]
+                        , Query.hasNot [ Selector.text "1463.7" ]
+                        , Query.hasNot [ Selector.text "Where the time went is unavailable" ]
+                        ]
+                    )
+        , test "the phase split reaches the screen as named buckets" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "simulate" ]
+                        , Query.has [ Selector.text "encode" ]
+                        , Query.has [ Selector.text "think" ]
+                        ]
+                    )
+        , test "a bucket with no seconds is left out rather than drawn as an empty bar" <|
+            \() ->
+                -- The fixture spends nothing in four of the seven buckets, so
+                -- only the three that cost something get a bar. A zero-width
+                -- bar would read as a measured phase that happens to be free.
+                expectRendered fullPayload
+                    (Query.hasNot [ Selector.text "compile" ])
+        , test "the unaccounted remainder is shown signed, and negative is explained" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Unaccounted" ]
+                        , Query.has [ Selector.text "\u{2212}0.000s (0.3% of CPU), workers preempted mid-fight" ]
+                        ]
+                    )
+        , test "a positive remainder is labelled as CPU nobody clocked" <|
+            \() ->
+                expectRendered """{"run_id":"x","phases":{"unaccounted_seconds":0.5,"unaccounted_share_of_cpu":0.02}}"""
+                    (Query.has [ Selector.text "+0.500s (2.0% of CPU), CPU nobody clocked" ])
+        , test "the benchmark reference states the best of N and what it was taken over" <|
+            \() ->
+                expectRendered fullPayload
+                    (Expect.all
+                        [ Query.has [ Selector.text "Best of N" ]
+                        , Query.has [ Selector.text "0.145s" ]
+                        , Query.has [ Selector.text "fastest of 5 repetitions over 32 fixed fights" ]
+                        , Query.has [ Selector.text "2026-09-12T08:00:00Z \u{00B7} best of 12 comparable results" ]
+                        ]
+                    )
+        , test "the live rate is compared with the recorded one in the same units" <|
+            \() ->
+                expectRendered fullPayload
+                    (Query.has [ Selector.text "This session is running at 1.00x the recorded cost per simulated tick. Above one is the price of sharing the machine and of spilling workers onto slower cores; it is not a change in the build." ])
+        , test "with only one of the two rates there is no ratio invented" <|
+            \() ->
+                expectRendered """{"run_id":"x","benchmark":{"best_seconds":0.2,"cpu_nanoseconds_per_display_tick":1000},"work":null}"""
+                    (Query.has [ Selector.text "A live rate and a recorded rate are both needed to compare them, and one of the two has not been measured." ])
+        , test "a stale snapshot the trainer flags itself is treated as stale, not merely as old" <|
+            \() ->
+                expectRendered """{"run_id":"x","phase":"training","stale":true}"""
+                    (Query.has
+                        [ Selector.text "The trainer says it is training, but it has marked this snapshot stale itself. Treat these numbers as historical until it catches up." ]
+                    )
+        ]
 
 -- RESOURCES
 --
@@ -985,12 +1364,24 @@ copySuite =
 
 resourcePool : Api.Resources
 resourcePool =
-    { workers = 9, dutyCycle = 1.0, measuredDuty = Just 0.97, episodeTicks = Just 1200 }
+    { workers = 9
+    , dutyCycle = 1.0
+    , measuredDuty = Just 0.97
+    , computeSeconds = 4200.5
+    , episodeTicks = Just 1200
+    , nice = 10
+    }
 
 
 resourceLegacy : Api.Resources
 resourceLegacy =
-    { workers = 1, dutyCycle = 0.5, measuredDuty = Just 0.355, episodeTicks = Just 1200 }
+    { workers = 1
+    , dutyCycle = 0.5
+    , measuredDuty = Just 0.355
+    , computeSeconds = 72.58
+    , episodeTicks = Just 1200
+    , nice = 10
+    }
 
 
 resourceSuite : Test
@@ -1124,874 +1515,6 @@ resourceSuite =
             ]
         ]
 
-
--- CONTROLS
-
-
-controlSuite : Test
-controlSuite =
-    describe "run controls"
-        [ test "action keys match the control endpoint contract" <|
-            \() ->
-                Expect.equal (List.map Dashboard.actionKey [ Dashboard.Pause, Dashboard.Resume, Dashboard.Stop ])
-                    [ "pause", "resume", "stop" ]
-        , test "a pause stays pending until the trainer itself reports paused" <|
-            \() ->
-                let
-                    stillTraining =
-                        statusWithPhase Api.Training
-                in
-                Dashboard.clearSettledControl stillTraining (Dashboard.ControlAccepted Dashboard.Pause)
-                    |> Expect.equal (Dashboard.ControlAccepted Dashboard.Pause)
-        , test "a pause clears once the trainer reports paused" <|
-            \() ->
-                Dashboard.clearSettledControl (statusWithPhase Api.Paused) (Dashboard.ControlAccepted Dashboard.Pause)
-                    |> Expect.equal Dashboard.ControlIdle
-        , test "a resume clears only when the trainer is live again" <|
-            \() ->
-                Expect.equal
-                    ( Dashboard.clearSettledControl (statusWithPhase Api.Paused) (Dashboard.ControlAccepted Dashboard.Resume)
-                    , Dashboard.clearSettledControl (statusWithPhase Api.Auditing) (Dashboard.ControlAccepted Dashboard.Resume)
-                    )
-                    ( Dashboard.ControlAccepted Dashboard.Resume, Dashboard.ControlIdle )
-        , test "a failed control is never cleared by a status poll" <|
-            \() ->
-                Dashboard.clearSettledControl (statusWithPhase Api.Paused) (Dashboard.ControlFailed Dashboard.Pause "boom")
-                    |> Expect.equal (Dashboard.ControlFailed Dashboard.Pause "boom")
-        ]
-
-
-statusWithPhase : Api.Phase -> Api.Status
-statusWithPhase phase =
-    let
-        base =
-            Api.empty
-    in
-    { base | phase = phase }
-
-
--- BROAD MODE
---
--- The broad run is gated on one aggregate figure over a balanced held-out
--- distribution. Everything here guards a way that could be mis-stated:
--- an aggregate presented as a per-cell guarantee, a readiness probe
--- presented as audit evidence, an unmeasured hull presented as a loss, or
--- a staged run quietly picking up broad wording it should never show.
-
-
-broadSuite : Test
-broadSuite =
-    describe "broad any-versus-any mode"
-        [ broadDecoderSuite
-        , broadProvenanceSuite
-        , broadVerdictSuite
-        , broadBlindSpotSuite
-        , broadCopySuite
-        , stagedUntouchedSuite
-        , cumulativeEpisodeSuite
-        , scopeChangeSuite
-        , readinessBaselineSuite
-        ]
-
-
-broadDecoderSuite : Test
-broadDecoderSuite =
-    describe "decoding"
-        [ test "a staged run decodes with no broad fields at all" <|
-            \() ->
-                case decode livePayload of
-                    Ok status ->
-                        Expect.equal
-                            { overall = status.overall
-                            , ships = status.shipPerformance
-                            , sampler = status.sampler
-                            , broad = Api.isBroad status.curriculum
-                            }
-                            { overall = Nothing
-                            , ships = []
-                            , sampler = Nothing
-                            , broad = False
-                            }
-
-                    Err error ->
-                        Expect.fail error
-        , test "explicit nulls for the broad blocks decode as absent, not as empty results" <|
-            \() ->
-                case decode """{"overall":null,"ship_performance":[],"sampler":null}""" of
-                    Ok status ->
-                        Expect.equal ( status.overall, status.shipPerformance, status.sampler )
-                            ( Nothing, [], Nothing )
-
-                    Err error ->
-                        Expect.fail error
-        , test "the broad ladder and evaluation scope both decode" <|
-            \() ->
-                case decode broadPayload of
-                    Ok status ->
-                        Expect.equal
-                            { ladder = status.curriculum.ladder
-                            , scope = status.curriculum.evaluationScope
-                            , broad = Api.isBroad status.curriculum
-                            , unlocked = status.curriculum.stageUnlockedExternally
-                            }
-                            { ladder = Api.Broad
-                            , scope = Api.OverallBalancedScope
-                            , broad = True
-                            , unlocked = True
-                            }
-
-                    Err error ->
-                        Expect.fail error
-        , test "transition provenance decodes and is not invented when absent" <|
-            \() ->
-                case ( decode broadPayload, decode "{}" ) of
-                    ( Ok broad, Ok bare ) ->
-                        Expect.equal
-                            ( ( broad.curriculum.originRunId
-                              , broad.curriculum.originGeneration
-                              , broad.curriculum.transitionReason
-                              )
-                            , ( bare.curriculum.originRunId
-                              , bare.curriculum.originGeneration
-                              , bare.curriculum.transitionReason
-                              )
-                            )
-                            ( ( Just "mario-main-20260911"
-                              , Just 79
-                              , Just "operator requested any-versus-any"
-                              )
-                            , ( Nothing, Nothing, Nothing )
-                            )
-
-                    _ ->
-                        Expect.fail "both payloads should decode"
-        , test "the overall block keeps its two rounds apart rather than summing them" <|
-            \() ->
-                case decode broadPayload of
-                    Ok status ->
-                        case status.overall of
-                            Just overall ->
-                                Expect.equal
-                                    { round = overall.round
-                                    , wins = overall.wins
-                                    , games = overall.games
-                                    , panel = overall.panel
-                                    , pairs = overall.pairs
-                                    , audit = ( overall.audit.wins, overall.audit.games, overall.audit.passed )
-                                    , confirm = ( overall.confirm.wins, overall.confirm.games, overall.confirm.passed )
-                                    , passed = overall.passed
-                                    }
-                                    { round = Just Api.AuditRound
-                                    , wins = 861
-                                    , games = 1000
-                                    , panel = 1000
-                                    , pairs = 500
-                                    , audit = ( 861, 1000, True )
-                                    , confirm = ( 0, 0, False )
-                                    , passed = False
-                                    }
-
-                            Nothing ->
-                                Expect.fail "broad payload should carry an overall block"
-
-                    Err error ->
-                        Expect.fail error
-        , test "a hull with no games keeps a null rate and bound rather than becoming zero" <|
-            \() ->
-                case decode broadPayload of
-                    Ok status ->
-                        status.shipPerformance
-                            |> List.filter (\row -> row.games == 0)
-                            |> List.map (\row -> ( row.winRate, row.lowerBound ))
-                            |> Expect.equal [ ( Nothing, Nothing ) ]
-
-                    Err error ->
-                        Expect.fail error
-        , test "a genuine zero win rate on a played hull survives as a measurement" <|
-            \() ->
-                case decode """{"ship_performance":[{"side":"ours","ship":"Umgah","wins":0,"games":40,"win_rate":0.0,"lower_bound":0.0,"source":"audit"}]}""" of
-                    Ok status ->
-                        List.map (\row -> ( row.winRate, row.lowerBound )) status.shipPerformance
-                            |> Expect.equal [ ( Just 0, Just 0 ) ]
-
-                    Err error ->
-                        Expect.fail error
-        , test "every evidence source decodes and an unknown one is preserved verbatim" <|
-            \() ->
-                case decode """{"ship_performance":[{"source":"audit"},{"source":"confirm"},{"source":"ready"},{"source":"rehearsal"}]}""" of
-                    Ok status ->
-                        List.map .source status.shipPerformance
-                            |> Expect.equal
-                                [ Api.FromAudit
-                                , Api.FromConfirm
-                                , Api.FromReadiness
-                                , Api.UnknownSource "rehearsal"
-                                ]
-
-                    Err error ->
-                        Expect.fail error
-        , test "only the gate rounds count as gate evidence" <|
-            \() ->
-                List.map Api.evidenceIsGate
-                    [ Api.FromAudit, Api.FromConfirm, Api.FromReadiness, Api.UnknownSource "rehearsal" ]
-                    |> Expect.equal [ True, True, False, False ]
-        , test "sampler figures decode, and an unreported one stays unknown rather than zero" <|
-            \() ->
-                case ( decode broadPayload, decode """{"sampler":{"panel":32}}""" ) of
-                    ( Ok full, Ok partial ) ->
-                        Expect.equal
-                            ( full.sampler, partial.sampler )
-                            ( Just { panel = Just 32, balancedShare = Just 0.5, cursor = Just 1184, tour = Just 1 }
-                            , Just { panel = Just 32, balancedShare = Nothing, cursor = Nothing, tour = Nothing }
-                            )
-
-                    _ ->
-                        Expect.fail "both payloads should decode"
-        , test "an unknown ladder or scope is preserved rather than collapsed into broad" <|
-            \() ->
-                case decode """{"curriculum":{"ladder":"spiral","evaluation_scope":"per-hull"}}""" of
-                    Ok status ->
-                        Expect.equal
-                            ( status.curriculum.ladder
-                            , status.curriculum.evaluationScope
-                            , Api.isBroad status.curriculum
-                            )
-                            ( Api.UnknownLadder "spiral"
-                            , Api.UnknownScope "per-hull"
-                            , False
-                            )
-
-                    Err error ->
-                        Expect.fail error
-        , test "the readiness purpose decodes so a broad probe can name itself" <|
-            \() ->
-                case decode broadPayload of
-                    Ok status ->
-                        Expect.equal status.readiness.purpose (Just "broad balanced readiness")
-
-                    Err error ->
-                        Expect.fail error
-        ]
-
-
-broadProvenanceSuite : Test
-broadProvenanceSuite =
-    describe "provenance survives a later mixed phase"
-        [ test "a mixed run carrying overall-balanced scope is still judged overall" <|
-            \() ->
-                case decode broadOriginMixedPayload of
-                    Ok status ->
-                        Expect.equal
-                            { ladder = status.curriculum.ladder
-                            , broad = Api.isBroad status.curriculum
-                            , origin = status.curriculum.originRunId
-                            , gated = status.curriculum.selfPlayIsGated
-                            }
-                            { ladder = Api.Mixed
-                            , broad = True
-                            , origin = Just "mario-main-20260911"
-                            , gated = False
-                            }
-
-                    Err error ->
-                        Expect.fail error
-        , test "a mixed run that came from broad says so rather than claiming per-cell gating" <|
-            \() ->
-                case decode broadOriginMixedPayload of
-                    Ok status ->
-                        Gate.explainBroad Nothing status.curriculum status.overall status.shipPerformance
-                            |> List.any (String.contains "did not revert to per-matchup gating")
-                            |> Expect.equal True
-
-                    Err error ->
-                        Expect.fail error
-        , test "an old mixed run with no broad signals is untouched by broad rendering" <|
-            \() ->
-                case decode """{"curriculum":{"ladder":"mixed","evaluation_scope":"per-cell-ladder"}}""" of
-                    Ok status ->
-                        Expect.equal ( status.curriculum.ladder, Api.isBroad status.curriculum )
-                            ( Api.Mixed, False )
-
-                    Err error ->
-                        Expect.fail error
-        ]
-
-
-broadVerdictSuite : Test
-broadVerdictSuite =
-    describe "the overall verdict"
-        [ test "no games is no evidence, and never a zero" <|
-            \() ->
-                Gate.overallVerdict (overallWith 0 0 Nothing Nothing)
-                    |> Expect.equal Gate.NoEvidence
-        , test "a bound over the target passes" <|
-            \() ->
-                Gate.overallVerdict (overallWith 861 1000 (Just 0.861) (Just 0.838))
-                    |> Expect.equal (Gate.Passing 0.838)
-        , test "a raw rate over the target with a bound under it is short, not a pass" <|
-            \() ->
-                Gate.overallVerdict (overallWith 820 1000 (Just 0.82) (Just 0.795))
-                    |> Expect.equal (Gate.Short 0.795)
-        , test "a raw rate with no published bound leaves the gate undecided" <|
-            \() ->
-                Gate.overallVerdict (overallWith 900 1000 (Just 0.9) Nothing)
-                    |> Expect.equal (Gate.RateOnly 0.9)
-        , test "clearing 80% on a 1000 game panel takes more than 800 observed wins" <|
-            \() ->
-                Gate.winsNeeded Gate.z95 0.8 1000
-                    |> Maybe.map (\wins -> wins > 800)
-                    |> Expect.equal (Just True)
-        ]
-
-
-broadBlindSpotSuite : Test
-broadBlindSpotSuite =
-    describe "blind spots"
-        [ test "an unmeasured hull sorts last, because silence is not weakness" <|
-            \() ->
-                Gate.blindSpots
-                    [ shipRow Api.OurSeat "Unmeasured" 0 0 Nothing Nothing
-                    , shipRow Api.OurSeat "Weak" 4 40 (Just 0.1) (Just 0.04)
-                    , shipRow Api.OurSeat "Strong" 38 40 (Just 0.95) (Just 0.84)
-                    ]
-                    |> List.map .ship
-                    |> Expect.equal [ "Weak", "Strong", "Unmeasured" ]
-        , test "seat coverage counts hulls with games in each grouping" <|
-            \() ->
-                Gate.seatCoverage
-                    [ shipRow Api.OurSeat "A" 1 10 (Just 0.1) Nothing
-                    , shipRow Api.OurSeat "B" 0 0 Nothing Nothing
-                    , shipRow Api.OpponentSeat "A" 5 10 (Just 0.5) Nothing
-                    ]
-                    |> Expect.equal
-                        { ours = 2, oursWithGames = 1, opponent = 1, opponentWithGames = 1 }
-        ]
-
-
-broadCopySuite : Test
-broadCopySuite =
-    describe "what the broad explanation is obliged to say"
-        [ test "it states the aggregate is not a per-matchup claim" <|
-            \() ->
-                broadLines
-                    |> List.any (String.contains "not a claim that the champion clears")
-                    |> Expect.equal True
-        , test "it names the confirm round, so an audit pass is never read as the gate" <|
-            \() ->
-                broadLines
-                    |> List.any (String.contains "confirm")
-                    |> Expect.equal True
-        , test "it says timeouts count as non-wins" <|
-            \() ->
-                broadLines
-                    |> List.any (String.contains "time out")
-                    |> Expect.equal True
-        , test "it declines to claim a formal guarantee for correlated paired seats" <|
-            \() ->
-                broadLines
-                    |> List.any (String.contains "not as a formal guarantee")
-                    |> Expect.equal True
-        , test "it says both groupings count our champion's own wins" <|
-            \() ->
-                broadLines
-                    |> List.any (String.contains "count our champion's own wins")
-                    |> Expect.equal True
-        , test "an externally unlocked stage is named as unlocked, not as mastered" <|
-            \() ->
-                broadBoardLines
-                    |> List.any (String.contains "not earned cell by cell")
-                    |> Expect.equal True
-        , test "the board explanation says the whole roster is active" <|
-            \() ->
-                broadBoardLines
-                    |> List.any (String.contains "are active at once")
-                    |> Expect.equal True
-        , test "the cell explanation says the cells gate nothing" <|
-            \() ->
-                broadCellLines
-                    |> List.any (String.contains "no cell here can block or unblock it")
-                    |> Expect.equal True
-        , test "the cell explanation says an unplayed cell is unmeasured, not lost" <|
-            \() ->
-                broadCellLines
-                    |> List.any (String.contains "unmeasured, not lost")
-                    |> Expect.equal True
-        , test "no sentence is repeated across the three broad explanations" <|
-            \() ->
-                -- Three panels could each reasonably say "all 25 ships are
-                -- active", and when all three did, the page showed the same
-                -- eleven paragraphs twice and nobody read any of them. Each
-                -- fact belongs to exactly one panel.
-                let
-                    all =
-                        broadLines ++ broadBoardLines ++ broadCellLines
-                in
-                Expect.equal (List.length all) (List.length (unique all))
-        , test "the gate explanation no longer describes the board, which is another panel's job" <|
-            \() ->
-                broadLines
-                    |> List.any (\line -> String.contains "are active at once" line || String.contains "not earned cell by cell" line)
-                    |> Expect.equal False
-        , test "detail attached to a tip keeps its id, title and meta" <|
-            \() ->
-                -- The long reasoning lives behind the explanation trigger, so
-                -- a detailed tip has to stay the same tip: a changed id would
-                -- collide with another bubble or orphan its aria-describedby,
-                -- and dropped meta would lose the denominator the contract
-                -- insists every metric states.
-                let
-                    detailed =
-                        Tip.detail (Copy.overallGate Nothing) broadLines
-                in
-                Expect.equal
-                    ( detailed.id, detailed.title, detailed.meta )
-                    ( (Copy.overallGate Nothing).id, (Copy.overallGate Nothing).title, (Copy.overallGate Nothing).meta )
-        , test "detail actually carries the reasoning into the bubble" <|
-            \() ->
-                Tip.detail (Copy.overallGate Nothing) broadLines
-                    |> .body
-                    |> String.contains "not a claim that the champion clears"
-                    |> Expect.equal True
-        , test "an empty detail list leaves the tip exactly as it was" <|
-            \() ->
-                Tip.detail (Copy.overallGate Nothing) []
-                    |> Expect.equal (Copy.overallGate Nothing)
-        , test "the on-screen cell sentence is one line, with the rest behind the tip" <|
-            \() ->
-                -- The panel prints List.take 1 of this and hides the rest, so
-                -- the first entry has to be the one that stands alone.
-                case broadCellLines of
-                    first :: rest ->
-                        Expect.equal
-                            ( String.contains "cell" first, String.endsWith "." first, List.isEmpty rest )
-                            ( True, True, False )
-
-                    [] ->
-                        Expect.fail "the cell explanation should not be empty"
-        , test "carried-over provenance names the origin and the evidence that was cleared" <|
-            \() ->
-                broadLines
-                    |> List.any (\line -> String.contains "mario-main-20260911" line && String.contains "abandoned" line)
-                    |> Expect.equal True
-        , test "readiness rows are called a probe rather than audit evidence" <|
-            \() ->
-                case decode broadReadyPayload of
-                    Ok status ->
-                        Gate.explainBroad Nothing status.curriculum status.overall status.shipPerformance
-                            |> List.any (\line -> String.contains "readiness probe" line && String.contains "not audit evidence" line)
-                            |> Expect.equal True
-
-                    Err error ->
-                        Expect.fail error
-        , test "gate round rows do not get the readiness caveat" <|
-            \() ->
-                broadLines
-                    |> List.any (String.contains "readiness probe")
-                    |> Expect.equal False
-        , test "the per-hull tip spells out that both groupings count our own wins" <|
-            \() ->
-                Expect.equal
-                    ( String.contains "OUR champion's wins" (Copy.shipPerformance Nothing).body
-                    , String.contains "when piloting" (Copy.shipPerformance Nothing).body
-                    , String.contains "when facing" (Copy.shipPerformance Nothing).body
-                    )
-                    ( True, True, True )
-        , test "the sampler tip refuses to call the balanced share board coverage" <|
-            \() ->
-                Expect.equal
-                    ( String.contains "not a measurement of how much of the 625-cell board" Copy.samplerCoverage.body
-                    , String.contains "balanced rotation" Copy.samplerCoverage.body
-                    )
-                    ( True, True )
-        , test "the overall gate tip calls itself an operational check, not a guarantee" <|
-            \() ->
-                Expect.equal
-                    ( String.contains "operational confidence check" (Copy.overallGate Nothing).body
-                    , String.contains "not a formal guarantee" (Copy.overallGate Nothing).body
-                    )
-                    ( True, True )
-        , test "the overall gate tip says timeouts count against it" <|
-            \() ->
-                String.contains "timeouts" (String.toLower (denominatorOf (Copy.overallGate Nothing)))
-                    |> Expect.equal True
-        ]
-
-
-denominatorOf : Tip.Tip -> String
-denominatorOf tip =
-    tip.meta
-        |> List.filter (\( key, _ ) -> key == "Denominator")
-        |> List.map Tuple.second
-        |> String.join " "
-
-
-stagedUntouchedSuite : Test
-stagedUntouchedSuite =
-    describe "the staged gate is left alone"
-        [ test "the per-cell explanation still answers why the roster has not grown" <|
-            \() ->
-                case decode livePayload of
-                    Ok status ->
-                        Gate.explain status.curriculum.target status.curriculum status.matchups
-                            |> List.any (String.contains "ordered matchups")
-                            |> Expect.equal True
-
-                    Err error ->
-                        Expect.fail error
-        , test "a staged run's per-cell explanation never borrows broad wording" <|
-            \() ->
-                case decode livePayload of
-                    Ok status ->
-                        Gate.explain status.curriculum.target status.curriculum status.matchups
-                            |> List.any (String.contains "balanced")
-                            |> Expect.equal False
-
-                    Err error ->
-                        Expect.fail error
-        ]
-
-
-cumulativeEpisodeSuite : Test
-cumulativeEpisodeSuite =
-    describe "cumulative episode labelling"
-        [ test "the throughput tip says cumulative and does not promise a per-generation figure" <|
-            \() ->
-                Expect.equal
-                    ( String.contains "Cumulative" Copy.throughputChart.title
-                    , String.contains "cumulative" (String.toLower Copy.throughputChart.body)
-                    , String.contains "per generation" (String.toLower Copy.throughputChart.title)
-                    )
-                    ( True, True, False )
-        , test "the throughput tip explains where the per-generation cost actually is" <|
-            \() ->
-                String.contains "step between two adjacent points" Copy.throughputChart.body
-                    |> Expect.equal True
-        ]
-
-
-broadLines : List String
-broadLines =
-    case decode broadPayload of
-        Ok status ->
-            Gate.explainBroad Nothing status.curriculum status.overall status.shipPerformance
-
-        Err _ ->
-            []
-
-
-broadBoardLines : List String
-broadBoardLines =
-    case decode broadPayload of
-        Ok status ->
-            Gate.explainBroadBoard status.curriculum
-
-        Err _ ->
-            []
-
-
-broadCellLines : List String
-broadCellLines =
-    case decode broadPayload of
-        Ok status ->
-            Gate.explainBroadCells status.curriculum status.matchups
-
-        Err _ ->
-            []
-
-
-overallWith : Int -> Int -> Maybe Float -> Maybe Float -> Api.Overall
-overallWith wins games winRate lowerBound =
-    { scope = "balanced-any-any"
-    , target = 0.8
-    , panel = 1000
-    , pairs = 500
-    , round = Just Api.AuditRound
-    , wins = wins
-    , games = games
-    , winRate = winRate
-    , lowerBound = lowerBound
-    , championId = "champ-broad"
-    , passed = False
-    , audit = { wins = wins, games = games, winRate = winRate, lowerBound = lowerBound, passed = False }
-    , confirm = { wins = 0, games = 0, winRate = Nothing, lowerBound = Nothing, passed = False }
-    , attempt = 1
-    }
-
-
-shipRow : Api.Seat -> String -> Int -> Int -> Maybe Float -> Maybe Float -> Api.ShipPerformance
-shipRow side ship wins games winRate lowerBound =
-    { side = side
-    , ship = ship
-    , wins = wins
-    , games = games
-    , winRate = winRate
-    , lowerBound = lowerBound
-    , source = Api.FromAudit
-    }
-
-
-broadPayload : String
-broadPayload =
-    """
-{
-  "schema_version": 1,
-  "run_id": "mario-any-any-20260911",
-  "phase": "auditing",
-  "generation": 80,
-  "curriculum": {
-    "stage": 48,
-    "ladder": "broad",
-    "evaluation_scope": "overall-balanced",
-    "our_roster": ["Pkunk", "Umgah", "Chmmr"],
-    "opponent_roster": ["Pkunk", "Umgah", "Chmmr"],
-    "opponent_types": ["cyborg"],
-    "next_side": "complete",
-    "next_ship": null,
-    "target": 0.8,
-    "mastered_matchups": 11,
-    "total_matchups": 625,
-    "stage_unlocked_externally": true,
-    "transition_reason": "operator requested any-versus-any",
-    "origin_run_id": "mario-main-20260911",
-    "origin_generation": 79,
-    "origin_fingerprint": "b3f10c2a99",
-    "opponent_revision": 0,
-    "opponent_fingerprint": null,
-    "self_play_is_gated": false
-  },
-  "overall": {
-    "scope": "balanced-any-any",
-    "target": 0.8,
-    "panel": 1000,
-    "pairs": 500,
-    "round": "audit",
-    "wins": 861,
-    "games": 1000,
-    "win_rate": 0.861,
-    "lower_bound": 0.838,
-    "champion_id": "b7712aa4e1",
-    "passed": false,
-    "audit": {"wins": 861, "games": 1000, "win_rate": 0.861, "lower_bound": 0.838, "passed": true},
-    "confirm": {"wins": 0, "games": 0, "win_rate": null, "lower_bound": null, "passed": false},
-    "attempt": 1
-  },
-  "ship_performance": [
-    {"side": "ours", "ship": "Pkunk", "wins": 18, "games": 20, "win_rate": 0.9, "lower_bound": 0.699, "source": "audit"},
-    {"side": "ours", "ship": "Umgah", "wins": 0, "games": 0, "win_rate": null, "lower_bound": null, "source": "audit"},
-    {"side": "opponent", "ship": "Chmmr", "wins": 9, "games": 20, "win_rate": 0.45, "lower_bound": 0.256, "source": "audit"}
-  ],
-  "sampler": {"panel": 32, "coverage": 0.5, "cursor": 1184, "tour": 1},
-  "readiness": {"threshold": 0.85, "games": 250, "period": 5, "last_rate": 0.88, "purpose": "broad balanced readiness"}
-}
-"""
-
-
-broadReadyPayload : String
-broadReadyPayload =
-    """
-{
-  "curriculum": {"ladder": "broad", "evaluation_scope": "overall-balanced", "target": 0.8},
-  "overall": null,
-  "ship_performance": [
-    {"side": "ours", "ship": "Pkunk", "wins": 4, "games": 5, "win_rate": 0.8, "lower_bound": 0.376, "source": "ready"}
-  ]
-}
-"""
-
-
-broadOriginMixedPayload : String
-broadOriginMixedPayload =
-    """
-{
-  "curriculum": {
-    "stage": 48,
-    "ladder": "mixed",
-    "evaluation_scope": "overall-balanced",
-    "opponent_types": ["cyborg", "model"],
-    "self_play_is_gated": false,
-    "transition_reason": "operator requested any-versus-any",
-    "origin_run_id": "mario-main-20260911",
-    "origin_generation": 79,
-    "target": 0.8
-  },
-  "overall": {"scope": "balanced-any-any", "target": 0.8, "panel": 1000, "pairs": 500,
-              "round": null, "wins": 0, "games": 0, "win_rate": null, "lower_bound": null,
-              "champion_id": "", "passed": true, "attempt": 2}
-}
-"""
-
-
--- SCOPE CHANGE
---
--- The transition writes a history row at the new stage, so the run's own
--- history spans two different questions: "can it beat a handful of ships"
--- and "can it beat the whole board". A win rate from the first is not
--- progress toward the second, and the chart must not let one be read as
--- the other.
-
-
-scopeChangeSuite : Test
-scopeChangeSuite =
-    describe "the scope change is visible"
-        [ test "history spanning the transition decodes with both stages intact" <|
-            \() ->
-                case decode transitionHistoryPayload of
-                    Ok status ->
-                        List.map .stage status.history
-                            |> Expect.equal [ 1, 1, 48, 48 ]
-
-                    Err error ->
-                        Expect.fail error
-        , test "no line is drawn across the stage change, so the old rate cannot look like broad progress" <|
-            \() ->
-                case decode transitionHistoryPayload of
-                    Ok status ->
-                        Chart.runs (List.map .stage status.history)
-                            (List.map .trainingWinRate status.history)
-                            |> List.length
-                            |> Expect.equal 2
-
-                    Err error ->
-                        Expect.fail error
-        , test "the narrow points and the broad points never end up in one run" <|
-            \() ->
-                case decode transitionHistoryPayload of
-                    Ok status ->
-                        Chart.runs (List.map .stage status.history)
-                            (List.map .trainingWinRate status.history)
-                            |> List.map List.length
-                            |> Expect.equal [ 2, 2 ]
-
-                    Err error ->
-                        Expect.fail error
-        , test "the generation the transition happened at is preserved, not rewritten" <|
-            \() ->
-                case decode transitionHistoryPayload of
-                    Ok status ->
-                        Expect.equal
-                            ( List.map .generation status.history
-                            , status.curriculum.originGeneration
-                            )
-                            ( [ 77, 78, 79, 80 ], Just 79 )
-
-                    Err error ->
-                        Expect.fail error
-        ]
-
-
-
--- READINESS BASELINE
---
--- The first thing a fresh broad run publishes is a 250-game readiness
--- baseline: ten games per hull, from the probe rather than from a gate
--- round. It is small, and it is not audit evidence. Both facts have to
--- survive into the UI.
-
-
-readinessBaselineSuite : Test
-readinessBaselineSuite =
-    describe "the initial readiness baseline"
-        [ test "the baseline rows are readiness rows, not gate evidence" <|
-            \() ->
-                case decode readyBaselinePayload of
-                    Ok status ->
-                        ( List.map .source status.shipPerformance |> List.all (\s -> s == Api.FromReadiness)
-                        , List.any (Api.evidenceIsGate << .source) status.shipPerformance
-                        )
-                            |> Expect.equal ( True, False )
-
-                    Err error ->
-                        Expect.fail error
-        , test "the small per-hull sample survives decoding rather than being rounded away" <|
-            \() ->
-                case decode readyBaselinePayload of
-                    Ok status ->
-                        List.map .games status.shipPerformance
-                            |> Expect.equal [ 10, 10, 10 ]
-
-                    Err error ->
-                        Expect.fail error
-        , test "a baseline with no overall round leaves the gate unjudged rather than failed" <|
-            \() ->
-                case decode readyBaselinePayload of
-                    Ok status ->
-                        Expect.equal status.overall Nothing
-
-                    Err error ->
-                        Expect.fail error
-        , test "the explanation says the figures are a probe and not audit evidence" <|
-            \() ->
-                case decode readyBaselinePayload of
-                    Ok status ->
-                        Gate.explainBroad Nothing status.curriculum status.overall status.shipPerformance
-                            |> List.any (\line -> String.contains "readiness probe" line && String.contains "not audit evidence" line)
-                            |> Expect.equal True
-
-                    Err error ->
-                        Expect.fail error
-        , test "the per-hull tip names readiness as a diagnostic in its own source line" <|
-            \() ->
-                Expect.equal
-                    ( String.contains "readiness row" (sourceOf (Copy.shipPerformance Nothing))
-                    , String.contains "diagnostic only" (sourceOf (Copy.shipPerformance Nothing))
-                    )
-                    ( True, True )
-        ]
-
-
-sourceOf : Tip.Tip -> String
-sourceOf tip =
-    tip.meta
-        |> List.filter (\( key, _ ) -> key == "Source")
-        |> List.map Tuple.second
-        |> String.join " "
-
-
-transitionHistoryPayload : String
-transitionHistoryPayload =
-    """
-{
-  "curriculum": {
-    "stage": 48, "ladder": "broad", "evaluation_scope": "overall-balanced",
-    "origin_run_id": "mario-main-20260911", "origin_generation": 79,
-    "stage_unlocked_externally": true, "target": 0.8
-  },
-  "history": [
-    {"generation": 77, "stage": 1, "training_win_rate": 0.91, "validation_win_rate": null, "episodes": 240000},
-    {"generation": 78, "stage": 1, "training_win_rate": 0.93, "validation_win_rate": 0.9, "episodes": 246000},
-    {"generation": 79, "stage": 48, "training_win_rate": 0.41, "validation_win_rate": null, "episodes": 252000},
-    {"generation": 80, "stage": 48, "training_win_rate": 0.44, "validation_win_rate": null, "episodes": 258000}
-  ]
-}
-"""
-
-
-readyBaselinePayload : String
-readyBaselinePayload =
-    """
-{
-  "curriculum": {"stage": 48, "ladder": "broad", "evaluation_scope": "overall-balanced", "target": 0.8},
-  "overall": null,
-  "readiness": {"threshold": 0.85, "games": 250, "period": 5, "last_rate": 0.62, "purpose": "broad balanced readiness"},
-  "ship_performance": [
-    {"side": "ours", "ship": "Pkunk", "wins": 6, "games": 10, "win_rate": 0.6, "lower_bound": 0.313, "source": "ready"},
-    {"side": "ours", "ship": "Umgah", "wins": 2, "games": 10, "win_rate": 0.2, "lower_bound": 0.057, "source": "ready"},
-    {"side": "opponent", "ship": "Chmmr", "wins": 1, "games": 10, "win_rate": 0.1, "lower_bound": 0.018, "source": "ready"}
-  ]
-}
-"""
-
-
--- SCORING
---
--- The score is the one number that decides which genomes breed, and the
--- crew ratio is the easiest figure on the page to misread: it looks like
--- a percentage, sits beside real percentages, and is neither a win rate
--- nor a fraction of maximum health. Every test here guards one specific
--- misreading, plus the one that matters most for the archive: a run that
--- predates the selector must never be dressed up as a crew-ratio run.
-
-
 scoringSuite : Test
 scoringSuite =
     describe "scoring rule"
@@ -2007,27 +1530,32 @@ scoringSuite =
         ]
 
 
-{-| The staged run the operator actually launched: ranked on the crew
-ratio, promoted on strict crew leads, with the no-damage penalty armed.
+{-| The run the operator actually launched: ranked on the crew ratio,
+gated on strict crew leads, with the no-damage penalty armed.
 -}
 crewLeadPayload : String
 crewLeadPayload =
     """
 {
-  "run_id": "mario-ratio-staged-20260912",
+  "schema_version": 4,
+  "run_id": "mario-ratio-20260912",
   "episodes": 400,
   "episodes_unresolved": 240,
   "episodes_combat_wins": 37,
-  "episodes_combat_counted_since": 0,
-  "episodes_combat_wins_all_time": 37,
   "history": [
-    {"generation": 0, "stage": 0, "training_win_rate": 0.4, "validation_win_rate": 0.55, "species": 3, "nodes": 70, "episodes": 1200},
-    {"generation": 1, "stage": 0, "training_win_rate": 0.6, "validation_win_rate": 0.72, "species": 4, "nodes": 71, "episodes": 2400}
+    {"generation": 0, "training_win_rate": 0.4, "validation_win_rate": 0.55, "species": 3, "nodes": 70, "episodes": 1200},
+    {"generation": 1, "training_win_rate": 0.6, "validation_win_rate": 0.72, "species": 4, "nodes": 71, "episodes": 2400}
   ],
-  "resources": {"workers": 8, "duty_cycle": 0.5, "episode_ticks": 1200},
-  "curriculum": {"stage": 0, "target": 0.8, "our_roster": ["Pkunk"], "opponent_roster": ["Umgah"]},
-  "champion": {"id": "g-1", "win_rate": 0.9, "lower_bound": 0.82, "validated_wins": 36, "validated_games": 40},
-  "audit": {"panel": 40, "max_losses": 4},
+  "resources": {"workers": 8, "duty_cycle": 0.5, "episode_ticks": 1200, "nice": 10},
+  "board": {"total_matchups": 625},
+  "champion": {"id": "g-1", "nodes": 184, "connections": 314, "hidden_nodes": 114},
+  "readiness": {"threshold": 0.85, "games": 250, "last_rate": 0.9, "period": 5},
+  "overall": {"target": 0.8, "panel": 40, "pairs": 20, "round": "audit",
+    "wins": 36, "games": 40, "win_rate": 0.9, "lower_bound": 0.82,
+    "champion_id": "g-1", "passed": false, "passed_by": null,
+    "audit": {"wins": 36, "games": 40, "win_rate": 0.9, "lower_bound": 0.82, "passed": true},
+    "confirm": {"wins": 0, "games": 0, "win_rate": null, "lower_bound": null, "passed": false},
+    "attempt": 1},
   "scoring": {
     "fitness": "crew-ratio", "zero_opponent": 1000, "mutual_zero": 1,
     "speed_bonus": false, "gate": "crew-lead", "no_damage_penalty": 1000
@@ -2126,21 +1654,21 @@ crewLeadSuite =
             \() ->
                 expectRendered crewLeadPayload
                     (Expect.all
-                        [ Query.has [ Selector.text "Champion fresh audit crew-lead rate" ]
+                        [ Query.has [ Selector.text "Overall balanced crew-lead rate" ]
                         , Query.has [ Selector.text "Crew leads needed" ]
-                        , Query.has [ Selector.text "crew leads over predeclared panel games" ]
+                        , Query.has [ Selector.text "crew leads over 40 predeclared games, 20 pairs in both seats" ]
                         , Query.has [ Selector.text "raw crew-lead rate" ]
-                        , Query.hasNot [ Selector.text "Champion fresh audit win rate" ]
+                        , Query.hasNot [ Selector.text "Overall balanced win rate" ]
                         , Query.hasNot [ Selector.text "Wins needed" ]
-                        , Query.hasNot [ Selector.text "wins over predeclared panel games" ]
+                        , Query.hasNot [ Selector.text "wins over 40 predeclared games, 20 pairs in both seats" ]
                         ]
                     )
         , test "an archived run keeps every word the original gate earned" <|
             \() ->
                 expectRendered crewRatioPayload
                     (Expect.all
-                        [ Query.has [ Selector.text "Champion fresh audit win rate" ]
-                        , Query.hasNot [ Selector.text "crew-lead rate" ]
+                        [ Query.has [ Selector.text "Overall balanced win rate" ]
+                        , Query.hasNot [ Selector.text "Overall balanced crew-lead rate" ]
                         ]
                     )
         ]
@@ -2233,23 +1761,11 @@ penaltySuite =
 combatVictorySuite : Test
 combatVictorySuite =
     describe "factual combat victories stay factual"
-        [ test "a fresh run's counter is read as the run's own total" <|
+        [ test "the counter is read as the run's own total, whatever the gate counts" <|
             \() ->
                 case decode crewLeadPayload of
                     Ok status ->
-                        Expect.equal status.combatVictories (Just (Api.VictoriesAllTime 37))
-
-                    Err error ->
-                        Expect.fail error
-        , test "a null all-time figure is a partial count, kept with the baseline it started from" <|
-            \() ->
-                -- The engine nulls the all-time field precisely when the
-                -- window opened mid-run, so falling back to the raw count as
-                -- though it were a total would invent evidence.
-                case decode """{"episodes_combat_wins":5,"episodes_combat_counted_since":900,"episodes_combat_wins_all_time":null}""" of
-                    Ok status ->
-                        Expect.equal status.combatVictories
-                            (Just (Api.VictoriesSince { victories = 5, sinceEpisodes = 900 }))
+                        Expect.equal status.episodesCombatWins (Just 37)
 
                     Err error ->
                         Expect.fail error
@@ -2258,18 +1774,17 @@ combatVictorySuite =
                 case decode """{"run_id":"mario-main-20260911"}""" of
                     Ok status ->
                         Expect.equal
-                            ( status.combatVictories
-                            , Scoring.combatVictoriesValue status.combatVictories
+                            ( status.episodesCombatWins
+                            , Scoring.combatVictoriesValue status.episodesCombatWins
                             )
                             ( Nothing, Nothing )
 
                     Err error ->
                         Expect.fail error
-        , test "a partial count never appears without saying what it is a count since" <|
+        , test "the note says the whole run, because there is no partial window left to caveat" <|
             \() ->
-                Scoring.combatVictoriesNote
-                    (Just (Api.VictoriesSince { victories = 5, sinceEpisodes = 900 }))
-                    |> Expect.equal "resolved victories since episode 900"
+                Scoring.combatVictoriesNote (Just 37)
+                    |> Expect.equal "resolved victories, whole run, all episodes"
         , test "the page shows the victory count beside the lead tallies without equating them" <|
             \() ->
                 expectRendered crewLeadPayload
@@ -2345,7 +1860,7 @@ crewRatioPayload : String
 crewRatioPayload =
     """
 {
-  "run_id": "mario-ratio-staged-20260912",
+  "run_id": "mario-ratio-20260912",
   "resources": {"workers": 1, "duty_cycle": 0.5, "episode_ticks": 1200, "nice": 10},
   "scoring": {
     "fitness": "crew-ratio", "zero_opponent": 1000, "mutual_zero": 1,
@@ -2361,7 +1876,7 @@ combatHistoryPayload =
 {
   "run_id": "mario-main-20260911",
   "history": [
-    {"generation": 0, "stage": 0, "training_win_rate": 0.4, "validation_win_rate": 0.55, "species": 3, "nodes": 70, "episodes": 1200}
+    {"generation": 0, "training_win_rate": 0.4, "validation_win_rate": 0.55, "species": 3, "nodes": 70, "episodes": 1200}
   ],
   "resources": {"workers": 1, "duty_cycle": 0.5, "episode_ticks": 1200},
   "scoring": {"fitness": "combat", "gate": "combat-wins"}
@@ -2706,33 +2221,6 @@ gateSeparationSuite =
                 String.contains "still fail this gate" Copy.gateCriterion.body
                     |> Expect.equal True
         ]
-
-
-{-| The page itself, driven by a decoded status, so the scoring facts
-are proven to reach the screen rather than merely to exist as strings.
--}
-renderedFrom : String -> Result String (Query.Single Dashboard.Msg)
-renderedFrom json =
-    decode json
-        |> Result.map
-            (\status ->
-                let
-                    ( model, _ ) =
-                        Dashboard.init ()
-                in
-                Dashboard.view { model | status = Just status, requested = True }
-                    |> Query.fromHtml
-            )
-
-
-expectRendered : String -> (Query.Single Dashboard.Msg -> Expect.Expectation) -> Expect.Expectation
-expectRendered json check =
-    case renderedFrom json of
-        Ok page ->
-            check page
-
-        Err error ->
-            Expect.fail error
 
 
 renderSuite : Test

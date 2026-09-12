@@ -276,6 +276,14 @@ pub struct Trainer {
     /// current invocation rather than of the run, so it is reported from the
     /// live value and never restored from a checkpoint.
     pub nice: i32,
+    /// The fixed-work benchmark figure recorded for THIS build, if one ever
+    /// was. Read from disk once when the supervisor starts and then only
+    /// republished, because it is a fact about the binary rather than about
+    /// the run: it does not move while the trainer is running, and rereading
+    /// it on every status publish would put a file read in a loop that has no
+    /// reason to touch the disk. `None` means nobody has benchmarked this
+    /// build, which is an absent measurement and is published as null.
+    pub benchmark: Option<Value>,
     /// The evaluation pool this PROCESS is running, exactly like `nice` a
     /// property of the invocation rather than of the run: never checkpointed,
     /// never part of the evaluator fingerprint, and never visible in the
@@ -378,6 +386,7 @@ impl Trainer {
             last_validation: None,
             last_training_wins: None,
             nice: 0,
+            benchmark: None,
             pool: Pool::new(1),
             history: VecDeque::new(),
             events: VecDeque::new(),

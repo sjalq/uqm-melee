@@ -48,6 +48,7 @@ use melee_core::counters;
 use melee_sim::catalog::{ShipKind, ALL_SHIPS};
 use melee_sim::input::CyborgRating;
 use serde_json::{json, Value};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -484,9 +485,168 @@ impl Report {
     }
 }
 
+/// The benchmark figure the dashboard may quote for THIS build, read back out
+/// of an append-only history file.
+///
+/// Three filters, and each of them exists because quoting the wrong row would
+/// be worse than quoting none:
+///
+///   * only rows whose `build` is the fingerprint of the running executable.
+///     A benchmark of a different binary describes a different program, and
+///     the operator reading the dashboard is asking what the binary in front
+///     of them costs.
+///   * of those, only rows sharing the definition fingerprint of the most
+///     recent one, because two definitions measured different workloads and
+///     [`Definition::fingerprint`] exists precisely to make that loud.
+///   * of THOSE, the fastest, for the same reason the benchmark itself takes
+///     a best of N: unrelated load can only ever make a repetition slower.
+///
+/// `None` when nothing has been recorded for this build, which is the ordinary
+/// case on a fresh machine and is reported as an absent measurement rather
+/// than as a zero.
+pub fn reference(path: &Path) -> Option<Value> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let build = trainer::build_fingerprint();
+    let rows: Vec<Value> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| row.get("build").and_then(Value::as_str) == Some(build.as_str()))
+        // A row whose repetitions disagreed measured nothing, so it is not a
+        // slow result to be beaten by a faster one, it is not a result.
+        .filter(|row| {
+            row.get("divergent_repetitions")
+                .and_then(Value::as_array)
+                .is_none_or(|list| list.is_empty())
+        })
+        .collect();
+    let definition = rows
+        .last()?
+        .pointer("/definition/fingerprint")?
+        .as_str()?
+        .to_string();
+    let best = rows
+        .iter()
+        .filter(|row| {
+            row.pointer("/definition/fingerprint").and_then(Value::as_str)
+                == Some(definition.as_str())
+        })
+        .filter(|row| seconds_of(row).is_some())
+        .min_by(|left, right| seconds_of(left).unwrap().total_cmp(&seconds_of(right).unwrap()))?;
+    let comparable = rows
+        .iter()
+        .filter(|row| {
+            row.pointer("/definition/fingerprint").and_then(Value::as_str)
+                == Some(definition.as_str())
+        })
+        .count();
+    Some(json!({
+        "at": best.get("at").cloned().unwrap_or(Value::Null),
+        "build": build,
+        "definition": definition,
+        "repetitions": best.pointer("/definition/repetitions").cloned().unwrap_or(Value::Null),
+        "fights": best.pointer("/definition/fights").cloned().unwrap_or(Value::Null),
+        "best_seconds": seconds_of(best),
+        // The two rates the status document reports for the live run, in the
+        // same units, so the reader can put the two side by side and see
+        // whether this session is paying more per unit of work than the build
+        // costs with the machine to itself.
+        "cpu_nanoseconds_per_display_tick":
+            best.pointer("/work/cpu_nanoseconds_per_display_tick").cloned().unwrap_or(Value::Null),
+        "cpu_nanoseconds_per_link_activation":
+            best.pointer("/work/cpu_nanoseconds_per_link_activation").cloned().unwrap_or(Value::Null),
+        // How many rows the minimum was taken over, so a best-of-one cannot be
+        // read as a settled figure.
+        "comparable_rows": comparable
+    }))
+}
+
+fn seconds_of(row: &Value) -> Option<f64> {
+    row.get("best_seconds")?.as_f64().filter(|n| n.is_finite())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One history row, with only the fields `reference` reads.
+    fn row(build: &str, definition: &str, seconds: f64, ns: f64, divergent: Vec<usize>) -> String {
+        json!({
+            "at": "2026-09-12T00:00:00Z",
+            "build": build,
+            "definition": {"fingerprint": definition, "repetitions": 5, "fights": 32},
+            "best_seconds": seconds,
+            "work": {"cpu_nanoseconds_per_display_tick": ns,
+                     "cpu_nanoseconds_per_link_activation": ns / 100.0},
+            "divergent_repetitions": divergent
+        })
+        .to_string()
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "melee-mario-bench-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        dir
+    }
+
+    fn history(name: &str, lines: &[String]) -> std::path::PathBuf {
+        let path = scratch(name).join("bench.ndjson");
+        std::fs::write(&path, lines.join("\n")).expect("the history file is writable");
+        path
+    }
+
+    #[test]
+    fn no_history_at_all_is_an_absent_reference_rather_than_a_zero() {
+        assert_eq!(reference(&scratch("missing").join("bench.ndjson")), None);
+    }
+
+    #[test]
+    fn only_rows_from_this_build_and_this_definition_are_quotable() {
+        let mine = trainer::build_fingerprint();
+        // A faster row from a DIFFERENT build, and a faster row from a
+        // different definition of the workload. Neither may be quoted as what
+        // this binary costs, so the slower row that actually describes it wins.
+        let path = history(
+            "builds",
+            &[
+                row("bsomeoneelse0000", "kdefinition00001", 0.010, 100.0, Vec::new()),
+                row(&mine, "kolderworkload01", 0.020, 200.0, Vec::new()),
+                row(&mine, "kdefinition00001", 0.300, 3000.0, Vec::new()),
+                row(&mine, "kdefinition00001", 0.200, 2000.0, Vec::new()),
+            ],
+        );
+        let quoted = reference(&path).expect("one row describes this build");
+        assert_eq!(quoted["build"].as_str(), Some(mine.as_str()));
+        assert_eq!(quoted["definition"].as_str(), Some("kdefinition00001"));
+        // The best of the two comparable rows, not the best of all four.
+        assert_eq!(quoted["best_seconds"].as_f64(), Some(0.200));
+        assert_eq!(
+            quoted["cpu_nanoseconds_per_display_tick"].as_f64(),
+            Some(2000.0)
+        );
+        assert_eq!(quoted["comparable_rows"].as_u64(), Some(2));
+    }
+
+    #[test]
+    fn a_row_whose_repetitions_disagreed_is_not_a_faster_result() {
+        let mine = trainer::build_fingerprint();
+        // The divergent row is the fastest and the most recent. It measured
+        // two different workloads, so it names neither the definition to
+        // compare against nor a time to beat.
+        let path = history(
+            "divergent",
+            &[
+                row(&mine, "kdefinition00001", 0.200, 2000.0, Vec::new()),
+                row(&mine, "kdefinition00002", 0.010, 100.0, vec![3]),
+            ],
+        );
+        let quoted = reference(&path).expect("the sound row still stands");
+        assert_eq!(quoted["definition"].as_str(), Some("kdefinition00001"));
+        assert_eq!(quoted["best_seconds"].as_f64(), Some(0.200));
+    }
 
     #[test]
     fn the_checked_in_genome_loads_and_is_the_one_the_benchmark_names() {
