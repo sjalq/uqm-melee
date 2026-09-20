@@ -6,7 +6,6 @@ import Dict exposing (Dict)
 import Effect.Browser.Navigation
 import File
 import Http
-import Json.Decode as Decode
 import Lamdera
 import Logger
 import Melee.Battle exposing (Arena)
@@ -203,7 +202,7 @@ type FrontendMsg
     | FleetFileLoaded String
     | ToggleJevPilot
     | JevTick Float
-    | JevRpc (Result Http.Error Decode.Value)
+    | JevRpc (Result Http.Error String)
 
 
 

@@ -1350,7 +1350,7 @@ jevPulse nowMs model =
                     (Http.post
                         { url = "/_r/jev_poll"
                         , body = Http.jsonBody (Encode.object [ ( "token", Encode.string token ) ])
-                        , expect = Http.expectJson JevRpc Decode.value
+                        , expect = Http.expectString JevRpc
                         }
                     )
                 )
@@ -1364,7 +1364,7 @@ jevPulse nowMs model =
                                 (Http.post
                                     { url = "/_r/jev_evaluate"
                                     , body = Http.jsonBody (Encode.object [ ( "state", Encode.string state ) ])
-                                    , expect = Http.expectJson JevRpc Decode.value
+                                    , expect = Http.expectString JevRpc
                                     }
                                 )
                             )
@@ -1376,25 +1376,24 @@ jevPulse nowMs model =
                     ( model, Command.none )
 
 
-jevHandle : Result Http.Error Decode.Value -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
+jevHandle : Result Http.Error String -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
 jevHandle result model =
     case result of
         Err err ->
             ( { model | jev = Jev.applyReply (Err (httpErr err)) model.jev }, Command.none )
 
-        Ok value ->
-            case Decode.decodeValue (Decode.field "token" Decode.string) value of
+        Ok body ->
+            case Decode.decodeString (Decode.field "token" Decode.string) body of
                 Ok token ->
-                    -- evaluate accepted; start polling
                     ( { model | jev = Jev.awaitToken token model.jev }, Command.none )
 
                 Err _ ->
-                    case Decode.decodeValue (Decode.field "status" Decode.string) value of
+                    case Decode.decodeString (Decode.field "status" Decode.string) body of
                         Ok "busy" ->
                             ( model, Command.none )
 
                         Ok "ready" ->
-                            case Decode.decodeValue (Decode.field "data" Decode.value) value of
+                            case Decode.decodeString (Decode.field "data" Decode.value) body of
                                 Ok data ->
                                     ( { model | jev = Jev.applyReply (Jev.decodeReply data) model.jev }, Command.none )
 
@@ -1404,19 +1403,23 @@ jevHandle result model =
                         Ok "error" ->
                             let
                                 message =
-                                    Decode.decodeValue (Decode.field "error" Decode.string) value
+                                    Decode.decodeString (Decode.field "error" Decode.string) body
                                         |> Result.withDefault "Jev failed"
                             in
                             ( { model | jev = Jev.applyReply (Err message) model.jev }, Command.none )
 
                         _ ->
-                            case Decode.decodeValue (Decode.field "error" Decode.string) value of
+                            case Decode.decodeString (Decode.field "error" Decode.string) body of
                                 Ok message ->
                                     ( { model | jev = Jev.applyReply (Err message) model.jev }, Command.none )
 
                                 Err _ ->
-                                    -- bare gateway payload (unexpected) or evaluate error object
-                                    ( { model | jev = Jev.applyReply (Jev.decodeReply value) model.jev }, Command.none )
+                                    case Decode.decodeString Decode.value body of
+                                        Ok value ->
+                                            ( { model | jev = Jev.applyReply (Jev.decodeReply value) model.jev }, Command.none )
+
+                                        Err err ->
+                                            ( { model | jev = Jev.applyReply (Err (Decode.errorToString err)) model.jev }, Command.none )
 
 
 httpErr : Http.Error -> String
