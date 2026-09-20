@@ -6,9 +6,11 @@ import Dict exposing (Dict)
 import Effect.Browser.Navigation
 import File
 import Http
+import Json.Decode as Decode
 import Lamdera
 import Logger
 import Melee.Battle exposing (Arena)
+import Melee.Jev
 import Melee.Keys exposing (Held)
 import Melee.Local
 import Melee.Location
@@ -102,6 +104,7 @@ type alias FrontendModel =
     , roomCode : String
     , meleeHeld : Held
     , game : Melee.Local.Model
+    , jev : Melee.Jev.Client
     , pickCell : { bottom : Melee.Picker.Cell, top : Melee.Picker.Cell }
     }
 
@@ -198,6 +201,9 @@ type FrontendMsg
     | LoadFleets
     | FleetFileSelected File.File
     | FleetFileLoaded String
+    | ToggleJevPilot
+    | JevTick Float
+    | JevRpc (Result Http.Error Decode.Value)
 
 
 
@@ -240,6 +246,7 @@ type BackendMsg
       -- example to show polling mechanism
     | GotCryptoPriceResult PollingToken (Result Http.Error String)
     | StoreTaskResult PollingToken (Result String String)
+    | JevGatewayResult PollingToken (Result Http.Error String)
 
 
 type ToFrontend

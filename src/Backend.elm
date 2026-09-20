@@ -181,6 +181,18 @@ update msg model =
             Logger.logDebug ("Updated job " ++ token ++ " with timestamp: " ++ String.fromInt timestamp) GotLogTime ( { model | pollingJobs = updatedPollingJobs }, Cmd.none )
                 |> wrapLogCmd
 
+        JevGatewayResult token result ->
+            let
+                updatedPollingJobs =
+                    case result of
+                        Ok body ->
+                            Dict.insert token (Ready (Ok body)) model.pollingJobs
+
+                        Err err ->
+                            Dict.insert token (Ready (Err (httpErrorToString err))) model.pollingJobs
+            in
+            ( { model | pollingJobs = updatedPollingJobs }, Command.none )
+
 
 {-| Helper to wrap Logger Cmd results into Command
 -}

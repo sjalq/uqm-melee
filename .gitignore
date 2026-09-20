@@ -27,3 +27,5 @@ rust/target/
 artifacts/
 __pycache__/
 *.pyc
+
+.worktrees/

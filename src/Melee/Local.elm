@@ -583,6 +583,14 @@ advance milliseconds held model =
     advanceWith Strategy.originalPilots { bottom = model.difficulty, top = model.difficulty } milliseconds held model
 
 
+{-| Local combat with an injected pilot roster (e.g. Jev survival bot).
+Does not affect online rooms; callers keep this on the browser for solo/demo.
+-}
+advanceLocal : Strategy.Pilots -> Float -> Keys.Held -> Model -> Model
+advanceLocal pilots milliseconds held model =
+    advanceWith pilots { bottom = model.difficulty, top = model.difficulty } milliseconds held model
+
+
 advanceAuthoritative : Float -> Keys.Held -> Model -> Model
 advanceAuthoritative milliseconds held model =
     advanceAuthoritativeWith Strategy.originalPilots { bottom = model.difficulty, top = model.difficulty } milliseconds held model

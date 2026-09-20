@@ -11,6 +11,7 @@ import Melee.Battle
 import Melee.Catalog as Catalog
 import Melee.Graphics exposing (Quality(..))
 import Melee.Input exposing (CyborgRating(..))
+import Melee.Jev as Jev
 import Melee.Local as Game exposing (Mode(..), Phase(..))
 import Melee.Location as Location
 import Melee.Picker as Picker
@@ -136,7 +137,7 @@ view model _ =
                 case model.melee of
                     Room.Browsing ->
                         if model.showLocalGame then
-                            hangar model.location model.melee game
+                            hangar model.location model.melee game model.jev
 
                         else
                             text ""
@@ -151,13 +152,13 @@ view model _ =
                 pickScreen model.melee game bottom top model.pickCell
 
             Countdown frames arena ->
-                battle model.melee game arena (Just ( "WARPING IN", String.fromInt (max 1 ((frames + 29) // 30)) ))
+                battle model.melee game model.jev arena (Just ( "WARPING IN", String.fromInt (max 1 ((frames + 29) // 30)) ))
 
             Combat arena ->
-                battle model.melee game arena Nothing
+                battle model.melee game model.jev arena Nothing
 
             Paused arena ->
-                battle model.melee game arena (Just ( "PAUSED", "Take a breath. Your fleet can wait." ))
+                battle model.melee game model.jev arena (Just ( "PAUSED", "Take a breath. Your fleet can wait." ))
 
             RoundOver frames arena ->
                 let
@@ -166,6 +167,7 @@ view model _ =
                 in
                 battle model.melee
                     game
+                    model.jev
                     arena
                     (if frames > Game.dittyFrames arena then
                         Nothing
@@ -224,8 +226,8 @@ screen children =
     div [ A.class "classic-secondary" ] children
 
 
-hangar : Location.Location -> Room.Client -> Game.Model -> Html FrontendMsg
-hangar location client game =
+hangar : Location.Location -> Room.Client -> Game.Model -> Jev.Client -> Html FrontendMsg
+hangar location client game jev =
     div [ A.class "classic-hangar" ]
         [ div [ A.class "classic-fleet-screen" ]
             [ fleet client game Top
@@ -246,7 +248,7 @@ hangar location client game =
             , localAction client "Watch computers" (Game.SetMode Demo) (game.mode == Demo)
             , graphicsButton game
             , select
-                [ A.disabled (isOnline client)
+                [ A.disabled (isOnline client || jev.enabled)
                 , A.attribute "aria-label" "Computer difficulty"
                 , A.class "classic-select"
                 , E.onInput
@@ -269,6 +271,41 @@ hangar location client game =
                 , option [ A.value "good", A.selected (game.difficulty == GoodCyborg) ] [ text "Good AI" ]
                 , option [ A.value "awesome", A.selected (game.difficulty == AwesomeCyborg) ] [ text "Awesome AI" ]
                 ]
+            , button
+                [ A.disabled (isOnline client)
+                , A.class
+                    ("classic-button"
+                        ++ (if jev.enabled then
+                                " is-active"
+
+                            else
+                                ""
+                           )
+                    )
+                , A.attribute "aria-pressed"
+                    (if jev.enabled then
+                        "true"
+
+                     else
+                        "false"
+                    )
+                , A.attribute "aria-label" "Toggle local Jev survival pilot"
+                , A.title "Local-only Jev pilot: now + 1s-ago state → next survival button"
+                , E.onClick ToggleJevPilot
+                ]
+                [ text
+                    (if jev.enabled then
+                        "Jev pilot ON"
+
+                     else
+                        "Jev pilot"
+                    )
+                ]
+            , if jev.enabled then
+                span [ A.class "melee-message", A.attribute "role" "status", A.style "flex-basis" "100%" ] [ text jev.status ]
+
+              else
+                text ""
             ]
         , if game.notice == "" then
             text ""
@@ -658,8 +695,8 @@ pickFrame client game side selected selectedCell =
         ]
 
 
-battle : Room.Client -> Game.Model -> Melee.Battle.Arena -> Maybe ( String, String ) -> Html FrontendMsg
-battle client game arena overlay =
+battle : Room.Client -> Game.Model -> Jev.Client -> Melee.Battle.Arena -> Maybe ( String, String ) -> Html FrontendMsg
+battle client game jev arena overlay =
     div [ A.class "classic-battle-page" ]
         [ Audio.effects game
         , div [ A.class "classic-battle-toolbar" ]
@@ -679,6 +716,12 @@ battle client game arena overlay =
                 Game.ToggleSound
                 False
             , span [ A.class "round-label" ] [ text ("ROUND " ++ String.fromInt game.round ++ " · " ++ String.fromInt (List.length game.remaining.bottom) ++ " vs " ++ String.fromInt (List.length game.remaining.top)) ]
+            , if jev.enabled then
+                span [ A.class "round-label", A.attribute "role" "status", A.title (String.join " · " jev.memories) ]
+                    [ text ("JEV " ++ String.toUpper (Jev.buttonLabel jev.button) ++ " · " ++ jev.status) ]
+
+              else
+                text ""
             ]
         , div [ A.class "classic-battle-frame" ]
             [ Melee.View.viewCockpit game.graphics game.zoomWidth arena
