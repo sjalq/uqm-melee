@@ -19,12 +19,12 @@ suite =
             \() ->
                 let
                     location =
-                        { room = Just "ARENA", watching = True, local = False, watchingList = True, page = 2, roster = 1, mode = Game.Solo, difficulty = Input.GoodCyborg }
+                        { room = Just "ARENA", watching = True, local = False, watchingList = True, page = 2, roster = 1, seats = Location.defaultSeats }
                 in
                 Url.fromString ("https://game.test" ++ Location.toUrl location) |> Maybe.map Location.fromUrl |> Expect.equal (Just location)
         , test "malformed pagination is harmless and room codes normalize" <|
             \() ->
-                Url.fromString "https://game.test/melee?room=%20arena%20&page=-4&roster=nope" |> Maybe.map Location.fromUrl |> Expect.equal (Just { room = Just "ARENA", watching = False, local = False, watchingList = False, page = 0, roster = 0, mode = Game.Solo, difficulty = Input.GoodCyborg })
+                Url.fromString "https://game.test/melee?room=%20arena%20&page=-4&roster=nope" |> Maybe.map Location.fromUrl |> Expect.equal (Just { room = Just "ARENA", watching = False, local = False, watchingList = False, page = 0, roster = 0, seats = Location.defaultSeats })
         , test "exhibition always starts with twelve distinct ships" <|
             \() ->
                 let

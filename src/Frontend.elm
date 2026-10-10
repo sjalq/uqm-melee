@@ -35,12 +35,13 @@ import Melee.Preview as Preview
 import Melee.Rate as MeleeRate
 import Melee.Rng exposing (Seed(..))
 import Melee.Room as Melee
+import Melee.Seat as Seat
 import Melee.Ship as Ship
 import Melee.Step as MeleeStep
+import Melee.Strategy as Strategy
 import Melee.Stream as Stream
 import Melee.Telemetry as Telemetry
-import Melee.Units exposing (Side(..))
-import Task
+import Melee.Units exposing (Side(..), Sided)
 import Pages.Admin
 import Pages.Default
 import Pages.Examples
@@ -54,6 +55,7 @@ import Ports.Telemetry
 import Route
 import Task
 import Theme
+import Time
 import Types exposing (..)
 import Url exposing (Url)
 
@@ -100,8 +102,8 @@ subscriptions model =
         [ Subscription.fromJs "melee_browser_from_js" Ports.MeleeBrowser.receive (Menu.decode >> MeleeBrowser)
         , Subscription.fromJs "telemetry_clock" Ports.Telemetry.observed (Ports.Telemetry.decode >> TelemetryClock)
         , Effect.Time.every (Duration.seconds 1) (Effect.Time.posixToMillis >> MeleeClock)
-        , if model.jev.enabled && model.melee == Melee.Browsing && model.showLocalGame then
-            Effect.Time.every (Duration.milliseconds 250) (Effect.Time.posixToMillis >> toFloat >> JevTick)
+        , if jevSeated model.location.seats && model.melee == Melee.Browsing && model.showLocalGame then
+            Effect.Time.every (Duration.milliseconds 100) (Effect.Time.posixToMillis >> toFloat >> JevTick)
 
           else
             Subscription.none
@@ -180,7 +182,7 @@ init url key =
             , roomCode = ""
             , meleeHeld = Keys.none
             , game = { initialGame | sound = False }
-            , jev = Jev.empty
+            , jev = { bottom = Jev.empty, top = Jev.empty }
             , pickCell = { bottom = Game.defaultPickCell, top = Game.defaultPickCell }
             }
     in
@@ -476,9 +478,6 @@ updateCore msg model =
 
                             _ ->
                                 Game.present milliseconds model.game
-
-                    nextJev =
-                        noteLocalJev nextGame model.jev
                 in
                 ( { model
                     | arenaPreview =
@@ -488,7 +487,6 @@ updateCore msg model =
                         else
                             model.arenaPreview
                     , game = nextGame
-                    , jev = nextJev
                     , pickCell = refreshPickCell model.game.phase nextGame.phase model.pickCell
                   }
                 , Command.none
@@ -497,18 +495,46 @@ updateCore msg model =
             else
                 ( model, Command.none )
 
-        ToggleJevPilot ->
+        SetLocalSeat side seat ->
             if model.melee == Melee.Browsing then
-                ( { model | jev = Jev.toggle model.jev }, Command.none )
+                let
+                    location =
+                        model.location
+
+                    armed =
+                        if seat == Seat.Jev && Game.get side location.seats /= Seat.Jev then
+                            { model | jev = Game.set side Jev.empty model.jev }
+
+                        else
+                            model
+                in
+                update (NavigateMelee { location | seats = Game.set side seat location.seats }) armed
 
             else
                 ( model, Command.none )
 
         JevTick nowMs ->
-            jevPulse nowMs model
+            jevDispatch nowMs model
 
-        JevRpc result ->
-            jevHandle result model
+        JevSent id result ->
+            case result of
+                Ok _ ->
+                    ( model, Command.none )
+
+                Err err ->
+                    ( model, jevStamp id (Err (jevRpcFailure err)) )
+
+        JevLanded id result nowMs ->
+            let
+                settle client =
+                    case result of
+                        Ok answer ->
+                            Jev.landed id nowMs answer client
+
+                        Err failure ->
+                            Jev.failed (Just id) nowMs failure client
+            in
+            jevDispatch nowMs { model | jev = { bottom = settle model.jev.bottom, top = settle model.jev.top } }
 
         GameMsg gameMsg ->
             gameAction gameMsg model
@@ -609,6 +635,9 @@ updateFromBackendCore msg model =
         A0 message ->
             -- Log websocket messages for debugging
             ( model, Command.none )
+
+        JevReply id result ->
+            ( model, jevStamp id result )
 
         MeleeToFrontend message ->
             case message of
@@ -1061,15 +1090,11 @@ gameAction message model =
                 changed =
                     { model | game = nextGame, meleeHeld = Keys.none, pickCell = refreshPickCell model.game.phase nextGame.phase model.pickCell }
             in
-            case message of
-                Game.SetMode mode ->
-                    update (NavigateMelee { location | mode = mode }) changed
+            if message == Game.Start || message == Game.Rematch || message == Game.QuickStart then
+                ( { changed | jev = { bottom = Jev.empty, top = Jev.empty } }, Command.none )
 
-                Game.SetDifficulty difficulty ->
-                    update (NavigateMelee { location | difficulty = difficulty }) changed
-
-                _ ->
-                    ( changed, Command.none )
+            else
+                ( changed, Command.none )
 
         Melee.Watching _ ->
             if message == Game.ToggleGraphics || message == Game.ToggleSound then
@@ -1299,127 +1324,132 @@ redirectRoom model =
         )
 
 
-{-| Local combat only: when Jev is armed, computer seats use the cached survival button.
-Online rooms never take this path.
+{-| Local combat only. Cyborg seats fly the original pilots at their own
+rating; a Jev seat holds its cached survival button. Online rooms never take
+this path.
 -}
 advanceLocalGame : Float -> Model -> Game.Model
 advanceLocalGame milliseconds model =
     let
-        advanced =
-            if model.jev.enabled && model.game.mode /= Game.Versus then
-                Game.advanceLocal (Jev.pilots model.jev.button) milliseconds model.meleeHeld model.game
+        seats =
+            model.location.seats
+
+        roster side =
+            if Game.get side seats == Seat.Jev then
+                Jev.roster (Game.get side model.jev).input
 
             else
-                Game.advance milliseconds model.meleeHeld model.game
+                Strategy.originalRoster
+
+        pilots =
+            { bottom = roster Bottom, top = roster Top }
     in
-    Game.animate milliseconds advanced
+    Game.advanceWith pilots (Seat.ratings seats) milliseconds model.meleeHeld model.game
+        |> Game.animate milliseconds
 
 
-noteLocalJev : Game.Model -> Jev.Client -> Jev.Client
-noteLocalJev game client =
-    if not client.enabled then
-        client
-
-    else
-        case game.phase of
-            Game.Combat arena ->
-                Jev.noteArena (computerFocus game.mode) arena client
-
-            Game.Paused arena ->
-                Jev.noteArena (computerFocus game.mode) arena client
-
-            _ ->
-                client
+jevSeated : Sided Seat.Seat -> Bool
+jevSeated seats =
+    seats.bottom == Seat.Jev || seats.top == Seat.Jev
 
 
-computerFocus : Game.Mode -> Side
-computerFocus mode =
-    Jev.focusSide { reverse = mode == Game.ReverseSolo }
+jevSides : Sided Seat.Seat -> List Side
+jevSides seats =
+    List.filter (\side -> Game.get side seats == Seat.Jev) [ Bottom, Top ]
 
 
-jevPulse : Float -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
-jevPulse nowMs model =
-    if not model.jev.enabled || model.melee /= Melee.Browsing || not model.showLocalGame then
-        ( model, Command.none )
+{-| Timestamp an answer (or failure) the moment it arrives, so round trips
+are measured from send to landing.
+-}
+jevStamp : String -> Result Jev.Failure Jev.Answer -> Command FrontendOnly ToBackend FrontendMsg
+jevStamp id result =
+    Command.fromCmd "jev clock" (Task.perform (\now -> JevLanded id result (toFloat (Time.posixToMillis now))) Time.now)
 
-    else
-        case model.jev.token of
-            Just token ->
-                ( model
-                , Command.fromCmd "jev poll"
-                    (Http.post
-                        { url = "/_r/jev_poll"
-                        , body = Http.jsonBody (Encode.object [ ( "token", Encode.string token ) ])
-                        , expect = Http.expectString JevRpc
-                        }
-                    )
-                )
 
-            Nothing ->
-                if Jev.requestDue nowMs 1000 model.jev then
-                    case Jev.promptFrom model.jev of
-                        Just state ->
-                            ( { model | jev = Jev.beginRequest nowMs model.jev }
-                            , Command.fromCmd "jev evaluate"
-                                (Http.post
-                                    { url = "/_r/jev_evaluate"
-                                    , body = Http.jsonBody (Encode.object [ ( "state", Encode.string state ) ])
-                                    , expect = Http.expectString JevRpc
-                                    }
+{-| Send for every Jev seat that is due: idle, backed off long enough, or
+timed out. Runs on the 100 ms tick and straight after each answer lands, so
+the next call leaves as soon as the previous one returns. The state is built
+here, from the arena as it is now; nothing is ever resent.
+-}
+jevDispatch : Float -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
+jevDispatch nowMs model =
+    case ( model.melee, model.showLocalGame, model.game.phase ) of
+        ( Melee.Browsing, True, Game.Combat arena ) ->
+            List.foldl
+                (\side ( acc, commands ) ->
+                    let
+                        client =
+                            Game.get side acc.jev
+                    in
+                    if Jev.due nowMs client then
+                        case Jev.state nowMs client.latency.average side arena client.past of
+                            Just picture ->
+                                let
+                                    ( id, sentClient ) =
+                                        Jev.sent (sideName side) nowMs client
+
+                                    next =
+                                        { sentClient | past = Jev.remember nowMs arena client.past }
+                                in
+                                ( { acc | jev = Game.set side next acc.jev }
+                                , Command.fromCmd "jev evaluate"
+                                    (Http.post
+                                        { url = "/_r/jev_evaluate"
+                                        , body = Http.jsonBody (Encode.object [ ( "request", Encode.string id ), ( "state", picture ) ])
+                                        , expect = Http.expectString (JevSent id)
+                                        }
+                                    )
+                                    :: commands
                                 )
-                            )
 
-                        Nothing ->
-                            ( model, Command.none )
+                            Nothing ->
+                                ( acc, commands )
 
-                else
-                    ( model, Command.none )
+                    else
+                        ( acc, commands )
+                )
+                ( model, [] )
+                (jevSides model.location.seats)
+                |> Tuple.mapSecond Command.batch
+
+        _ ->
+            ( model, Command.none )
 
 
-jevHandle : Result Http.Error String -> Model -> ( Model, Command FrontendOnly ToBackend FrontendMsg )
-jevHandle result model =
-    case result of
-        Err err ->
-            ( { model | jev = Jev.applyReply (Err (httpErr err)) model.jev }, Command.none )
+sideName : Side -> String
+sideName side =
+    case side of
+        Bottom ->
+            "bottom"
 
-        Ok body ->
-            case Decode.decodeString (Decode.field "token" Decode.string) body of
-                Ok token ->
-                    ( { model | jev = Jev.awaitToken token model.jev }, Command.none )
+        Top ->
+            "top"
 
-                Err _ ->
-                    case Decode.decodeString (Decode.field "status" Decode.string) body of
-                        Ok "busy" ->
-                            ( model, Command.none )
 
-                        Ok "ready" ->
-                            case Decode.decodeString (Decode.field "data" Decode.value) body of
-                                Ok data ->
-                                    ( { model | jev = Jev.applyReply (Jev.decodeReply data) model.jev }, Command.none )
+{-| Our own endpoint refusing or failing. Busy, overloaded and dropped
+connections are worth another try soon; anything else waits longer.
+-}
+jevRpcFailure : Http.Error -> Jev.Failure
+jevRpcFailure err =
+    case err of
+        Http.BadStatus status ->
+            if status == 429 || (status >= 500 && status /= 503) then
+                Jev.Transient (httpErr err)
 
-                                Err err ->
-                                    ( { model | jev = Jev.applyReply (Err (Decode.errorToString err)) model.jev }, Command.none )
+            else
+                Jev.Permanent (httpErr err)
 
-                        Ok "error" ->
-                            let
-                                message =
-                                    Decode.decodeString (Decode.field "error" Decode.string) body
-                                        |> Result.withDefault "Jev failed"
-                            in
-                            ( { model | jev = Jev.applyReply (Err message) model.jev }, Command.none )
+        Http.Timeout ->
+            Jev.Transient (httpErr err)
 
-                        _ ->
-                            case Decode.decodeString (Decode.field "error" Decode.string) body of
-                                Ok message ->
-                                    ( { model | jev = Jev.applyReply (Err message) model.jev }, Command.none )
+        Http.NetworkError ->
+            Jev.Transient (httpErr err)
 
-                                Err _ ->
-                                    case Decode.decodeString Decode.value body of
-                                        Ok value ->
-                                            ( { model | jev = Jev.applyReply (Jev.decodeReply value) model.jev }, Command.none )
+        Http.BadUrl _ ->
+            Jev.Permanent (httpErr err)
 
-                                        Err err ->
-                                            ( { model | jev = Jev.applyReply (Err (Decode.errorToString err)) model.jev }, Command.none )
+        Http.BadBody _ ->
+            Jev.Permanent (httpErr err)
 
 
 httpErr : Http.Error -> String

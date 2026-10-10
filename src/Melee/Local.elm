@@ -65,10 +65,8 @@ type alias Model =
 type Msg
     = Edit Side
     | Rename Side String
-    | SetDifficulty CyborgRating
     | Add ShipKind
     | Remove Side Int
-    | SetMode Mode
     | Start
     | Pick Side Int
     | RandomPick Side
@@ -223,9 +221,6 @@ update msg model =
         ( Rename side name, Hangar ) ->
             { model | names = set side (String.left 30 name) model.names }
 
-        ( SetDifficulty difficulty, Hangar ) ->
-            { model | difficulty = difficulty }
-
         ( Edit side, Hangar ) ->
             { model | editing = side }
 
@@ -242,9 +237,6 @@ update msg model =
 
         ( Remove side index, Hangar ) ->
             { model | fleets = set side (get side model.fleets |> List.indexedMap Tuple.pair |> List.filter (\( i, _ ) -> i /= index) |> List.map Tuple.second) model.fleets }
-
-        ( SetMode mode, Hangar ) ->
-            { model | mode = mode }
 
         ( Start, Hangar ) ->
             begin model
@@ -581,14 +573,6 @@ battleFrameUsing step pilots ratings held model arena =
 advance : Float -> Keys.Held -> Model -> Model
 advance milliseconds held model =
     advanceWith Strategy.originalPilots { bottom = model.difficulty, top = model.difficulty } milliseconds held model
-
-
-{-| Local combat with an injected pilot roster (e.g. Jev survival bot).
-Does not affect online rooms; callers keep this on the browser for solo/demo.
--}
-advanceLocal : Strategy.Pilots -> Float -> Keys.Held -> Model -> Model
-advanceLocal pilots milliseconds held model =
-    advanceWith pilots { bottom = model.difficulty, top = model.difficulty } milliseconds held model
 
 
 advanceAuthoritative : Float -> Keys.Held -> Model -> Model

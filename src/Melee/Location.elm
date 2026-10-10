@@ -3,16 +3,23 @@ module Melee.Location exposing (..)
 import Dict
 import Melee.Input exposing (CyborgRating(..))
 import Melee.Local as Game
+import Melee.Seat as Seat exposing (Seat(..))
+import Melee.Units exposing (Sided)
 import Url exposing (Url)
 
 
 type alias Location =
-    { room : Maybe String, watching : Bool, local : Bool, watchingList : Bool, page : Int, roster : Int, mode : Game.Mode, difficulty : CyborgRating }
+    { room : Maybe String, watching : Bool, local : Bool, watchingList : Bool, page : Int, roster : Int, seats : Sided Seat }
 
 
 lobby : Location
 lobby =
-    { room = Nothing, watching = False, local = False, watchingList = False, page = 0, roster = 0, mode = Game.Solo, difficulty = GoodCyborg }
+    { room = Nothing, watching = False, local = False, watchingList = False, page = 0, roster = 0, seats = defaultSeats }
+
+
+defaultSeats : Sided Seat
+defaultSeats =
+    { bottom = Human, top = Cyborg GoodCyborg }
 
 
 fromUrl : Url -> Location
@@ -54,29 +61,7 @@ fromUrl url =
     , local = flag "local"
     , watchingList = flag "live"
     , page = number "page"
-    , mode =
-        case Dict.get "mode" params of
-            Just "versus" ->
-                Game.Versus
-
-            Just "demo" ->
-                Game.Demo
-
-            Just "reverse" ->
-                Game.ReverseSolo
-
-            _ ->
-                Game.Solo
-    , difficulty =
-        case Dict.get "ai" params of
-            Just "standard" ->
-                StandardCyborg
-
-            Just "awesome" ->
-                AwesomeCyborg
-
-            _ ->
-                GoodCyborg
+    , seats = seatsFrom (Dict.get "bottom" params) (Dict.get "top" params) (Dict.get "mode" params) (Dict.get "ai" params)
     , roster = number "roster"
     }
 
@@ -96,32 +81,13 @@ toUrl location =
 
               else
                 Nothing
-            , if location.local then
-                case location.mode of
-                    Game.Solo ->
-                        Nothing
-
-                    Game.Versus ->
-                        Just "mode=versus"
-
-                    Game.Demo ->
-                        Just "mode=demo"
-
-                    Game.ReverseSolo ->
-                        Just "mode=reverse"
+            , if location.local && location.seats.bottom /= defaultSeats.bottom then
+                Just ("bottom=" ++ Seat.toParam location.seats.bottom)
 
               else
                 Nothing
-            , if location.local then
-                case location.difficulty of
-                    GoodCyborg ->
-                        Nothing
-
-                    StandardCyborg ->
-                        Just "ai=standard"
-
-                    AwesomeCyborg ->
-                        Just "ai=awesome"
+            , if location.local && location.seats.top /= defaultSeats.top then
+                Just ("top=" ++ Seat.toParam location.seats.top)
 
               else
                 Nothing
@@ -155,7 +121,48 @@ toUrl location =
 configure : Location -> Game.Model -> Game.Model
 configure location game =
     if location.local then
-        { game | mode = location.mode, difficulty = location.difficulty }
+        { game | mode = Seat.mode location.seats }
 
     else
         game
+
+
+{-| `bottom=` and `top=` name each seat. Links from before per-seat control
+used `mode=` (which sides are human) and one shared `ai=` rating; those still
+open the same game.
+-}
+seatsFrom : Maybe String -> Maybe String -> Maybe String -> Maybe String -> Sided Seat
+seatsFrom bottom top legacyMode legacyRating =
+    let
+        rating =
+            case legacyRating of
+                Just "standard" ->
+                    StandardCyborg
+
+                Just "awesome" ->
+                    AwesomeCyborg
+
+                _ ->
+                    GoodCyborg
+
+        computer =
+            Cyborg rating
+
+        legacy =
+            case legacyMode of
+                Just "versus" ->
+                    { bottom = Human, top = Human }
+
+                Just "demo" ->
+                    { bottom = computer, top = computer }
+
+                Just "reverse" ->
+                    { bottom = computer, top = Human }
+
+                _ ->
+                    { bottom = Human, top = computer }
+
+        pick param fallback =
+            param |> Maybe.andThen Seat.fromParam |> Maybe.withDefault fallback
+    in
+    { bottom = pick bottom legacy.bottom, top = pick top legacy.top }

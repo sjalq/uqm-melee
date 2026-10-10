@@ -10,6 +10,7 @@ import Lamdera
 import Logger
 import Melee.Battle exposing (Arena)
 import Melee.Jev
+import Melee.JevDesk
 import Melee.Keys exposing (Held)
 import Melee.Local
 import Melee.Location
@@ -18,7 +19,9 @@ import Melee.Picker
 import Melee.Preview
 import Melee.Ranking
 import Melee.Room as Melee
+import Melee.Seat
 import Melee.Telemetry
+import Melee.Units
 import Url exposing (Url)
 
 
@@ -103,7 +106,7 @@ type alias FrontendModel =
     , roomCode : String
     , meleeHeld : Held
     , game : Melee.Local.Model
-    , jev : Melee.Jev.Client
+    , jev : Melee.Units.Sided Melee.Jev.Client
     , pickCell : { bottom : Melee.Picker.Cell, top : Melee.Picker.Cell }
     }
 
@@ -125,6 +128,7 @@ type alias BackendModel =
     , users : Dict Email User
     , emailPasswordCredentials : Dict Email EmailPasswordCredentials
     , pollingJobs : Dict PollingToken (PollingStatus PollData)
+    , jevDesk : Melee.JevDesk.Desk
     , counters : Melee.Telemetry.Counters
     , workload : Melee.Telemetry.Snapshot
     , melee : Melee.Host
@@ -200,9 +204,10 @@ type FrontendMsg
     | LoadFleets
     | FleetFileSelected File.File
     | FleetFileLoaded String
-    | ToggleJevPilot
+    | SetLocalSeat Melee.Units.Side Melee.Seat.Seat
     | JevTick Float
-    | JevRpc (Result Http.Error String)
+    | JevSent String (Result Http.Error String)
+    | JevLanded String (Result Melee.Jev.Failure Melee.Jev.Answer) Float
 
 
 
@@ -245,7 +250,7 @@ type BackendMsg
       -- example to show polling mechanism
     | GotCryptoPriceResult PollingToken (Result Http.Error String)
     | StoreTaskResult PollingToken (Result String String)
-    | JevGatewayResult PollingToken (Result Http.Error String)
+    | JevGatewayResult Int (Result Http.Error String)
 
 
 type ToFrontend
@@ -259,6 +264,7 @@ type ToFrontend
     | UserInfoMsg (Maybe Auth.Common.UserInfo)
     | ProbeReply Int (Maybe Melee.Telemetry.Snapshot)
     | MeleeToFrontend Melee.ToSeat
+    | JevReply String (Result Melee.Jev.Failure Melee.Jev.Answer)
 
 
 

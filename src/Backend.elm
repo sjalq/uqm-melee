@@ -11,8 +11,12 @@ import Effect.Command as Command exposing (BackendOnly, Command)
 import Effect.Lamdera
 import Effect.Subscription as Subscription exposing (Subscription)
 import Effect.Time as Time
+import Http
+import Json.Decode
 import Lamdera
 import Logger
+import Melee.Jev as Jev
+import Melee.JevDesk
 import Melee.Room as Melee
 import Melee.Telemetry as Telemetry
 import Rights.Auth0 exposing (backendConfig)
@@ -67,6 +71,7 @@ init =
             , users = Dict.empty
             , emailPasswordCredentials = Dict.empty
             , pollingJobs = Dict.empty
+            , jevDesk = Melee.JevDesk.empty
             , counters = Telemetry.zero
             , workload = Telemetry.snapshot Telemetry.zero Melee.init
             , melee = Melee.init
@@ -181,17 +186,51 @@ update msg model =
             Logger.logDebug ("Updated job " ++ token ++ " with timestamp: " ++ String.fromInt timestamp) GotLogTime ( { model | pollingJobs = updatedPollingJobs }, Cmd.none )
                 |> wrapLogCmd
 
-        JevGatewayResult token result ->
-            let
-                updatedPollingJobs =
-                    case result of
-                        Ok body ->
-                            Dict.insert token (Ready (Ok body)) model.pollingJobs
+        JevGatewayResult key result ->
+            case Melee.JevDesk.finish key model.jevDesk of
+                Just ( job, desk ) ->
+                    ( { model | jevDesk = desk }
+                    , Effect.Lamdera.sendToFrontends (Effect.Lamdera.sessionIdFromString job.session) (JevReply job.request (jevOutcome result))
+                    )
 
-                        Err err ->
-                            Dict.insert token (Ready (Err (httpErrorToString err))) model.pollingJobs
-            in
-            ( { model | pollingJobs = updatedPollingJobs }, Command.none )
+                Nothing ->
+                    ( model, Command.none )
+
+
+{-| Decode the gateway body into the four answers, or classify the failure.
+-}
+jevOutcome : Result Http.Error String -> Result Jev.Failure Jev.Answer
+jevOutcome result =
+    case result of
+        Ok body ->
+            Json.Decode.decodeString Jev.answerDecoder body
+                |> Result.mapError (\err -> Jev.Permanent ("Unreadable Jev answer: " ++ String.left 80 (Json.Decode.errorToString err)))
+
+        Err err ->
+            Err (jevFailure err)
+
+
+{-| Vercel 5xx, rate limiting, timeouts and dropped connections are worth
+another attempt; anything else will fail the same way again.
+-}
+jevFailure : Http.Error -> Jev.Failure
+jevFailure err =
+    case err of
+        Http.BadStatus status ->
+            if status >= 500 || status == 429 then
+                Jev.Transient (httpErrorToString err)
+
+            else
+                Jev.Permanent (httpErrorToString err)
+
+        Http.Timeout ->
+            Jev.Transient (httpErrorToString err)
+
+        Http.NetworkError ->
+            Jev.Transient (httpErrorToString err)
+
+        _ ->
+            Jev.Permanent (httpErrorToString err)
 
 
 {-| Helper to wrap Logger Cmd results into Command

@@ -10,7 +10,7 @@ import Melee.Audio as Audio
 import Melee.Battle
 import Melee.Catalog as Catalog
 import Melee.Graphics exposing (Quality(..))
-import Melee.Input exposing (CyborgRating(..))
+import Melee.Input as Input exposing (CyborgRating(..))
 import Melee.Jev as Jev
 import Melee.Local as Game exposing (Mode(..), Phase(..))
 import Melee.Location as Location
@@ -18,10 +18,11 @@ import Melee.Picker as Picker
 import Melee.Presentation as Presentation
 import Melee.Ranking as Ranking
 import Melee.Room as Room
+import Melee.Seat as Seat
 import Melee.Ship as Ship exposing (ShipKind)
 import Melee.ShipState as ShipState
 import Melee.Space as Space
-import Melee.Units exposing (FrameCount(..), Side(..))
+import Melee.Units exposing (FrameCount(..), Side(..), Sided)
 import Melee.View
 import Svg
 import Svg.Attributes as S
@@ -152,13 +153,13 @@ view model _ =
                 pickScreen model.melee game bottom top model.pickCell
 
             Countdown frames arena ->
-                battle model.melee game model.jev arena (Just ( "WARPING IN", String.fromInt (max 1 ((frames + 29) // 30)) ))
+                battle model.melee model.location.seats game model.jev arena (Just ( "WARPING IN", String.fromInt (max 1 ((frames + 29) // 30)) ))
 
             Combat arena ->
-                battle model.melee game model.jev arena Nothing
+                battle model.melee model.location.seats game model.jev arena Nothing
 
             Paused arena ->
-                battle model.melee game model.jev arena (Just ( "PAUSED", "Take a breath. Your fleet can wait." ))
+                battle model.melee model.location.seats game model.jev arena (Just ( "PAUSED", "Take a breath. Your fleet can wait." ))
 
             RoundOver frames arena ->
                 let
@@ -166,6 +167,7 @@ view model _ =
                         Game.crew arena.combatants.bottom arena > 0
                 in
                 battle model.melee
+                    model.location.seats
                     game
                     model.jev
                     arena
@@ -226,14 +228,14 @@ screen children =
     div [ A.class "classic-secondary" ] children
 
 
-hangar : Location.Location -> Room.Client -> Game.Model -> Jev.Client -> Html FrontendMsg
+hangar : Location.Location -> Room.Client -> Game.Model -> Sided Jev.Client -> Html FrontendMsg
 hangar location client game jev =
     div [ A.class "classic-hangar" ]
         [ div [ A.class "classic-fleet-screen" ]
             [ fleet client game Top
             , fleet client game Bottom
-            , controllerButton client game Top
-            , controllerButton client game Bottom
+            , controllerButton client location.seats Top
+            , controllerButton client location.seats Bottom
             , button [ A.id "start-battle", A.class "classic-launch", A.attribute "aria-label" "Choose ships and launch", A.disabled (List.isEmpty game.fleets.bottom || List.isEmpty game.fleets.top), E.onClick (GameMsg Game.Start) ]
                 [ img [ A.src "/classic/meleemenu-025.png", A.alt "BATTLE!", A.style "width" "100%", A.style "height" "100%", A.style "image-rendering" "pixelated" ] [] ]
             , button [ A.class "classic-save", A.attribute "aria-label" "Save fleets", E.onClick SaveFleets ] [ menuImage 18 "SAVE" ]
@@ -243,70 +245,12 @@ hangar location client game jev =
             , button [ A.class "classic-quit", A.attribute "aria-label" "Return to online arena", E.onClick (ShowLocalGame False) ] [ menuImage 29 "QUIT" ]
             ]
         , div [ A.class "classic-settings" ]
-            [ localAction client "Solo vs computer" (Game.SetMode Solo) (game.mode == Solo)
-            , localAction client "Two players" (Game.SetMode Versus) (game.mode == Versus)
-            , localAction client "Watch computers" (Game.SetMode Demo) (game.mode == Demo)
-            , graphicsButton game
-            , select
-                [ A.disabled (isOnline client || jev.enabled)
-                , A.attribute "aria-label" "Computer difficulty"
-                , A.class "classic-select"
-                , E.onInput
-                    (\value ->
-                        GameMsg
-                            (Game.SetDifficulty
-                                (if value == "standard" then
-                                    StandardCyborg
-
-                                 else if value == "awesome" then
-                                    AwesomeCyborg
-
-                                 else
-                                    GoodCyborg
-                                )
-                            )
-                    )
-                ]
-                [ option [ A.value "standard", A.selected (game.difficulty == StandardCyborg) ] [ text "Standard AI" ]
-                , option [ A.value "good", A.selected (game.difficulty == GoodCyborg) ] [ text "Good AI" ]
-                , option [ A.value "awesome", A.selected (game.difficulty == AwesomeCyborg) ] [ text "Awesome AI" ]
-                ]
-            , button
-                [ A.disabled (isOnline client)
-                , A.class
-                    ("classic-button"
-                        ++ (if jev.enabled then
-                                " is-active"
-
-                            else
-                                ""
-                           )
-                    )
-                , A.attribute "aria-pressed"
-                    (if jev.enabled then
-                        "true"
-
-                     else
-                        "false"
-                    )
-                , A.attribute "aria-label" "Toggle local Jev survival pilot"
-                , A.title "Local-only Jev pilot: now + 1s-ago state → next survival button"
-                , E.onClick ToggleJevPilot
-                ]
-                [ text
-                    (if jev.enabled then
-                        "Jev pilot ON"
-
-                     else
-                        "Jev pilot"
-                    )
-                ]
-            , if jev.enabled then
-                span [ A.class "melee-message", A.attribute "role" "status", A.style "flex-basis" "100%" ] [ text jev.status ]
-
-              else
-                text ""
-            ]
+            ([ seatSelect client location.seats Top
+             , seatSelect client location.seats Bottom
+             , graphicsButton game
+             ]
+                ++ jevStatuses location.seats jev "melee-message"
+            )
         , if game.notice == "" then
             text ""
 
@@ -370,84 +314,52 @@ menuImage frame label =
     img [ A.src ("/classic/meleemenu-" ++ String.padLeft 3 '0' (String.fromInt frame) ++ ".png"), A.alt label ] []
 
 
-controllerButton : Room.Client -> Game.Model -> Side -> Html FrontendMsg
-controllerButton client game side =
+sideTitle : Side -> String
+sideTitle side =
+    if side == Top then
+        "Top"
+
+    else
+        "Bottom"
+
+
+{-| The original controller box: each click steps Human → Standard → Good →
+Awesome cyborg, then on to Jev. Jev has no original artwork, so it is drawn
+as text in the controller's own face and colours.
+-}
+controllerButton : Room.Client -> Sided Seat.Seat -> Side -> Html FrontendMsg
+controllerButton client seats side =
     let
-        human =
-            Game.humanNeedsPick game.mode side Nothing
+        seat =
+            Game.get side seats
 
-        nextMode =
-            case ( side, game.mode ) of
-                ( Top, Versus ) ->
-                    Solo
-
-                ( Top, Solo ) ->
-                    Versus
-
-                ( Top, Demo ) ->
-                    ReverseSolo
-
-                ( Top, ReverseSolo ) ->
-                    Demo
-
-                ( Bottom, Versus ) ->
-                    ReverseSolo
-
-                ( Bottom, ReverseSolo ) ->
-                    Versus
-
-                ( Bottom, Solo ) ->
-                    Demo
-
-                ( Bottom, Demo ) ->
-                    Solo
-
-        rating =
-            case game.difficulty of
-                StandardCyborg ->
-                    1
-
-                GoodCyborg ->
-                    2
-
-                AwesomeCyborg ->
-                    3
-
-        frame =
-            (if side == Top then
+        base =
+            if side == Top then
                 1
 
-             else
+            else
                 9
-            )
-                + (if human then
-                    0
-
-                   else
-                    rating
-                  )
 
         label =
-            (if side == Top then
-                "Top: "
+            sideTitle side ++ ": " ++ Seat.label seat
 
-             else
-                "Bottom: "
-            )
-                ++ (if human then
-                        "Human control"
+        face =
+            case seat of
+                Seat.Human ->
+                    menuImage base label
 
-                    else
-                        case game.difficulty of
-                            StandardCyborg ->
-                                "Standard cyborg"
+                Seat.Cyborg StandardCyborg ->
+                    menuImage (base + 1) label
 
-                            GoodCyborg ->
-                                "Good cyborg"
+                Seat.Cyborg GoodCyborg ->
+                    menuImage (base + 2) label
 
-                            AwesomeCyborg ->
-                                "Awesome cyborg"
-                   )
+                Seat.Cyborg AwesomeCyborg ->
+                    menuImage (base + 3) label
+
+                Seat.Jev ->
+                    span [ A.style "display" "flex", A.style "flex-direction" "column", A.style "align-items" "center", A.style "justify-content" "center", A.style "height" "100%" ]
+                        [ span [] [ text "JEV" ], span [] [ text "PILOT" ] ]
     in
     button
         [ A.disabled (isOnline client)
@@ -461,10 +373,89 @@ controllerButton client game side =
                    )
             )
         , A.attribute "aria-label" label
-        , A.title "Switch human / cyborg control"
-        , E.onClick (GameMsg (Game.SetMode nextMode))
+        , A.title "Switch between human, cyborg and Jev control"
+        , E.onClick (SetLocalSeat side (Seat.cycle seat))
         ]
-        [ menuImage frame label ]
+        [ face ]
+
+
+seatSelect : Room.Client -> Sided Seat.Seat -> Side -> Html FrontendMsg
+seatSelect client seats side =
+    let
+        current =
+            Game.get side seats
+    in
+    if isOnline client then
+        text ""
+
+    else
+        select
+            [ A.class "classic-select"
+            , A.attribute "aria-label" (sideTitle side ++ " pilot")
+            , E.onInput (\param -> Seat.fromParam param |> Maybe.withDefault current |> SetLocalSeat side)
+            ]
+            (List.map
+                (\seat ->
+                    option [ A.value (Seat.toParam seat), A.selected (seat == current) ]
+                        [ text (String.toUpper (sideName side) ++ ": " ++ Seat.label seat) ]
+                )
+                Seat.all
+            )
+
+
+jevStatuses : Sided Seat.Seat -> Sided Jev.Client -> String -> List (Html FrontendMsg)
+jevStatuses seats jev className =
+    [ Bottom, Top ]
+        |> List.filter (\side -> Game.get side seats == Seat.Jev)
+        |> List.map
+            (\side ->
+                let
+                    client =
+                        Game.get side jev
+                in
+                span [ A.class className, A.attribute "role" "status" ]
+                    [ text ("JEV " ++ String.toUpper (sideName side) ++ " " ++ heldKeys client.input ++ " · " ++ client.status) ]
+            )
+
+
+{-| The keys a Jev seat is holding, e.g. `LEFT+THRUST+FIRE`.
+-}
+heldKeys : Input.BattleInput -> String
+heldKeys input =
+    [ case input.turn of
+        Input.TurnLeft ->
+            Just "LEFT"
+
+        Input.TurnRight ->
+            Just "RIGHT"
+
+        Input.NoTurn ->
+            Nothing
+    , if input.thrust then
+        Just "THRUST"
+
+      else
+        Nothing
+    , if input.weapon then
+        Just "FIRE"
+
+      else
+        Nothing
+    , if input.special then
+        Just "SPECIAL"
+
+      else
+        Nothing
+    ]
+        |> List.filterMap identity
+        |> String.join "+"
+        |> (\keys ->
+                if keys == "" then
+                    "COAST"
+
+                else
+                    keys
+           )
 
 
 hangarShipCard : Game.Model -> ShipKind -> Html FrontendMsg
@@ -695,18 +686,18 @@ pickFrame client game side selected selectedCell =
         ]
 
 
-battle : Room.Client -> Game.Model -> Jev.Client -> Melee.Battle.Arena -> Maybe ( String, String ) -> Html FrontendMsg
-battle client game jev arena overlay =
+battle : Room.Client -> Sided Seat.Seat -> Game.Model -> Sided Jev.Client -> Melee.Battle.Arena -> Maybe ( String, String ) -> Html FrontendMsg
+battle client seats game jev arena overlay =
     div [ A.class "classic-battle-page" ]
         [ Audio.effects game
         , div [ A.class "classic-battle-toolbar" ]
-            [ if isWatching client || isRanked client then
+            ([ if isWatching client || isRanked client then
                 text ""
 
-              else
+               else
                 action "Pause / resume" Game.TogglePause False
-            , graphicsButton game
-            , action
+             , graphicsButton game
+             , action
                 (if game.sound then
                     "Sound on"
 
@@ -715,14 +706,15 @@ battle client game jev arena overlay =
                 )
                 Game.ToggleSound
                 False
-            , span [ A.class "round-label" ] [ text ("ROUND " ++ String.fromInt game.round ++ " · " ++ String.fromInt (List.length game.remaining.bottom) ++ " vs " ++ String.fromInt (List.length game.remaining.top)) ]
-            , if jev.enabled then
-                span [ A.class "round-label", A.attribute "role" "status", A.title (String.join " · " jev.memories) ]
-                    [ text ("JEV " ++ String.toUpper (Jev.buttonLabel jev.button) ++ " · " ++ jev.status) ]
+             , span [ A.class "round-label" ] [ text ("ROUND " ++ String.fromInt game.round ++ " · " ++ String.fromInt (List.length game.remaining.bottom) ++ " vs " ++ String.fromInt (List.length game.remaining.top)) ]
+             ]
+                ++ (if isOnline client then
+                        []
 
-              else
-                text ""
-            ]
+                    else
+                        jevStatuses seats jev "round-label"
+                   )
+            )
         , div [ A.class "classic-battle-frame" ]
             [ Melee.View.viewCockpit game.graphics game.zoomWidth arena
             , case overlay of
@@ -1347,7 +1339,7 @@ matchmaking model =
                         "Find match"
                     )
                 ]
-            , button (buttonAttrs False ++ [ A.id "shared-pc", E.onClick (NavigateMelee { location | local = True, mode = Versus }) ]) [ text "2 players · 1 PC" ]
+            , button (buttonAttrs False ++ [ A.id "shared-pc", E.onClick (NavigateMelee { location | local = True, seats = { bottom = Seat.Human, top = Seat.Human } }) ]) [ text "2 players · 1 PC" ]
             ]
         ]
 

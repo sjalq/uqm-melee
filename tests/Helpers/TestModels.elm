@@ -9,6 +9,7 @@ module Helpers.TestModels exposing
 import Auth.Common
 import Dict
 import Logger
+import Melee.JevDesk
 import Melee.Room
 import Melee.Telemetry
 import Types exposing (BackendModel, Preferences, User)
@@ -59,6 +60,7 @@ emptyBackendModel =
     , users = Dict.empty
     , emailPasswordCredentials = Dict.empty
     , pollingJobs = Dict.empty
+    , jevDesk = Melee.JevDesk.empty
     , counters = Melee.Telemetry.zero
     , workload = Melee.Telemetry.snapshot Melee.Telemetry.zero Melee.Room.init
     , melee = Melee.Room.init
