@@ -8,7 +8,9 @@ from pathlib import Path
 import random
 import subprocess
 import sys
+import tempfile
 import time
+import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from experiment import atomic_json, checked_weights, digest
 from layout import N_HIDDEN, N_IN, N_WEIGHTS, N_W1
@@ -36,7 +38,98 @@ def next_hour():
     return (int(time.time()) // 3600 + 1) * 3600
 
 
+def focused_result_text(result):
+    if not isinstance(result, dict) or not result:
+        return 'No completed focused result yet.'
+    parts = []
+    decision = result.get('decision')
+    if decision:
+        parts.append(str(decision))
+    for label, wins_key, fights_key in [
+        ('fresh', 'fresh_wins', 'fresh_fights'),
+        ('broad', 'broad_wins', 'broad_fights'),
+    ]:
+        wins, fights = result.get(wins_key), result.get(fights_key)
+        if isinstance(wins, int) and isinstance(fights, int):
+            parts.append(f'{label} audit {wins}/{fights} wins')
+    broad_live = result.get('broad_live_wins')
+    if isinstance(broad_live, int):
+        parts.append(f'live champion {broad_live} broad wins')
+    return 'Last result: ' + '; '.join(parts) + '.' if parts else 'A focused result was recorded.'
+
+
+def focused_progress(state, now):
+    """Read progress from the controller-selected run without modifying it."""
+    run_value = state.get('run', '')
+    if not isinstance(run_value, str) or not run_value:
+        return 0, 0, ''
+    run = Path(run_value)
+    try:
+        if not run.is_absolute():
+            raise ValueError('focused run path is not absolute')
+        status_path = run / 'status.json'
+        status = read(status_path)
+        value = status.get('generation', 0)
+        generation = value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+        return generation, max(0, now - status_path.stat().st_mtime), ''
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+        message = f'Unable to read focused trainer status: {error}' if state.get('phase') in ('training', 'audit') else ''
+        return 0, 0, message
+
+
+def focused_summary(state, generation, progress_error, live_run, live_status, live_age, trainer_active, now=None):
+    """Translate controller state into the existing dashboard review schema."""
+    now = time.time() if now is None else now
+    pairs = state.get('active_pairs', [])
+    pair_names = [f'{pair[0]} vs {pair[1]}' for pair in pairs
+                  if isinstance(pair, (list, tuple)) and len(pair) == 2]
+    stage = state.get('stage', 0)
+    stage_name = stage + 1 if isinstance(stage, int) and not isinstance(stage, bool) and stage >= 0 else 1
+    phase = state.get('phase', 'waiting')
+    error = state.get('error', '')
+    if not isinstance(error, str):
+        error = str(error)
+    if progress_error:
+        error = '; '.join(item for item in [error, progress_error] if item)
+    result = state.get('last_result')
+    target = state.get('target_generations', 0)
+    target = target if isinstance(target, int) and not isinstance(target, bool) and target >= 0 else 0
+    lesson = f"Stage {stage_name}: " + (', '.join(pair_names) if pair_names else 'waiting for matchup assignment')
+    if target:
+        lesson += f'. Generation {generation}/{target}'
+    return {
+        'phase': phase if isinstance(phase, str) else 'error',
+        'lane': 'focused curriculum',
+        'hypothesis': lesson,
+        'error': error,
+        'status_age_s': live_age,
+        'trainer_active': trainer_active,
+        'next_review_at': 0,
+        'server_time': now,
+        'history': [],
+        'trial_generation': generation,
+        'target_generations': target,
+        'curriculum': 'Focused matchup curriculum. ' + focused_result_text(result),
+        'live_run': str(live_run),
+        'scoring_version': live_status.get('scoring_version'),
+        'mode': 'persistent focused matchup curriculum',
+    }
+
+
 def summary():
+    focused = ART / 'focused/state.json'
+    if focused.exists():
+        focused_state = read(focused)
+        if isinstance(focused_state, dict) and focused_state.get('enabled') is True:
+            now = time.time()
+            generation, _, progress_error = focused_progress(focused_state, now)
+            live_run = active_run()
+            live_status_path = live_run / 'status.json'
+            live_status = read(live_status_path)
+            live_age = max(0, now - live_status_path.stat().st_mtime)
+            trainer_active = subprocess.run(['systemctl', '--user', 'is-active', '--quiet', 'uqm-neat.service']).returncode == 0
+            return focused_summary(focused_state, generation, progress_error, live_run, live_status,
+                                   live_age, trainer_active, now)
     state = read(REVIEWS / 'state.json') if (REVIEWS / 'state.json').exists() else {'phase': 'waiting', 'history': []}
     run = active_run()
     status = read(run / 'status.json')
@@ -349,16 +442,53 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(503, str(error))
 
 
+class FocusedSummaryTests(unittest.TestCase):
+    def test_focused_progress_and_existing_dashboard_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / 'focused-1'
+            run.mkdir()
+            (run / 'status.json').write_text(json.dumps({'generation': 17}))
+            os.utime(run / 'status.json', (900, 900))
+            state = {
+                'enabled': True, 'phase': 'training', 'stage': 0,
+                'active_pairs': [['Earthling', 'Chmmr']], 'run': str(run),
+                'target_generations': 40,
+                'last_result': {'decision': 'advance', 'fresh_wins': 7, 'fresh_fights': 10,
+                                'broad_wins': 41, 'broad_fights': 60, 'broad_live_wins': 38},
+                'error': ''
+            }
+
+            generation, _, progress_error = focused_progress(state, 1000)
+            result = focused_summary(state, generation, progress_error, Path('/live'),
+                                     {'scoring_version': 'combat-v1'}, 12.5, False, 1000)
+
+            self.assertEqual(result['lane'], 'focused curriculum')
+            self.assertEqual(result['trial_generation'], 17)
+            self.assertEqual(result['hypothesis'], 'Stage 1: Earthling vs Chmmr. Generation 17/40')
+            self.assertEqual(result['status_age_s'], 12.5)
+            self.assertFalse(result['trainer_active'])
+            self.assertEqual(result['live_run'], '/live')
+            self.assertIn('fresh audit 7/10 wins', result['curriculum'])
+            self.assertNotIn('{', result['curriculum'])
+
+            missing = {**state, 'phase': 'paused', 'run': str(Path(directory) / 'not-started')}
+            self.assertEqual(focused_progress(missing, 1000)[2], '')
+            self.assertIn('Unable to read focused trainer status',
+                          focused_progress({**missing, 'phase': 'training'}, 1000)[2])
+
+
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('action', choices=['serve', 'review', 'health'])
+    p.add_argument('action', choices=['serve', 'review', 'health', 'test'])
     p.add_argument('--generations', type=int, default=160)
     p.add_argument('--no-deploy', action='store_true')
     p.add_argument('--port', type=int, default=8788)
     p.add_argument('--review-root', type=Path, default=REVIEWS)
     args = p.parse_args()
     REVIEWS = args.review_root.resolve()
-    if args.action == 'serve':
+    if args.action == 'test':
+        unittest.main(argv=[sys.argv[0]])
+    elif args.action == 'serve':
         ThreadingHTTPServer(('0.0.0.0', args.port), Handler).serve_forever()
     elif args.action == 'health':
         health_check()

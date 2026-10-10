@@ -1,3 +1,17 @@
+## Focused curriculum is running (2026-09-09)
+
+User authorized replacing broad fixed-seed practice after the foundation diagnostic. `uqm-focused.service` now runs `artifacts/neat/releases/focused-v1/scripts/neat/focused_curriculum.py` persistently on CPUs4,5, quota200%, MemoryMax4GiB, swap0. `uqm-review.timer` is disabled; its previous state is in `artifacts/neat/focused/previous-schedule.json`. The existing live trainer/champion and 20-minute health timer remain active. The monitor's `/api/review` shows focused stage/generation and readable fresh results, while live service indicators retain their original meanings.
+
+Training begins with Pkunk vs Umgah, then Umgah vs Pkunk, then the other seven ordered pairings within the original three-ship pool. Each generation uses four newly drawn deterministic seeds, both seats, eight fights and32 candidates. Training seeds occupy1..999999999; fixed lesson validation, fresh audits and confirmations have disjoint higher namespaces. The original54 production hold fights are excluded from training. The immutable base trainer, ES update and Rust scoring-v1 worker are reused; no game or NN activation change. `focused_train.py` is packaged as release/train.py beside the frozen base_train.py. Both adapter and sampler are fingerprinted for exact resume.
+
+Every200generations the current best is checked on20freshseeds across both seats/all nine matchups. Expansion requires60% overall lesson wins, at least40% for each retained matchup, and60% on the new matchup plus a10-point gain over its stage reference (or maintaining an already competent reference), on BOTH the audit and a separate confirmation panel. Retained matchups remain in later training and validation. Unchanged policies are not repeatedly audited within an attempt. Every1000generations an unfinished lesson restarts from its saved best with a new validation panel and mutation scale cycling .04/.08/.12. This is programmed iteration, not an autonomous research agent.
+
+A broad improvement may be promoted independently of lesson expansion: at least8 extra wins over both the original and current live champions in360freshfights, strictly more wins in another360freshfights, and no regression on the separately re-scored54original hold fights. Current live weights and roster are rechecked before switching. A promoted live trainer uses all nine pairs with varied seeds and the original54hold panel. Launcher failure rolls deployment back. No policy has been promoted by the initial preflight. Full-model comparisons are operational gates, not statistical significance claims.
+
+Evidence: `artifacts/neat/focused/state.json`, checks.jsonl, stage-NN/attempt-NNN/{hints,manifest,checkpoint,best}.json and check-NNNNNN audits/results. Local source: scripts/neat/focused_{train,sampling,curriculum}.py and uqm-focused.service. Sixteen pure tests and the monitor test passed. Real Rust smoke tests proved exact checkpoint resume vs an uninterrupted run and the unchanged25/54broad baseline; the two-generation controller preflight completed its real audit (17/40 lesson wins,107/360broad versus114/360live), without promotion.
+
+To stop this experiment use `systemctl --user disable --now uqm-focused.service`; mark focused/state.json enabled=false to restore the legacy monitor view, and enable uqm-review.timer if resuming old recipe trials is desired. Do not start both experiment schedulers. Global scripts/neat/hints.json pause is respected.
+
 ## Conditional opponent expansion armed (2026-09-09)
 
 The network keeps flying Pkunk/Umgah/Yehat. The opponent roster expands by exactly one ship after it wins at least 60% overall, at least 40% against each current opponent type, and improves at least 10 percentage points over the last expansion reference on EACH of two independent fresh 20-seed sets. All seats and current matchups are audited. These are operational progress thresholds, not a statistical-significance claim. Earthling is first, followed by Shofixti, Spathi, Arilou and the remaining catalog ships without repeats. Every opponent remains the original Awesome cyborg.
@@ -348,3 +362,5 @@ untracked:   scripts/neat/  tests/Neat/
 ```
 
 Nothing here is committed. The game speed work is already on main. The trainer is not.
+
+Focused first 200-generation audit: candidate 22/40 lesson wins versus stage reference 19/40, and 115/360 across all matchups versus live 112/360 on the same fresh seeds. Below both advancement and promotion gates; champion protected. Controller automatically resumed toward generation 400, observed at generation 226 with zero restarts.
